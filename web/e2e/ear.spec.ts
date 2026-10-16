@@ -13,8 +13,9 @@ const HEARD_TOLERANCE = 0.02;
 /** And the key, in cents. */
 const KEY_TOLERANCE_CENTS = 10;
 /** And each note on the ribbon, in cents from the key, where both heard it: its value and the
- * middle of its trace. Where the frames fall moves a short note's median by up to 17 cents
- * (the cli test holds 20 at quarter hops), and the browser's capture adds a little more. */
+ * middle of its trace. Where the frames fall moves a short note's median by up to 16.6 cents
+ * (over 32 phases at both rates; the cli test holds 20 at quarter hops), and the browser has
+ * shown 18.7 with its capture. */
 const BAND_TOLERANCE_CENTS = 25;
 
 test.use({
@@ -77,6 +78,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   const median = (trace: Array<[number, number]>) => trace.map((p) => p[1]).sort((a, b) => a - b)[trace.length >> 1]!;
   const wanted: Band[] = want.ribbon;
   const ours: Band[] = got.ribbon;
+  expect(ours).toHaveLength(wanted.length);
   const both = wanted.flatMap((w, i) => {
     const g = ours[i]!;
     return w.cents !== null && g.cents !== null
@@ -91,11 +93,17 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(drawn).toEqual(
     ours.map((b) => ({ cents: b.cents === null ? null : Number(b.cents.toFixed(1)), traced: b.cents !== null })),
   );
-  expect(ours).toHaveLength(wanted.length);
   expect(both.length).toBeGreaterThan(0);
   expect(apart).toBeLessThanOrEqual(Math.ceil(HEARD_TOLERANCE * wanted.length));
   expect(Math.max(...both)).toBeLessThanOrEqual(BAND_TOLERANCE_CENTS);
   await expect(page.locator("#key")).toHaveText(/^Your key: /);
+  // A heard note's band is a button that re-bases the ribbon on it, and back.
+  const first = page.getByRole("button", { name: `Measure from note ${ours.findIndex((b) => b.cents !== null) + 1}`, exact: true });
+  await first.click();
+  await expect(page.locator("#base-text")).toHaveText(/^Measured from note /);
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Back to your key" }).click();
+  await expect(page.locator("#base")).toBeHidden();
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);

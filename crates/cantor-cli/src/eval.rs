@@ -1049,10 +1049,12 @@ mod tests {
                 assert!(key <= 10.0, "{at}: key {key} cents apart");
                 assert_eq!(marks(&got.verdict), marks(&want.verdict), "{at}");
                 // Note by note, the ribbon the page draws is the eval's.
-                let mut apart = 0;
+                assert_eq!(got.ribbon.len(), want.ribbon.len(), "{at}");
+                let (mut apart, mut both) = (0, 0);
                 for (g, w) in got.ribbon.iter().zip(&want.ribbon) {
                     match (g.cents, w.cents) {
                         (Some(a), Some(b)) => {
+                            both += 1;
                             assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} {a} vs {b}", g.index);
                             let (a, b) = (trace_median(&g.trace), trace_median(&w.trace));
                             assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} trace {a} vs {b}", g.index);
@@ -1061,6 +1063,7 @@ mod tests {
                         _ => apart += 1,
                     }
                 }
+                assert!(both > 0, "{at}");
                 assert!(apart <= want.ribbon.len().div_ceil(50), "{at}: {apart} notes heard by one ear only");
             }
         }

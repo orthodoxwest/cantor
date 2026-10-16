@@ -66,8 +66,14 @@ const f = (x: number) => x.toFixed(1);
 
 /** The strips' SVG, each line's at `stripTop(line)`. Every band's centre is its note in the
  * key; the traces are drawn `base` cents lower, a note's own value when the singer re-based on
- * it (so that note's trace sits on its centre), else 0. */
-export function drawRibbon(notes: readonly TimelineNote[], bands: readonly Band[], stripTop: (line: number) => number, base = 0): string {
+ * it (so that note's trace sits on its centre), else 0; `baseIndex` is that note. */
+export function drawRibbon(
+  notes: readonly TimelineNote[],
+  bands: readonly Band[],
+  stripTop: (line: number) => number,
+  base = 0,
+  baseIndex: number | null = null,
+): string {
   const at = places(notes);
   const out: string[] = [];
   for (const band of bands) {
@@ -78,7 +84,7 @@ export function drawRibbon(notes: readonly TimelineNote[], bands: readonly Band[
     const centre = yOf(0, top);
     const heard = band.cents !== null;
     const attrs = heard
-      ? `data-band="${band.index}" data-cents="${band.cents!.toFixed(1)}" tabindex="0" role="button" aria-label="Measure from note ${band.index + 1}"`
+      ? `data-band="${band.index}" data-cents="${band.cents!.toFixed(1)}" tabindex="0" role="button" aria-label="Measure from note ${band.index + 1}" aria-pressed="${band.index === baseIndex}"`
       : `data-band="${band.index}" data-cents=""`;
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);

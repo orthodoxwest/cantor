@@ -20,7 +20,8 @@ await init();
 const score = new Score(byId("score"), new Chant(SAMPLE));
 const cursor = new Cursor(score);
 
-// After a take: the ribbon under the staff, the singer's key, and the note it is re-based on.
+// After a take (for now only through `__cantor.show`, until a take is timed against the
+// chant): the ribbon under the staff, the singer's key, and the note it is re-based on.
 const result = byId<HTMLElement>("result");
 const keyText = byId<HTMLParagraphElement>("key");
 const baseLine = byId<HTMLParagraphElement>("base");
@@ -44,7 +45,7 @@ function drawResult(): void {
     return;
   }
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
-  score.showStrips((timeline, top) => drawRibbon(timeline.notes, judged.ribbon, top, from));
+  score.showStrips((timeline, top) => drawRibbon(timeline.notes, judged.ribbon, top, from, base));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
   baseLine.hidden = base === null;
   if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;

@@ -73,16 +73,19 @@ export class Score {
     const { head, defs, rest, lines } = this.page.svgParts;
     const gap = this.strips ? STRIP : 0;
     const height = this.page.height + gap * lines.length;
-    const svg = [
-      head
-        .replace(/ height="[\d.]+"/, ` height="${height.toFixed(2)}"`)
-        .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 $2 $3 ${height.toFixed(2)}"`),
-      `<defs>${defs}</defs>`,
-      rest,
-      ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + i * gap).toFixed(2)})">${l.svg}</g>`),
-      this.strips ? `<g class="ribbon">${this.strips(this.timeline, (i) => this.stripTop(i))}</g>` : "",
-      "</svg>",
-    ].join("");
+    let top = head
+      .replace(/ height="[\d.]+"/, ` height="${height.toFixed(2)}"`)
+      .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 $2 $3 ${height.toFixed(2)}"`);
+    const engraving = [rest, ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + i * gap).toFixed(2)})">${l.svg}</g>`)].join("");
+    let body = engraving;
+    if (this.strips) {
+      // An image's children are hidden from assistive technology, so with the ribbon's
+      // buttons beside it the engraving alone is the image.
+      const label = / aria-label="([^"]*)"/.exec(top)?.[1] ?? "";
+      top = top.replace(/ role="img"/, "").replace(/ aria-label="[^"]*"/, "");
+      body = `<g role="img" aria-label="${label}">${engraving}</g><g class="ribbon">${this.strips(this.timeline, (i) => this.stripTop(i))}</g>`;
+    }
+    const svg = `${top}<defs>${defs}</defs>${body}</svg>`;
     const old = this.host.querySelector("svg");
     if (old) old.outerHTML = svg;
     else this.host.insertAdjacentHTML("afterbegin", svg);

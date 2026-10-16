@@ -64,7 +64,8 @@ main {
   outline: none;
 }
 .ribbon .band:focus-visible .band-hit {
-  fill: color-mix(in srgb, currentColor 10%, transparent);
+  stroke: currentColor;
+  stroke-width: 1.5;
 }
 .ribbon .band-target {
   stroke: color-mix(in srgb, currentColor 35%, transparent);
@@ -75,6 +76,7 @@ main {
 }
 .ribbon .band-trace {
   fill: none;
+  stroke: #1f5fa8;
   stroke: light-dark(#1f5fa8, #8ab8f0);
   stroke-width: 2;
   stroke-linejoin: round;
