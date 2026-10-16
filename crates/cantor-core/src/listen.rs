@@ -4,6 +4,12 @@
 //! more than [`FLOOR_DB`] below the take's loud frames is too quiet to track, whatever the
 //! microphone's gain.
 //!
+//! While it is sung, the take's loud frames are not yet known, so the live trace has a floor
+//! of its own: [`LIVE_MARGIN_DB`] above the quietest frame heard so far (the room), and never
+//! below [`LIVE_MIN_RMS`], which alone holds before any frame has been heard. A pitch that
+//! shows while the singer is silent misleads, so this floor can be stricter than the take's:
+//! a quiet note the result hears may not show live.
+//!
 //! When a guide plays while the microphone listens, some of it reaches the microphone. The
 //! app knows what it played, so its bleed is measured once, over a cue the guide plays alone
 //! before the singer starts, as the ratio of the microphone's level to the guide's. After
@@ -31,6 +37,13 @@ pub const BLEED_WINDOW_S: f32 = 0.5;
 pub const FLOOR_DB: f32 = 20.0;
 /// The loudness floor never goes below this RMS, so digital silence is never tracked.
 const ABSOLUTE_FLOOR: f32 = 5e-4;
+/// How far above the quietest frame so far a frame must be to show in the live trace.
+pub const LIVE_MARGIN_DB: f32 = 10.0;
+/// The live trace's floor never goes below this RMS (-54 dBFS), a quiet room's level.
+pub const LIVE_MIN_RMS: f32 = 2e-3;
+/// The quietest frame counts as the room up to this RMS (-40 dBFS): a take that starts
+/// mid-note has no quiet frame yet, and its voice is not to be taken for the room.
+const LIVE_ROOM_MAX: f32 = 1e-2;
 
 /// The start of the cue window skipped, while the bleed and the room build up.
 const SETTLE_S: f32 = 0.3;
@@ -149,6 +162,10 @@ pub struct Listening {
     hop: usize,
     samples: Vec<f32>,
     frames: Vec<Frame>,
+    /// The quietest frame so far that was not digital silence.
+    quietest: f32,
+    /// The frames the last push completed, as the live trace shows them.
+    live: Vec<Frame>,
 }
 
 impl Listening {
@@ -159,6 +176,8 @@ impl Listening {
             hop: default_hop(sample_rate),
             samples: Vec::new(),
             frames: Vec::new(),
+            quietest: f32::INFINITY,
+            live: Vec::new(),
         }
     }
 
@@ -171,17 +190,32 @@ impl Listening {
         &self.samples
     }
 
-    /// Adds `samples` to the take and returns the frames they complete, as tracked before
-    /// [`Listening::finish`]: at the loudness floor of digital silence, unfused and unmasked.
+    /// Adds `samples` to the take and returns the frames they complete for the live trace:
+    /// unfused and unmasked, a frame under the live floor quiet (see the module's doc).
     pub fn push(&mut self, samples: &[f32]) -> &[Frame] {
         self.samples.extend_from_slice(samples);
-        let first = self.frames.len();
+        self.live.clear();
         while self.frames.len() * self.hop + self.frame <= self.samples.len() {
             let start = self.frames.len() * self.hop;
             let f = pitch::frame_at(&self.samples, start, self.sample_rate, self.frame, ABSOLUTE_FLOOR);
+            let room = self.quietest.min(LIVE_ROOM_MAX);
+            let floor = if room.is_finite() {
+                LIVE_MIN_RMS.max(room * 10f32.powf(LIVE_MARGIN_DB / 20.0))
+            } else {
+                LIVE_MIN_RMS
+            };
+            let mut live = f;
+            if live.rms < floor {
+                live.midi = None;
+                live.quiet = true;
+            }
+            if f.rms >= ABSOLUTE_FLOOR {
+                self.quietest = self.quietest.min(f.rms);
+            }
+            self.live.push(live);
             self.frames.push(f);
         }
-        &self.frames[first..]
+        &self.live
     }
 
     /// The take and its frames, heard as [`listen_with`] hears it.
@@ -364,6 +398,68 @@ mod tests {
         assert!(voiced_in_notes(&agreeing) > alone + 10, "{alone} -> {}", voiced_in_notes(&agreeing));
         assert_eq!(voiced_in_notes(&disagreeing), alone);
         assert!(agreeing.iter().filter(|f| f.t > 2.1).all(|f| f.other.is_some() || f.t > 4.9));
+    }
+
+    /// A sine at `hz` and RMS `rms` for `seconds`, with a little hiss.
+    fn hum(hz: f32, rms: f32, seconds: f32, state: &mut u32) -> Vec<f32> {
+        (0..(seconds * SR) as usize)
+            .map(|i| {
+                *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let hiss = 2e-4 * (*state as f32 / u32::MAX as f32 - 0.5);
+                rms * std::f32::consts::SQRT_2 * (std::f32::consts::TAU * hz * i as f32 / SR).sin() + hiss
+            })
+            .collect()
+    }
+
+    /// The frames a take shows live, pushed a block at a time, and its frames as tracked.
+    fn live(samples: &[f32]) -> (Vec<Frame>, Vec<Frame>) {
+        let mut listening = Listening::new(SR);
+        let mut shown = Vec::new();
+        for block in samples.chunks(128) {
+            shown.extend_from_slice(listening.push(block));
+        }
+        (shown, listening.frames)
+    }
+
+    #[test]
+    fn the_live_trace_shows_no_pitch_while_the_singer_is_silent() {
+        // A room humming at -46 dBFS, the singer at -20 dBFS from 1 s to 2 s, the hum on.
+        let mut state = 5;
+        let room = hum(110.0, 0.005, 3.0, &mut state);
+        let voice = hum(220.0, 0.1, 1.0, &mut state);
+        let mut take = room.clone();
+        for (t, v) in take[SR as usize..].iter_mut().zip(&voice) {
+            *t += v;
+        }
+        let (shown, tracked) = live(&take);
+        let silent = |f: &&Frame| f.t > 0.1 && f.t < 0.95 || f.t > 2.1;
+        assert!(tracked.iter().filter(silent).all(|f| f.midi.is_some()), "the tracker hears the hum");
+        assert!(
+            shown.iter().filter(silent).all(|f| f.midi.is_none() && f.quiet),
+            "the live trace does not"
+        );
+        let sung: Vec<_> = shown.iter().filter(|f| f.t > 1.05 && f.t < 1.95).collect();
+        assert!(sung.iter().all(|f| f.midi.is_some_and(|m| (m - 57.0).abs() < 0.1)));
+    }
+
+    #[test]
+    fn the_live_trace_is_closed_below_its_minimum_from_the_first_frame() {
+        let mut state = 6;
+        let mut take = vec![0.0; 2_000];
+        take.extend(hum(110.0, LIVE_MIN_RMS / 2.0, 1.0, &mut state));
+        take.extend(hum(220.0, 0.05, 1.0, &mut state));
+        let (shown, tracked) = live(&take);
+        let before = |f: &&Frame| f.t > 0.2 && f.t < 1.0;
+        assert!(tracked.iter().filter(before).all(|f| f.midi.is_some()));
+        assert!(shown.iter().filter(before).all(|f| f.midi.is_none()));
+        assert!(shown.iter().filter(|f| f.t > 1.2).all(|f| f.midi.is_some()));
+    }
+
+    #[test]
+    fn a_take_begun_mid_note_shows_it() {
+        let mut state = 7;
+        let (shown, _) = live(&hum(220.0, 0.05, 1.0, &mut state));
+        assert!(shown.iter().all(|f| f.midi.is_some()));
     }
 
     #[test]

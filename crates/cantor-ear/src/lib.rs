@@ -62,7 +62,7 @@ impl Hearing {
 
 /// A take being heard, or heard.
 enum Take {
-    Hearing(Hearing),
+    Hearing(Box<Hearing>),
     Heard(Heard),
 }
 
@@ -162,7 +162,7 @@ pub fn frame_fields(frames: &[Frame]) -> Vec<f32> {
 pub extern "C" fn ear_start(sample_rate: f32) -> i32 {
     match Hearing::new(sample_rate) {
         Ok(hearing) => {
-            TAKE.with(|t| *t.borrow_mut() = Some(Take::Hearing(hearing)));
+            TAKE.with(|t| *t.borrow_mut() = Some(Take::Hearing(Box::new(hearing))));
             0
         }
         Err(e) => fail(e),
