@@ -1,8 +1,8 @@
 // The ear: ear.wasm (cantor-ear) in a worker, off the audio thread and the page's. The pitch
 // worklet sends it the take a block at a time over a port of its own; the core tracks each
-// frame as soon as its samples are in and the frames go to the page for the live trace. When
-// the worklet ends the take, the core listens to the whole of it, and the page may then ask
-// for it judged against a chant.
+// frame as soon as its samples are in and the frames go to the page for the live trace, while
+// SwiftF0 runs on the take behind it. When the worklet ends the take, the core listens to the
+// whole of it with both, and the page may then ask for it judged against a chant.
 
 interface Exports {
   memory: WebAssembly.Memory;

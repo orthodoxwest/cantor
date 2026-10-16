@@ -199,7 +199,7 @@ impl Spectrum {
 }
 
 /// `a·b + c` rounded once, as a fused multiply-add gives it, whether or not the machine has
-/// one. The product is exact in f64; the sum, if it rounds there, is rounded to odd instead,
+/// one (for finite sums; an infinite one is left as it is). The product is exact in f64; the sum, if it rounds there, is rounded to odd instead,
 /// so that rounding it again to f32 rounds as once.
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
@@ -212,7 +212,7 @@ fn fma(a: f32, b: f32, c: f32) -> f32 {
     // the error has the sum's sign, down when not. Written without branches, to vectorise.
     let bits = s.to_bits();
     let toward = 1u64.wrapping_sub(((error.to_bits() ^ bits) >> 63) << 1);
-    let odd = 0u64.wrapping_sub(u64::from(error != 0.0) & !bits & 1);
+    let odd = 0u64.wrapping_sub(u64::from((error != 0.0) & s.is_finite()) & !bits & 1);
     f64::from_bits(bits.wrapping_add(toward & odd)) as f32
 }
 
@@ -628,6 +628,29 @@ mod tests {
         }
         // Rounding twice is wrong for about a quarter of them.
         assert!(twice > sums / 5, "{twice} of {sums}");
+        // Zeros, subnormals, overflow and infinities.
+        let tiny = f32::from_bits(1);
+        let edges = [
+            0.0,
+            -0.0,
+            tiny,
+            -tiny,
+            f32::MIN_POSITIVE,
+            1.0,
+            -1.5,
+            f32::MAX,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for a in edges {
+            for b in edges {
+                for c in edges {
+                    let want = a.mul_add(b, c);
+                    let got = fma(a, b, c);
+                    assert!(got.to_bits() == want.to_bits() || got.is_nan() && want.is_nan(), "{a} · {b} + {c}");
+                }
+            }
+        }
     }
 
     /// The tables are what tract builds where it is the reference.

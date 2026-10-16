@@ -64,7 +64,8 @@ jobs:
       - if: ${{ !cancelled() }}
         run: cargo run -q -p cantor-cli -- eval --nsdf-only
       - if: ${{ !cancelled() }}
-        run: cargo run -q -p cantor-cli -- swift-parity
+        shell: bash
+        run: cargo run -q -p cantor-cli -- swift-parity | tee -a "$GITHUB_STEP_SUMMARY"
       - if: always()
         run: for f in out/eval.md out/eval-nsdf.md; do if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi; done
   web:

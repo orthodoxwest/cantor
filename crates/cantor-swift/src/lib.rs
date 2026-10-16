@@ -1,9 +1,12 @@
 //! SwiftF0 (MIT, `model/LICENSE`), a small convolutional pitch tracker, the second opinion
 //! beside the core's NSDF tracker. The model is the `swift-f0` 0.3.0 release's `model.onnx`,
-//! run by [`model`] in plain Rust (weights read from the file), so it builds anywhere the core
+//! run by `model` in plain Rust (weights read from the file), so it builds anywhere the core
 //! does, the browser included; the windowing below follows that release's `detect`. With the
-//! `tract` feature, [`reference`] runs the same file with tract, the reference the port is
-//! held to.
+//! `tract` feature, `reference` runs the same file with tract, the reference the port is held
+//! to. tract is native only.
+
+#[cfg(all(feature = "tract", target_arch = "wasm32"))]
+compile_error!("the tract feature is native only; the browser runs the port");
 
 mod model;
 mod onnx;
@@ -545,7 +548,9 @@ mod tests {
         assert!(worst.1 <= 1e-4, "confidence {} apart", worst.1);
     }
 
-    #[cfg(feature = "tract")]
+    /// The port's tables and sums are those tract makes on x86-64 with glibc; elsewhere tract's
+    /// own differ, and the port is held to it by [`agree_with_tract`] alone.
+    #[cfg(all(feature = "tract", target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
     #[test]
     fn the_spectrograms_are_tracts_to_the_bit() {
         let swift = SwiftF0::new().expect("model");
@@ -588,9 +593,7 @@ mod tests {
         let mut samples: Vec<f32> = (0..96_000)
             .map(|i| {
                 let t = i as f32 / sr;
-                let hz = 60.0 * 2f32.powf(t * 0.8);
-                0.2 * (std::f32::consts::TAU * 60.0 * (2f32.powf(t * 0.8) - 1.0) / (0.8 * std::f32::consts::LN_2)).sin() * (hz / hz)
-                    + 0.01 * noise()
+                0.2 * (std::f32::consts::TAU * 60.0 * (2f32.powf(t * 0.8) - 1.0) / (0.8 * std::f32::consts::LN_2)).sin() + 0.01 * noise()
             })
             .collect();
         samples.extend(tone(220.0, sr, 8_000).iter().zip(tone(277.2, sr, 8_000)).map(|(a, b)| a + b));

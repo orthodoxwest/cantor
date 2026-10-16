@@ -280,10 +280,13 @@ fn take_cmd(args: &[String]) -> Result<(), String> {
 /// The most SwiftF0's port may differ from tract's run of the model on a frame both voice, in
 /// semitones.
 const SWIFT_PARITY_SEMITONES: f32 = 0.001;
+/// How far apart their confidences may be.
+const SWIFT_PARITY_CONFIDENCE: f32 = 1e-4;
 
 /// Runs SwiftF0's port and tract's run of the same model over every take the eval hears
 /// (with `--takes`, the real takes too) and compares them frame for frame: both must voice
-/// the same frames, within [`SWIFT_PARITY_SEMITONES`] of each other.
+/// the same frames, within [`SWIFT_PARITY_SEMITONES`] and [`SWIFT_PARITY_CONFIDENCE`] of
+/// each other.
 fn swift_parity_cmd(args: &[String]) -> Result<ExitCode, String> {
     let takes = match args {
         [] => None,
@@ -323,7 +326,7 @@ fn swift_parity_cmd(args: &[String]) -> Result<ExitCode, String> {
         for d in &disagree {
             eprintln!("{name} {d}");
         }
-        pass &= disagree.is_empty() && semitones <= SWIFT_PARITY_SEMITONES;
+        pass &= disagree.is_empty() && semitones <= SWIFT_PARITY_SEMITONES && confidence <= SWIFT_PARITY_CONFIDENCE;
         worst = worst.max(semitones);
     }
     println!("\nworst {worst:.6} semitones; {}", if pass { "pass" } else { "FAIL" });
