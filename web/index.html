@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cantor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital@0;1&display=swap" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <div class="controls">
+        <button id="play" type="button">Play</button>
+        <button id="listen" type="button">Listen</button>
+        <output id="readout" aria-live="polite">–</output>
+      </div>
+      <div id="score" class="score"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
