@@ -1,0 +1,25 @@
+# Working in this repository
+
+Experimental. Keep documentation to this file and doc comments; no other READMEs beyond one line.
+
+## Layout
+- `crates/cantor-core`: the listening core (pitch, onsets, scoring, the practice session). Pure functions, no I/O, no wall clock, `#![forbid(unsafe_code)]`.
+- `crates/cantor-wasm`: a C ABI over the core for the browser, bundled into one ES module.
+- `crates/cantor-cli`: the `cantor` command for offline work: score, align, synthesize, evaluate.
+- `web/`: the app (Vite, TypeScript, no UI framework), its audio pipeline and AudioWorklet host, Playwright tests.
+- `worker/`: the Cloudflare Worker (Hono), D1 migrations, queue consumers, worker tests.
+- `content/`: the public chant library (GABC plus metadata) and its validation. Private content comes from the `cantor-content` repository or R2 and is never committed here.
+- `evals/`: synthetic suites, metric definitions and the committed baseline scorecard. Real recordings are fetched by script, never committed.
+- `vendor/neuma/`: neuma's browser module, built by `scripts/neuma.sh` at the revision `Cargo.toml` pins. Ignored by git.
+
+## Commands
+- `make setup` once per clone; `make check` before every push; CI runs the same.
+- `make eval` prints the scorecard against `evals/baseline.json`; `cantor eval --write-baseline` updates it in a deliberate commit.
+- Outputs land in `out/`.
+
+## Rules
+- neuma is a dependency pinned by revision in `Cargo.toml`; change it there and nowhere else. Changes neuma needs go to neuma as pull requests.
+- No wall clock or randomness in the core: time and seeds are inputs.
+- Tests are deterministic. A flaky test is a bug to fix, never retried.
+- Private material (recordings, booklet-derived content, personal data) never enters this repository.
+- Commit messages describe the change; no attribution trailers.

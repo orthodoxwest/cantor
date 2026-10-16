@@ -1,10 +1,11 @@
 target/
 node_modules/
 dist/
-vendor/
+vendor
 out/
 .wrangler/
 test-results/
 playwright-report/
 *.local
 .DS_Store
+web/e2e/fixtures/*.wav

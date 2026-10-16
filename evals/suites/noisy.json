@@ -1,0 +1,9 @@
+{
+  "name": "noisy",
+  "gabc": "evals/chants/scale.gabc",
+  "pulse_s": 0.5,
+  "seed": 4,
+  "cents_offset_per_note": [],
+  "drift_cents_per_second": 0.0,
+  "noise_rms": 0.04
+}

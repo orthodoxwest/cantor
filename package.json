@@ -1,0 +1,11 @@
+{
+  "name": "cantor",
+  "private": true,
+  "workspaces": ["web", "worker"],
+  "scripts": {
+    "check": "npm run --workspaces --if-present check",
+    "test": "npm run --workspaces --if-present test",
+    "e2e": "npm run --workspace web --if-present e2e"
+  },
+  "engines": { "node": ">=22" }
+}

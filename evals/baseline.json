@@ -1,0 +1,30 @@
+{
+  "clean": {
+    "heard_fraction": 1.0,
+    "gross_error_rate": 0.0,
+    "mean_abs_cents": 0.12327194,
+    "planted_recall": 1.0,
+    "false_flags": 0
+  },
+  "drift": {
+    "heard_fraction": 1.0,
+    "gross_error_rate": 0.0,
+    "mean_abs_cents": 16.493488,
+    "planted_recall": 1.0,
+    "false_flags": 0
+  },
+  "noisy": {
+    "heard_fraction": 1.0,
+    "gross_error_rate": 0.0,
+    "mean_abs_cents": 1.1721706,
+    "planted_recall": 1.0,
+    "false_flags": 0
+  },
+  "pitch-faults": {
+    "heard_fraction": 1.0,
+    "gross_error_rate": 0.25,
+    "mean_abs_cents": 20.103758,
+    "planted_recall": 1.0,
+    "false_flags": 0
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "drift",
+  "gabc": "evals/chants/scale.gabc",
+  "pulse_s": 0.5,
+  "seed": 3,
+  "cents_offset_per_note": [],
+  "drift_cents_per_second": -1.5,
+  "noise_rms": 0.0
+}

@@ -1,0 +1,19 @@
+[package]
+name = "cantor-wasm"
+description = "The listening core for the browser: a C ABI over cantor-core, bundled as one ES module"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cantor-core.workspace = true
+
+# No workspace lint table: the C ABI needs `no_mangle` exports, which `forbid(unsafe_code)` rejects.
+[lints.rust]
+unsafe_code = "deny"
