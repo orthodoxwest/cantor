@@ -1,4 +1,5 @@
-// Turns content/dist/library.json into out/seed.sql for the local D1 database.
+// Turns content/dist/library.json into out/seed.sql: the public chants, upserted by slug.
+// Private rows have their own seed in cantor-content and are never written here.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,10 +8,11 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 const library = JSON.parse(readFileSync(path.join(root, "content/dist/library.json"), "utf8"));
 const q = (v) => (v == null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
 
+const COLUMNS = ["slug", "title", "name", "mode", "kind", "book", "source", "url", "words", "gabc"];
 const sql = library.map(
   (c) =>
-    `INSERT INTO chants (slug, title, mode, source, gabc) VALUES (${q(c.slug)}, ${q(c.title)}, ${q(c.mode)}, ${q(c.source)}, ${q(c.gabc)})\n` +
-    "  ON CONFLICT(slug) DO UPDATE SET title = excluded.title, mode = excluded.mode, source = excluded.source, gabc = excluded.gabc;",
+    `INSERT INTO chants (${COLUMNS.join(", ")}, private) VALUES (${COLUMNS.map((k) => q(c[k])).join(", ")}, 0)\n` +
+    `  ON CONFLICT(slug) DO UPDATE SET ${COLUMNS.slice(1).map((k) => `${k} = excluded.${k}`).join(", ")}, private = 0;`,
 );
 const out = path.join(root, "out/seed.sql");
 mkdirSync(path.dirname(out), { recursive: true });

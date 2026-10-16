@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Connect, Plugin } from "vite";
 import { defineConfig } from "vitest/config";
@@ -7,6 +8,29 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 // The pages, by the clean paths the site links to; Cloudflare's assets serve /library from
 // library.html, and this does the same in dev and preview.
 const PAGES = ["library", "sing"];
+// Without the Worker, dev and preview answer the library's two routes from the public chants
+// content/build.mjs writes; private rows only ever come from the Worker.
+const LIBRARY = here("../content/dist/library.json");
+const chantsApi: Connect.NextHandleFunction = (req, res, next) => {
+  const m = /^\/api\/chants(?:\/([^/?]+))?(?:\?|$)/.exec(req.url ?? "");
+  if (!m) return next();
+  const send = (status: number, body: unknown) => {
+    res.statusCode = status;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(body));
+  };
+  let rows: Array<Record<string, unknown> & { slug: string; title: string; gabc: string }>;
+  try {
+    rows = JSON.parse(readFileSync(LIBRARY, "utf8"));
+  } catch {
+    return send(503, { error: "run node content/build.mjs first" });
+  }
+  if (m[1] === undefined)
+    return send(200, rows.map(({ gabc: _, ...row }) => row).sort((a, b) => a.title.localeCompare(b.title, "en", { sensitivity: "base" })));
+  const row = rows.find((r) => r.slug === decodeURIComponent(m[1]!));
+  return row ? send(200, row) : send(404, { error: "not found" });
+};
+
 const cleanUrls = (): Plugin => {
   const rewrite: Connect.NextHandleFunction = (req, _res, next) => {
     const [path, query] = (req.url ?? "").split(/(?=\?)/);
@@ -16,8 +40,8 @@ const cleanUrls = (): Plugin => {
   };
   return {
     name: "clean-urls",
-    configureServer: (server) => void server.middlewares.use(rewrite),
-    configurePreviewServer: (server) => void server.middlewares.use(rewrite),
+    configureServer: (server) => void server.middlewares.use(rewrite).use(chantsApi),
+    configurePreviewServer: (server) => void server.middlewares.use(rewrite).use(chantsApi),
   };
 };
 

@@ -2,18 +2,11 @@
 // and checks that every psalm in content/psalter.json sets to every tone without error.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Chant, init, psalm, toneNames } from "../vendor/neuma/neuma.mjs";
+import { Chant, init, psalm, summarize, toneNames } from "../vendor/neuma/neuma.mjs";
+import { chantRow, headers } from "./chant-row.mjs";
 
 const chantsDir = fileURLToPath(new URL("chants/", import.meta.url));
 const distDir = fileURLToPath(new URL("dist/", import.meta.url));
-
-/** GABC headers: `key:value;` lines before `%%`. */
-function headers(gabc) {
-  const head = gabc.split(/^%%$/m, 1)[0];
-  const out = {};
-  for (const m of head.matchAll(/^([\w-]+):([\s\S]*?);\s*$/gm)) out[m[1]] = m[2].trim();
-  return out;
-}
 
 await init();
 let failed = false;
@@ -37,7 +30,7 @@ for (const file of readdirSync(chantsDir).filter((f) => f.endsWith(".gabc")).sor
     for (const p of problems) console.error(`${file}: ${p}`);
     continue;
   }
-  library.push({ slug, title: h.name, mode: h.mode ?? null, source: h.source, licence: h.licence, url: h.url, gabc });
+  library.push(chantRow(slug, gabc, summarize));
 }
 const { psalms } = JSON.parse(readFileSync(new URL("psalter.json", import.meta.url), "utf8"));
 for (const entry of psalms) {

@@ -1,24 +1,26 @@
-// The public chant library (content/chants, CC0), bundled with the pages that show it and
-// described by neuma's summary. Call after neuma's init().
-import { summarize, type OfficePartKind } from "neuma";
+// The chant library, from the Worker's /api/chants: the public chants (content/chants, CC0),
+// and for a signed-in visitor the private ones too. Each chant's GABC is fetched when needed.
+import type { OfficePartKind } from "neuma";
 
 export interface LibraryChant {
   slug: string;
-  gabc: string;
   /** The English opening words, as a title. */
   title: string;
-  /** The score's own name, often the Latin incipit, less any of it the title repeats
-   * ("Advent tone" for "Before the ending of the day (Advent tone)"); null when nothing is left. */
+  /** The score's own name, often the Latin incipit, less what the title repeats. */
   name: string | null;
   kind: OfficePartKind | null;
-  /** "viii", "ii", or null. */
+  /** "viii", "ii", or as the score gives it; null when it gives none. */
   mode: string | null;
   book: string | null;
+  source: string | null;
   url: string | null;
-  text: string;
+  /** The sung words, for search. */
+  words: string;
 }
 
-const files = import.meta.glob<string>("../../content/chants/*.gabc", { query: "?raw", import: "default", eager: true });
+export interface FullChant extends LibraryChant {
+  gabc: string;
+}
 
 const ROMAN = ["", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii"];
 
@@ -43,55 +45,52 @@ const KINDS: Partial<Record<OfficePartKind, string>> = {
 export const kindName = (kind: OfficePartKind | null): string | null => (kind && KINDS[kind]) ?? null;
 
 /** "Antiphon · Mode viii", or what of it is known. */
-export function kicker(chant: LibraryChant): string {
+export function kicker(chant: Pick<LibraryChant, "kind" | "mode">): string {
   return [kindName(chant.kind), chant.mode && `Mode ${chant.mode}`].filter(Boolean).join(" · ");
 }
 
-/** The incipit as a title: the trailing stop gone, and the capital an initial carries over to
- * the next word ("A Light to lighten") put back to lower case. */
-function titleOf(incipit: string): string {
-  const words = incipit.trim().replace(/[\s,;:.]+$/, "").split(/\s+/);
-  if (words.length > 1 && words[0]!.length === 1 && /^[A-Z][a-z]/.test(words[1]!) && !/^(Lord|God|Christ|Jesu|Jesus)\b/.test(words[1]!))
-    words[1] = words[1]![0]!.toLowerCase() + words[1]!.slice(1);
-  return words.join(" ");
+type Row = Omit<LibraryChant, "words"> & { words: string | null; mode: string | null };
+
+function fromRow(row: Row): LibraryChant {
+  const n = Number(row.mode);
+  return { ...row, mode: Number.isInteger(n) && n >= 1 && n <= 8 ? ROMAN[n]! : row.mode || null, words: row.words ?? "" };
 }
 
-function subtitle(name: string | null, title: string): string | null {
-  if (!name) return null;
-  const rest = name.toLowerCase().startsWith(title.toLowerCase()) ? name.slice(title.length).replace(/^[\s(,]+|[)\s]+$/g, "") : name;
-  return rest || null;
-}
+let list: Promise<LibraryChant[]> | null = null;
 
-function header(gabc: string, key: string): string | null {
-  const head = gabc.split(/^%%$/m, 1)[0] ?? "";
-  return new RegExp(`^${key}:(.*?);\\s*$`, "m").exec(head)?.[1]?.trim() || null;
-}
-
-let cache: LibraryChant[] | null = null;
-
-/** Every chant, in title order. */
-export function library(): LibraryChant[] {
-  if (cache) return cache;
-  cache = Object.entries(files)
-    .map(([path, gabc]) => {
-      const s = summarize(gabc);
-      const number = s.mode?.number ?? null;
-      const title = titleOf(s.incipit) || s.name || "Untitled";
-      return {
-        slug: path.slice(path.lastIndexOf("/") + 1, -5),
-        gabc,
-        title,
-        name: subtitle(s.name, title),
-        kind: s.kind,
-        mode: number !== null && number >= 1 && number <= 8 ? ROMAN[number]! : (s.mode?.name ?? null),
-        book: s.book,
-        url: header(gabc, "url"),
-        text: s.text,
-      };
+/** Every chant the visitor may see, in title order. */
+export function library(): Promise<LibraryChant[]> {
+  list ??= fetch("/api/chants")
+    .then((res) => {
+      if (!res.ok) throw new Error(`the library answered ${res.status}`);
+      return res.json() as Promise<Row[]>;
     })
-    .sort((a, b) => a.title.localeCompare(b.title));
-  return cache;
+    .then((rows) => rows.map(fromRow))
+    .catch((error: unknown) => {
+      list = null;
+      throw error;
+    });
+  return list;
 }
 
-/** One chant by slug, or undefined. */
-export const chant = (slug: string): LibraryChant | undefined => library().find((c) => c.slug === slug);
+const chants = new Map<string, Promise<FullChant | null>>();
+
+/** One chant with its GABC; null when there is none the visitor may see. */
+export function chant(slug: string): Promise<FullChant | null> {
+  let found = chants.get(slug);
+  if (!found) {
+    found = fetch(`/api/chants/${encodeURIComponent(slug)}`)
+      .then(async (res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`the library answered ${res.status}`);
+        const row = (await res.json()) as Row & { gabc: string };
+        return { ...fromRow(row), gabc: row.gabc };
+      })
+      .catch((error: unknown) => {
+        chants.delete(slug);
+        throw error;
+      });
+    chants.set(slug, found);
+  }
+  return found;
+}

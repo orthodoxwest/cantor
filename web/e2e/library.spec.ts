@@ -13,11 +13,12 @@ test("the library lists, filters and opens a piece, and practises it", async ({ 
   const hymns = await items.count();
   expect(hymns).toBeGreaterThan(0);
   expect(hymns).toBeLessThan(total);
-  await page.getByRole("button", { name: /^All/ }).click();
+  await page.getByRole("button", { name: /^All\d/ }).click();
 
-  await page.getByPlaceholder("Search the words").fill("gentiles");
-  await expect(items).toHaveCount(1);
-  await items.first().locator("a").click();
+  await page.getByPlaceholder("Search the words").fill("light to lighten the gentiles");
+  await expect(items.first()).toContainText("A light to lighten the Gentiles");
+  expect(await items.count()).toBeLessThan(5);
+  await page.locator('#results a[href="#lumen-gentium"]').click();
   await expect(page).toHaveURL(/#lumen-gentium$/);
   await expect(page.locator("#piece-title")).toContainText("A light to lighten the Gentiles");
   await expect(page.locator("#score svg")).toBeVisible();
@@ -52,4 +53,19 @@ test("every page has the same pages in its header", async ({ page }) => {
     await expect(nav.getByRole("link")).toHaveText(["Psalms", "Library", "Practice"]);
     await expect(nav.locator("[aria-current=page]")).toHaveText(current);
   }
+});
+
+test("the library draws a page of results at a time", async ({ page }) => {
+  await page.goto("/library");
+  const items = page.locator("#results > li");
+  await expect(items).toHaveCount(40);
+  await page.getByRole("button", { name: "Show more" }).click();
+  await expect(items).toHaveCount(80);
+  await expect(page.locator("#results > li > a").nth(40)).toBeFocused();
+});
+
+test("a piece the visitor may not see is not in their library", async ({ page }) => {
+  await page.goto("/library#meinrad-not-here");
+  await expect(page.locator("#count")).toHaveText("That piece is not in the library.");
+  await expect(page.locator("#piece")).toBeHidden();
 });
