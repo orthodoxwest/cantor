@@ -88,6 +88,7 @@ jobs:
           path: vendor/neuma
           key: neuma-module-${{ steps.neuma-rev.outputs.rev }}
       - run: sh scripts/neuma.sh
+      - run: node content/build.mjs
       - run: npm ci
       - run: npx --workspace web playwright install --with-deps chromium
       - run: npm run check

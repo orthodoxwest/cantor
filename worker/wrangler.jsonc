@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cantor",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // The built app. `/api/*` always reaches the Worker; everything else is served from here.
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": { "ENV": "dev" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cantor",
+      // Placeholder: `wrangler d1 create cantor` prints the real id.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }]
+}
