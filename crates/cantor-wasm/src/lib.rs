@@ -26,7 +26,7 @@ pub fn parse_notes(text: &str) -> Vec<Lyric> {
             let syllable = f.next()?.parse().ok()?;
             let text = f.next().unwrap_or("").to_string();
             Some(Lyric {
-                note: Note { midi, start_s, dur_s },
+                note: Note::new(midi, start_s, dur_s),
                 text,
                 word,
                 syllable,
@@ -35,9 +35,33 @@ pub fn parse_notes(text: &str) -> Vec<Lyric> {
         .collect()
 }
 
-/// The part to sing for `gabc` (read only for its language) and its timeline's notes.
+/// The part to sing for notes in [`parse_notes`] form. `gabc` is read only for its language;
+/// when it is empty the language is guessed from the notes' own words.
 pub fn make_part(gabc: &str, notes: &str) -> Vec<Sung> {
-    part(Language::of_gabc(gabc), &parse_notes(notes))
+    let lyrics = parse_notes(notes);
+    let language = if gabc.trim().is_empty() {
+        Language::guess(&words(&lyrics))
+    } else {
+        Language::of_gabc(gabc)
+    };
+    part(language, &lyrics)
+}
+
+/// The lyrics' words, each syllable once, words spaced.
+fn words(lyrics: &[Lyric]) -> String {
+    let mut out = String::new();
+    let mut last: Option<(u32, u32)> = None;
+    for l in lyrics {
+        if last == Some((l.word, l.syllable)) {
+            continue;
+        }
+        if last.is_some_and(|(w, _)| w != l.word) {
+            out.push(' ');
+        }
+        out.push_str(&l.text);
+        last = Some((l.word, l.syllable));
+    }
+    out
 }
 
 /// Values behind handles: handle `n` is slot `n - 1`.
@@ -198,6 +222,15 @@ mod tests {
         assert_eq!(latin[0].diction.vowel, Vowel::Aa);
         let english = make_part("language: English;\n%%\n(c4) Sal(f)ve(g)", notes);
         assert_eq!(english[0].diction.vowel, Vowel::Ae);
+        // Without GABC, the notes' words: "Thou shalt purge me with hyssop".
+        let words = ["Thou", "shalt", "purge", "me", "with", "hys", "sop"];
+        let notes: String = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!("60\t{i}\t1\t{}\t{i}\t{w}\n", i.min(5)))
+            .collect();
+        let guessed = make_part("", &notes);
+        assert_eq!(guessed[0].diction.vowel, Vowel::Aw, "{guessed:?}");
     }
 
     #[test]

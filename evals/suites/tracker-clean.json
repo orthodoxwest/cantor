@@ -1,0 +1,10 @@
+{
+  "name": "tracker-clean",
+  "gabc": "evals/chants/scale.gabc",
+  "pulse_s": 0.5,
+  "takes": [
+    {
+      "seed": 1
+    }
+  ]
+}

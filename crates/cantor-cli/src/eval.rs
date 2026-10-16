@@ -1,84 +1,334 @@
-//! `cantor eval`: every suite in `evals/suites/` is synthesized, tracked and scored; the
-//! scorecard is printed, written to `out/eval.json` and compared with `evals/baseline.json`.
+//! `cantor eval`: the listening gates. Every suite in `evals/suites/` is synthesized,
+//! listened to, scored and judged, and checked two ways: against its gate (what the take
+//! must and must not be told) and against `evals/baseline.json` (no metric may get worse
+//! past its tolerance, and the faults and takes counted must not change). Real takes from a
+//! directory given with `--takes` are held to the expert gate; they have no guide and no
+//! planted truth, so their tracking error is measured from the judge's own key. The scorecard
+//! is printed and written to `out/eval.json` and `out/eval.md`, and every take is drawn in
+//! `out/explain/`.
+//!
+//! What counts as a fault, and how long a note must be to count, are this file's own
+//! constants, written from the specification, not read from the judge: tuning the judge
+//! cannot shrink what it is tested against.
+//!
+//! The gates. Every suite, gated or not, must have no false marks.
+//! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
+//!   0.3 s or more heard over the suite and 90% in every take; 90% of all notes heard; a
+//!   steady reciting tone; every take judged.
+//! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
+//!   them caught, nothing planted 100 cents or more off called in tune, the key found within
+//!   50 cents, and drift named where it was planted.
+//! - `silent`: the guide alone, singer silent. No take judged, no note heard, nothing in tune.
+//! - `wrong`: a wrong singer over a right guide is marked, as for `student`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cantor_core::{Profile, Report, notes_from_gabc, pitch, render, score, track};
+use cantor_core::score::fold;
+use cantor_core::synth::cue_span;
+use cantor_core::{
+    Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, listen, notes_from_gabc, render_take, score,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::SAMPLE_RATE;
+use crate::explain;
 
-/// A planted offset at least this large counts as a fault to recall.
-const PLANTED_CENTS: f32 = 50.0;
-/// A measured error at least this large counts as having caught a planted fault.
-const CAUGHT_CENTS: f32 = 25.0;
-/// A measured error above this on an unplanted note is a false flag.
-const FLAG_CENTS: f32 = 50.0;
+/// A fault a mark must catch: a note this many cents off...
+const FLAGRANT_CENTS: f32 = 150.0;
+/// ...lasting at least this long, past the chant's first phrase (where the key settles).
+const FLAGRANT_MIN_S: f32 = 0.4;
+/// Notes at least this long count towards the heard fraction.
+const COUNTED_MIN_S: f32 = 0.3;
+/// A take is told a fault it doesn't have when a mark lands on a note planted less than
+/// this far off.
+const CLEAR_CENTS: f32 = 100.0;
+/// A verse mark is deserved when this share of its notes were planted off its way.
+const VERSE_DESERVED: f32 = 0.8;
+/// A note heard in tune that was planted this far off is a false "in tune".
+const OFF_CENTS: f32 = 100.0;
+/// A planted drift at least this large must be named, and one at most `STEADY_DRIFT` must not.
+const UNSTEADY_DRIFT: f32 = 90.0;
+const STEADY_DRIFT: f32 = 40.0;
+/// A heard note further than this from the truth is a tracking gross error.
+const GROSS_CENTS: f32 = 50.0;
+/// The floors the gates hold.
+const HEARD_FLOOR: f32 = 0.95;
+const TAKE_HEARD_FLOOR: f32 = 0.9;
+const ALL_HEARD_FLOOR: f32 = 0.9;
+const RECALL_FLOOR: f32 = 0.95;
+const KEY_TOLERANCE: f32 = 50.0;
+const SILENT_CEILING: f32 = 0.01;
+/// The name real takes are reported under.
+const REAL: &str = "real-takes";
 
-/// One synthetic suite: a chant, a tempo, a seed and the faults to plant.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Gate {
+    /// Measured and held to the baseline, with no gate of its own but no false marks.
+    #[default]
+    None,
+    Expert,
+    Student,
+    Silent,
+    Wrong,
+}
+
+impl Gate {
+    fn name(self) -> &'static str {
+        match self {
+            Gate::None => "none",
+            Gate::Expert => "expert",
+            Gate::Student => "student",
+            Gate::Silent => "silent",
+            Gate::Wrong => "wrong",
+        }
+    }
+}
+
+/// One synthetic take: the chant, its tempo, the seed, the lead-in and the profile.
 #[derive(Debug, Deserialize)]
-struct Suite {
-    name: String,
+struct TakeSpec {
     /// The GABC file, relative to the repository root.
     gabc: String,
     pulse_s: f32,
     seed: u64,
+    /// Seconds before the first note, when only the guide's cue sounds.
+    #[serde(default)]
+    lead_in_s: f32,
     #[serde(flatten)]
     profile: Profile,
 }
 
+/// A suite file: a name, a gate, defaults, and the takes, each overriding the defaults.
+struct Suite {
+    name: String,
+    gate: Gate,
+    takes: Vec<TakeSpec>,
+}
+
+/// A real take: a recording of a chant with the time each note was sung. Paths are relative
+/// to the file.
+#[derive(Debug, Deserialize)]
+struct RealTake {
+    name: String,
+    gabc: String,
+    audio: String,
+    /// `[start, end]` in seconds for each note of the chant, in order.
+    notes: Vec<[f32; 2]>,
+}
+
+/// One judged take, with what it is checked against.
+struct Judged {
+    name: String,
+    notes: Vec<Note>,
+    planted: Vec<Planted>,
+    /// The truth for each note in cents from the score, when known (synthetic takes).
+    truth: Vec<Option<f32>>,
+    /// The key the singer started in, when known.
+    true_key: Option<f32>,
+    planted_drift: f32,
+    frames: Vec<Frame>,
+    verdict: Verdict,
+    report: cantor_core::Report,
+}
+
 /// The numbers a suite is judged by.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 struct Metrics {
+    takes: u32,
+    /// Of the notes of 0.3 s or more that were sung, the fraction heard.
     heard_fraction: f32,
+    /// The lowest heard fraction of any one take.
+    worst_take_heard: f32,
+    /// Of all the notes sung, the fraction heard.
+    heard_all: f32,
+    /// Of the notes of 0.3 s or more, the fraction masked by the guide's bleed.
+    masked_fraction: f32,
+    /// The mean distance of heard notes from the truth, in cents.
+    tracking_cents: f32,
+    /// The fraction of heard notes further than 50 cents from the truth.
     gross_error_rate: f32,
-    mean_abs_cents: f32,
-    /// Of the notes planted at least `PLANTED_CENTS` off, the fraction heard at least
-    /// `CAUGHT_CENTS` off (1 when nothing was planted).
-    planted_recall: f32,
-    /// Notes with no planted offset heard more than `FLAG_CENTS` off.
-    false_flags: u32,
+    marks: u32,
+    /// Marks on notes that were not planted off, or not off that way.
+    false_marks: u32,
+    /// Planted faults a mark must catch.
+    faults: u32,
+    /// The fraction of `faults` caught (1 when none were planted).
+    recall: f32,
+    /// Notes called in tune that were planted at least 100 cents off.
+    false_in_tune: u32,
+    /// The largest distance of a judged take's key from the truth, in cents.
+    key_error_cents: f32,
+    /// Takes whose steadiness disagrees with the drift planted.
+    summary_errors: u32,
+    /// Takes given an outcome instead of a judgement.
+    unjudged: u32,
+    /// Notes heard in tune, over all takes.
+    in_tune: u32,
 }
 
 impl Metrics {
-    fn of(report: &Report, profile: &Profile) -> Metrics {
-        let planted = |r: &cantor_core::NoteResult| profile.planted_cents(r.index);
-        let faults: Vec<_> = report.notes.iter().filter(|r| planted(r).abs() >= PLANTED_CENTS).collect();
-        let caught = faults.iter().filter(|r| r.cents.is_some_and(|c| c.abs() >= CAUGHT_CENTS)).count();
-        let planted_recall = if faults.is_empty() {
-            1.0
-        } else {
-            caught as f32 / faults.len() as f32
+    fn of(takes: &[Judged]) -> Metrics {
+        let mut m = Metrics {
+            takes: takes.len() as u32,
+            worst_take_heard: 1.0,
+            ..Metrics::default()
         };
-        let false_flags = report
-            .notes
-            .iter()
-            .filter(|r| planted(r) == 0.0 && r.cents.is_some_and(|c| c.abs() > FLAG_CENTS))
-            .count();
-        Metrics {
-            heard_fraction: report.heard_fraction,
-            gross_error_rate: report.gross_error_rate,
-            mean_abs_cents: report.mean_abs_cents,
-            planted_recall,
-            false_flags: false_flags as u32,
+        let ratio = |a: usize, b: usize| if b == 0 { 0.0 } else { a as f32 / b as f32 };
+        let (mut counted, mut heard, mut masked, mut all, mut all_heard) = (0, 0, 0, 0, 0);
+        let (mut errors, mut gross, mut tracked) = (0.0f32, 0usize, 0usize);
+        let mut caught = 0u32;
+        for take in takes {
+            let v = &take.verdict;
+            let (mut take_counted, mut take_heard) = (0, 0);
+            for (i, note) in take.notes.iter().enumerate() {
+                let r = &take.report.notes[i];
+                let p = &take.planted[i];
+                if !p.silent {
+                    all += 1;
+                    all_heard += usize::from(r.cents.is_some());
+                    if note.dur_s >= COUNTED_MIN_S {
+                        take_counted += 1;
+                        take_heard += usize::from(r.cents.is_some());
+                        masked += usize::from(r.cents.is_none() && r.masked_frames > r.voiced_frames);
+                    }
+                }
+                let error = match (r.cents, take.truth[i], v.relative[i]) {
+                    (Some(c), Some(t), _) => Some(fold(c - t)),
+                    (_, None, Some(rel)) => Some(rel),
+                    _ => None,
+                };
+                if let Some(e) = error {
+                    errors += e.abs();
+                    gross += usize::from(e.abs() > GROSS_CENTS);
+                    tracked += 1;
+                }
+                let called_in_tune = v.relative[i].is_some_and(|c| c.abs() < cantor_core::judge::IN_TUNE_CENTS)
+                    && !v.marks.iter().any(|mark| mark.covers(i));
+                if called_in_tune && !p.silent && fold(p.cents).abs() >= OFF_CENTS {
+                    m.false_in_tune += 1;
+                }
+            }
+            counted += take_counted;
+            heard += take_heard;
+            m.worst_take_heard = m.worst_take_heard.min(ratio(take_heard, take_counted));
+            m.marks += v.marks.len() as u32;
+            m.false_marks += v.marks.iter().filter(|mark| !deserved(mark, &take.planted)).count() as u32;
+            for i in faults(&take.notes, &take.planted) {
+                m.faults += 1;
+                caught += u32::from(v.marks.iter().any(|mark| catches(mark, i, &take.planted[i])));
+            }
+            if v.outcome == Outcome::Heard {
+                let wrong =
+                    (take.planted_drift.abs() >= UNSTEADY_DRIFT && v.steady) || (take.planted_drift.abs() <= STEADY_DRIFT && !v.steady);
+                m.summary_errors += u32::from(wrong);
+                if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
+                    m.key_error_cents = m.key_error_cents.max(fold(k - t).abs());
+                }
+            } else {
+                m.unjudged += 1;
+            }
+            m.in_tune += v.in_tune as u32;
         }
+        m.heard_fraction = ratio(heard, counted);
+        m.heard_all = ratio(all_heard, all);
+        m.masked_fraction = ratio(masked, counted);
+        m.tracking_cents = if tracked == 0 { 0.0 } else { errors / tracked as f32 };
+        m.gross_error_rate = ratio(gross, tracked);
+        m.recall = if m.faults == 0 { 1.0 } else { caught as f32 / m.faults as f32 };
+        m
     }
 
-    /// Which metrics moved the wrong way beyond tolerance since `base`.
-    fn regressions(&self, base: &Metrics) -> Vec<String> {
+    /// Why `gate` fails, if it does.
+    fn gate_failures(&self, gate: Gate) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut need = |ok: bool, what: String| {
+            if !ok {
+                out.push(what);
+            }
+        };
+        need(self.false_marks == 0, format!("{} false marks", self.false_marks));
+        match gate {
+            Gate::None => {}
+            Gate::Expert => {
+                need(self.marks == 0, format!("{} marks on good takes", self.marks));
+                need(
+                    self.heard_fraction >= HEARD_FLOOR,
+                    format!("heard {:.3} < {HEARD_FLOOR}", self.heard_fraction),
+                );
+                need(
+                    self.worst_take_heard >= TAKE_HEARD_FLOOR,
+                    format!("a take heard {:.3} < {TAKE_HEARD_FLOOR}", self.worst_take_heard),
+                );
+                need(
+                    self.heard_all >= ALL_HEARD_FLOOR,
+                    format!("all notes heard {:.3} < {ALL_HEARD_FLOOR}", self.heard_all),
+                );
+                need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
+                need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
+            }
+            Gate::Student | Gate::Wrong => {
+                need(self.recall >= RECALL_FLOOR, format!("recall {:.3} < {RECALL_FLOOR}", self.recall));
+                need(self.faults > 0, "no faults planted".into());
+                need(self.false_in_tune == 0, format!("{} faults called in tune", self.false_in_tune));
+                need(
+                    self.key_error_cents <= KEY_TOLERANCE,
+                    format!("key off by {:.0} cents", self.key_error_cents),
+                );
+                need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
+                need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
+            }
+            Gate::Silent => {
+                need(
+                    self.unjudged == self.takes,
+                    format!("{} of {} takes judged", self.takes - self.unjudged, self.takes),
+                );
+                need(self.marks == 0, format!("{} marks", self.marks));
+                need(
+                    self.heard_all <= SILENT_CEILING,
+                    format!("{:.3} of the notes heard", self.heard_all),
+                );
+                need(self.in_tune == 0, format!("{} notes heard in tune", self.in_tune));
+            }
+        }
+        out
+    }
+
+    /// Which metrics moved the wrong way beyond tolerance since `base`. For the silent
+    /// control, hearing more is the wrong way.
+    fn regressions(&self, base: &Metrics, gate: Gate) -> Vec<String> {
         let mut out = Vec::new();
         let mut check = |name: &str, now: f32, was: f32, worse: bool| {
             if worse {
                 out.push(format!("{name} {was:.3} -> {now:.3}"));
             }
         };
+        if gate == Gate::Silent {
+            check("heard_all", self.heard_all, base.heard_all, self.heard_all > base.heard_all + 0.005);
+        } else {
+            check(
+                "heard_fraction",
+                self.heard_fraction,
+                base.heard_fraction,
+                self.heard_fraction < base.heard_fraction - 0.02,
+            );
+            check("heard_all", self.heard_all, base.heard_all, self.heard_all < base.heard_all - 0.02);
+            check(
+                "masked_fraction",
+                self.masked_fraction,
+                base.masked_fraction,
+                self.masked_fraction > base.masked_fraction + 0.02,
+            );
+        }
         check(
-            "heard_fraction",
-            self.heard_fraction,
-            base.heard_fraction,
-            self.heard_fraction < base.heard_fraction - 0.02,
+            "tracking_cents",
+            self.tracking_cents,
+            base.tracking_cents,
+            self.tracking_cents > base.tracking_cents + 2.0,
         );
         check(
             "gross_error_rate",
@@ -86,85 +336,228 @@ impl Metrics {
             base.gross_error_rate,
             self.gross_error_rate > base.gross_error_rate + 0.02,
         );
+        check("recall", self.recall, base.recall, self.recall < base.recall - 0.02);
         check(
-            "mean_abs_cents",
-            self.mean_abs_cents,
-            base.mean_abs_cents,
-            self.mean_abs_cents > base.mean_abs_cents + 2.0,
+            "false_marks",
+            self.false_marks as f32,
+            base.false_marks as f32,
+            self.false_marks > base.false_marks,
         );
-        check(
-            "planted_recall",
-            self.planted_recall,
-            base.planted_recall,
-            self.planted_recall < base.planted_recall - 0.02,
-        );
-        check(
-            "false_flags",
-            self.false_flags as f32,
-            base.false_flags as f32,
-            self.false_flags > base.false_flags,
-        );
+        // What is counted is fixed by the suites: a change means the test moved, not the listener.
+        check("faults", self.faults as f32, base.faults as f32, self.faults != base.faults);
+        check("takes", self.takes as f32, base.takes as f32, self.takes != base.takes);
         out
     }
 }
 
-/// What `out/eval.json` holds for one suite.
-#[derive(Serialize)]
-struct SuiteOutput {
-    name: String,
-    metrics: Metrics,
-    report: Report,
+/// The notes a mark must catch: planted at least [`FLAGRANT_CENTS`] off (octave-agnostic),
+/// long enough and past the first phrase, or in a verse planted silent throughout.
+fn faults<'a>(notes: &'a [Note], planted: &'a [Planted]) -> impl Iterator<Item = usize> + 'a {
+    (0..notes.len()).filter(move |&i| {
+        let p = &planted[i];
+        if p.silent {
+            let verse: Vec<usize> = (0..notes.len()).filter(|&j| notes[j].verse == notes[i].verse).collect();
+            verse.len() >= 3 && verse.iter().all(|&j| planted[j].silent)
+        } else {
+            fold(p.cents).abs() >= FLAGRANT_CENTS && notes[i].dur_s >= FLAGRANT_MIN_S && notes[i].phrase > 0
+        }
+    })
 }
 
-pub fn run(root: &Path, write_baseline: bool) -> Result<ExitCode, String> {
-    let suites = load_suites(&root.join("evals/suites"))?;
+/// Whether `mark` catches the fault planted on note `i`.
+fn catches(mark: &Mark, i: usize, p: &Planted) -> bool {
+    if !mark.covers(i) {
+        return false;
+    }
+    match mark.kind {
+        MarkKind::VerseMissing => p.silent,
+        MarkKind::Note | MarkKind::Verse => !p.silent && mark.cents.is_some_and(|c| c.signum() == fold(p.cents).signum()),
+    }
+}
+
+/// Whether the notes under `mark` were planted the way it says: for a note mark, its note;
+/// for a verse mark, at least [`VERSE_DESERVED`] of its notes.
+fn deserved(mark: &Mark, planted: &[Planted]) -> bool {
+    let fits = |p: &Planted| match mark.kind {
+        MarkKind::VerseMissing => p.silent,
+        MarkKind::Note | MarkKind::Verse => {
+            let c = fold(p.cents);
+            !p.silent && c.abs() >= CLEAR_CENTS && mark.cents.is_some_and(|m| m.signum() == c.signum())
+        }
+    };
+    let Some(under) = planted.get(mark.first..=mark.last) else {
+        return false;
+    };
+    under.iter().filter(|p| fits(p)).count() as f32 >= VERSE_DESERVED * under.len() as f32
+}
+
+/// What `out/eval.json` holds for one suite.
+#[derive(Serialize)]
+struct SuiteOutput<'a> {
+    name: &'a str,
+    gate: Gate,
+    metrics: Metrics,
+    failures: Vec<String>,
+    takes: Vec<TakeOutput<'a>>,
+}
+
+#[derive(Serialize)]
+struct TakeOutput<'a> {
+    name: &'a str,
+    verdict: &'a Verdict,
+    report: &'a cantor_core::Report,
+}
+
+/// Runs the gates, or with `only`, just the named suite, drawing its takes.
+pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Option<&str>) -> Result<ExitCode, String> {
+    let mut suites: Vec<(String, Gate, Vec<Judged>)> = Vec::new();
+    for suite in load_suites(&root.join("evals/suites"))? {
+        if only.is_some_and(|o| o != suite.name) {
+            continue;
+        }
+        let judged = suite
+            .takes
+            .iter()
+            .enumerate()
+            .map(|(i, t)| run_take(root, t, format!("{} {i}", suite.name)))
+            .collect::<Result<_, _>>()?;
+        suites.push((suite.name, suite.gate, judged));
+    }
+    if let Some(dir) = takes_dir.filter(|_| only.is_none_or(|o| o == REAL)) {
+        let judged = load_real_takes(dir)?;
+        if judged.is_empty() {
+            return Err(format!("{}: no takes", dir.display()));
+        }
+        suites.push((REAL.into(), Gate::Expert, judged));
+    }
+    if suites.is_empty() {
+        return Err(format!("no suite named {}", only.unwrap_or("")));
+    }
+
+    let out_dir = root.join("out");
+    let explain_dir = out_dir.join("explain");
+    std::fs::create_dir_all(&explain_dir).map_err(|e| format!("{}: {e}", explain_dir.display()))?;
+    for (_, _, judged) in &suites {
+        for j in judged {
+            let path = explain_dir.join(format!("{}.svg", j.name.replace(' ', "-")));
+            let svg = explain::svg(&explain::Picture {
+                title: &j.name,
+                notes: &j.notes,
+                frames: &j.frames,
+                verdict: &j.verdict,
+                truth: &j.truth,
+            });
+            std::fs::write(&path, svg).map_err(|e| format!("{}: {e}", path.display()))?;
+            if only.is_some() {
+                println!("{}", path.display());
+            }
+        }
+    }
+    if only.is_some() {
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let baseline_path = root.join("evals/baseline.json");
     let baseline: BTreeMap<String, Metrics> = match std::fs::read_to_string(&baseline_path) {
         Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", baseline_path.display()))?,
         Err(_) => BTreeMap::new(),
     };
 
-    let mut outputs = Vec::new();
-    let mut scorecard = BTreeMap::new();
-    let mut failures = Vec::new();
     println!(
-        "{:<14} {:>6} {:>6} {:>8} {:>7} {:>6}",
-        "suite", "heard", "gross", "|cents|", "recall", "flags"
+        "{:<22} {:<8} {:>5} {:>6} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>5}  result",
+        "suite", "gate", "takes", "heard", "all", "masked", "|cents|", "gross", "faults", "recall", "false"
     );
-    for suite in suites {
-        let report = run_suite(root, &suite)?;
-        let metrics = Metrics::of(&report, &suite.profile);
-        println!(
-            "{:<14} {:>6.3} {:>6.3} {:>8.2} {:>7.3} {:>6}",
-            suite.name,
-            metrics.heard_fraction,
-            metrics.gross_error_rate,
-            metrics.mean_abs_cents,
-            metrics.planted_recall,
-            metrics.false_flags
-        );
-        match baseline.get(&suite.name) {
-            Some(base) => failures.extend(metrics.regressions(base).into_iter().map(|r| format!("{}: {r}", suite.name))),
-            None => println!("{:<14} (not in the baseline)", ""),
+    let mut md = String::from(
+        "| suite | gate | takes | heard | all heard | masked | \\|cents\\| | gross | faults | recall | false marks | result |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n",
+    );
+    let mut scorecard = BTreeMap::new();
+    let mut outputs = Vec::new();
+    let mut gate_failures = Vec::new();
+    let mut baseline_failures = Vec::new();
+    for (name, gate, judged) in &suites {
+        let metrics = Metrics::of(judged);
+        let gated = metrics.gate_failures(*gate);
+        let mut moved = Vec::new();
+        // Real takes are held to their gate only: the set and its audio live elsewhere.
+        if name != REAL {
+            match baseline.get(name) {
+                Some(base) => moved.extend(metrics.regressions(base, *gate)),
+                None => moved.push("not in the baseline".into()),
+            }
+            scorecard.insert(name.clone(), metrics);
         }
-        scorecard.insert(suite.name.clone(), metrics);
+        let failures: Vec<String> = gated.iter().chain(&moved).cloned().collect();
+        let result = if failures.is_empty() {
+            "pass".to_string()
+        } else {
+            format!("FAIL: {}", failures.join("; "))
+        };
+        println!(
+            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5}  {result}",
+            name,
+            gate.name(),
+            metrics.takes,
+            metrics.heard_fraction,
+            metrics.heard_all,
+            metrics.masked_fraction,
+            metrics.tracking_cents,
+            metrics.gross_error_rate,
+            metrics.faults,
+            metrics.recall,
+            metrics.false_marks,
+        );
+        md.push_str(&format!(
+            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {result} |\n",
+            gate.name(),
+            metrics.takes,
+            metrics.heard_fraction,
+            metrics.heard_all,
+            metrics.masked_fraction,
+            metrics.tracking_cents,
+            metrics.gross_error_rate,
+            metrics.faults,
+            metrics.recall,
+            metrics.false_marks,
+        ));
+        gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
+        baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
         outputs.push(SuiteOutput {
-            name: suite.name,
+            name,
+            gate: *gate,
             metrics,
-            report,
+            failures,
+            takes: judged
+                .iter()
+                .map(|j| TakeOutput {
+                    name: &j.name,
+                    verdict: &j.verdict,
+                    report: &j.report,
+                })
+                .collect(),
         });
     }
+    // A suite the baseline holds must still exist: deleting a hard suite is not a pass.
+    for name in baseline.keys().filter(|n| !scorecard.contains_key(*n)) {
+        baseline_failures.push(format!("{name}: in the baseline but not in evals/suites"));
+    }
 
-    let out_dir = root.join("out");
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
     write_json(&out_dir.join("eval.json"), &outputs)?;
+    std::fs::write(out_dir.join("eval.md"), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
     if write_baseline {
+        if !gate_failures.is_empty() {
+            for f in &gate_failures {
+                println!("failed: {f}");
+            }
+            println!("not writing the baseline while a gate fails");
+            return Ok(ExitCode::FAILURE);
+        }
         write_json(&baseline_path, &scorecard)?;
         println!("wrote {}", baseline_path.display());
         return Ok(ExitCode::SUCCESS);
     }
+    let failures: Vec<&String> = gate_failures.iter().chain(&baseline_failures).collect();
     for f in &failures {
-        println!("regression: {f}");
+        println!("failed: {f}");
     }
     Ok(if failures.is_empty() {
         ExitCode::SUCCESS
@@ -173,18 +566,145 @@ pub fn run(root: &Path, write_baseline: bool) -> Result<ExitCode, String> {
     })
 }
 
-fn run_suite(root: &Path, suite: &Suite) -> Result<Report, String> {
-    let path = root.join(&suite.gabc);
+fn run_take(root: &Path, spec: &TakeSpec, name: String) -> Result<Judged, String> {
+    let path = root.join(&spec.gabc);
     let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let notes = notes_from_gabc(&gabc, suite.pulse_s);
-    let samples = render(&notes, &suite.profile, SAMPLE_RATE, suite.seed);
-    let hop = (pitch::DEFAULT_HOP_S * SAMPLE_RATE).round() as usize;
-    let frames = track(&samples, SAMPLE_RATE, pitch::default_frame(SAMPLE_RATE), hop);
-    Ok(score(&notes, &frames))
+    let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
+    for n in &mut notes {
+        n.start_s += spec.lead_in_s;
+    }
+    let profile = &spec.profile;
+    let take = render_take(&notes, profile, SAMPLE_RATE, spec.seed);
+    // The app knows when it played the cue; with none, the guide's bleed cannot be measured.
+    let guide = take.guide.as_deref().map(|samples| Guide {
+        samples,
+        alone: cue_span(&notes).unwrap_or((0.0, 0.0)),
+    });
+    let frames = listen(&take.samples, SAMPLE_RATE, guide);
+    let report = score(&notes, &frames);
+    let verdict = judge(&notes, &report);
+    let planted = profile.planted(&notes);
+    let mid = |n: &Note| n.start_s + n.dur_s / 2.0;
+    let truth = notes
+        .iter()
+        .zip(&planted)
+        .map(|(n, p)| (!p.silent).then(|| profile.key_cents + p.cents + profile.drift_cents_per_second * mid(n)))
+        .collect();
+    // The key at the first verse, where the judge sets it.
+    let first_verse: Vec<f32> = notes.iter().filter(|n| n.verse == notes[0].verse).map(mid).collect();
+    let t0 = first_verse.iter().sum::<f32>() / first_verse.len().max(1) as f32;
+    let span = match (notes.first(), notes.last()) {
+        (Some(a), Some(b)) => mid(b) - mid(a),
+        _ => 0.0,
+    };
+    Ok(Judged {
+        name,
+        true_key: (!profile.singer_silent).then(|| fold(profile.key_cents + profile.drift_cents_per_second * t0)),
+        planted_drift: profile.drift_over(span),
+        notes,
+        planted,
+        truth,
+        frames,
+        verdict,
+        report,
+    })
 }
 
-/// Every `*.json` in `dir`, by file name.
+fn load_real_takes(dir: &Path) -> Result<Vec<Judged>, String> {
+    let mut out = Vec::new();
+    for path in json_files(dir)? {
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let base = path.parent().unwrap_or(dir);
+        let gabc_path = base.join(&take.gabc);
+        let gabc = std::fs::read_to_string(&gabc_path).map_err(|e| format!("{}: {e}", gabc_path.display()))?;
+        let mut notes = notes_from_gabc(&gabc, 1.0);
+        if notes.len() != take.notes.len() {
+            return Err(format!("{}: {} note times for {} notes", take.name, take.notes.len(), notes.len()));
+        }
+        for (i, (n, [start, end])) in notes.iter_mut().zip(&take.notes).enumerate() {
+            if end <= start {
+                return Err(format!("{}: note {i} ends at {end} before it starts at {start}", take.name));
+            }
+            n.start_s = *start;
+            n.dur_s = end - start;
+        }
+        let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
+        let frames = listen(&samples, rate, None);
+        let report = score(&notes, &frames);
+        let verdict = judge(&notes, &report);
+        let len = notes.len();
+        out.push(Judged {
+            name: format!("{REAL} {}", take.name),
+            notes,
+            planted: vec![Planted::default(); len],
+            truth: vec![None; len],
+            true_key: None,
+            planted_drift: 0.0,
+            frames,
+            verdict,
+            report,
+        });
+    }
+    Ok(out)
+}
+
+/// Every suite in `dir`, by file name. A suite's keys other than `name`, `gate` and `takes`
+/// are defaults for its takes; an unknown key is an error, so a typo cannot silently plant
+/// nothing.
 fn load_suites(dir: &Path) -> Result<Vec<Suite>, String> {
+    let known = known_take_keys();
+    json_files(dir)?
+        .iter()
+        .map(|p| {
+            let err = |e: String| format!("{}: {e}", p.display());
+            let text = std::fs::read_to_string(p).map_err(|e| err(e.to_string()))?;
+            let Value::Object(mut obj) = serde_json::from_str(&text).map_err(|e| err(e.to_string()))? else {
+                return Err(err("not an object".into()));
+            };
+            let name = obj
+                .remove("name")
+                .and_then(|v| v.as_str().map(String::from))
+                .ok_or_else(|| err("no name".into()))?;
+            let gate: Gate = match obj.remove("gate") {
+                Some(v) => serde_json::from_value(v).map_err(|e| err(e.to_string()))?,
+                None => Gate::None,
+            };
+            let takes = match obj.remove("takes") {
+                Some(Value::Array(takes)) => takes,
+                Some(_) => return Err(err("takes is not a list".into())),
+                None => vec![Value::Object(Default::default())],
+            };
+            let takes = takes
+                .into_iter()
+                .map(|t| {
+                    let Value::Object(t) = t else {
+                        return Err(err("a take is not an object".into()));
+                    };
+                    let mut merged = obj.clone();
+                    merged.extend(t);
+                    if let Some(k) = merged.keys().find(|k| !known.contains(k)) {
+                        return Err(err(format!("unknown key {k}")));
+                    }
+                    serde_json::from_value(Value::Object(merged)).map_err(|e| err(e.to_string()))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(Suite { name, gate, takes })
+        })
+        .collect()
+}
+
+/// The keys a take may have: its own and the profile's.
+fn known_take_keys() -> Vec<String> {
+    let mut keys: Vec<String> = ["gabc", "pulse_s", "seed", "lead_in_s"].map(String::from).to_vec();
+    if let Ok(Value::Object(p)) = serde_json::to_value(Profile::default()) {
+        keys.extend(p.keys().cloned());
+    }
+    keys
+}
+
+/// Every `*.json` in `dir`, sorted.
+fn json_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let err = |e: std::io::Error| format!("{}: {e}", dir.display());
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .map_err(err)?
@@ -193,17 +713,50 @@ fn load_suites(dir: &Path) -> Result<Vec<Suite>, String> {
         .map_err(err)?;
     paths.retain(|p| p.extension().is_some_and(|x| x == "json"));
     paths.sort();
-    paths
-        .iter()
-        .map(|p| {
-            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))
-        })
-        .collect()
+    Ok(paths)
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let mut text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     text.push('\n');
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_suite_loads() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let suites = load_suites(&root.join("evals/suites")).expect("suites");
+        assert!(suites.iter().any(|s| s.gate == Gate::Expert));
+        assert!(suites.iter().any(|s| s.gate == Gate::Student));
+        assert!(suites.iter().any(|s| s.gate == Gate::Silent));
+        assert!(suites.iter().any(|s| s.gate == Gate::Wrong));
+    }
+
+    #[test]
+    fn a_mark_is_deserved_by_what_was_planted() {
+        let off = Planted {
+            cents: 200.0,
+            silent: false,
+        };
+        let clean = Planted::default();
+        let mark = |kind, first, last, cents| Mark { kind, first, last, cents };
+        let planted = [clean, off, off, clean];
+        assert!(deserved(&mark(MarkKind::Note, 1, 1, Some(180.0)), &planted));
+        assert!(!deserved(&mark(MarkKind::Note, 1, 1, Some(-180.0)), &planted));
+        assert!(!deserved(&mark(MarkKind::Note, 0, 0, Some(180.0)), &planted));
+        assert!(!deserved(&mark(MarkKind::Verse, 0, 3, Some(200.0)), &planted));
+        assert!(deserved(&mark(MarkKind::Verse, 1, 2, Some(200.0)), &planted));
+        assert!(!deserved(&mark(MarkKind::VerseMissing, 0, 3, None), &planted));
+        assert!(!deserved(&mark(MarkKind::Note, 7, 7, Some(180.0)), &planted));
+        // Planted offsets fold as the judge's errors do: +700 cents is a fourth down.
+        let fifth = [Planted {
+            cents: 700.0,
+            silent: false,
+        }];
+        assert!(deserved(&mark(MarkKind::Note, 0, 0, Some(-500.0)), &fifth));
+    }
 }

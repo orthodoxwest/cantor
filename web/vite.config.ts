@@ -10,7 +10,11 @@ export default defineConfig({
     rollupOptions: {
       // The worklet is its own entry, loaded with audioWorklet.addModule; it shares no module
       // with the page, so it bundles to one self-contained file at a fixed path.
-      input: { main: here("index.html"), worklet: here("src/worklet/processor.ts") },
+      input: {
+        main: here("index.html"),
+        sing: here("sing.html"),
+        worklet: here("src/worklet/processor.ts"),
+      },
       output: {
         entryFileNames: (chunk) => (chunk.name === "worklet" ? "worklet.js" : "assets/[name]-[hash].js"),
       },

@@ -16,7 +16,7 @@ declare global {
 const PULSE = 0.5;
 
 async function open(page: Page): Promise<Timeline> {
-  await page.goto("/?test=1");
+  await page.goto("/sing.html?test=1");
   await expect(page.locator("#score svg")).toBeVisible();
   return page.evaluate(() => window.__cantor.timeline);
 }
@@ -66,7 +66,7 @@ for (const [voice, query] of [
     );
     const errors: string[] = [];
     page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-    await page.goto(`/?test=1${query}`);
+    await page.goto(`/sing.html?test=1${query}`);
     await expect(page.locator("#score svg")).toBeVisible();
     expect(await page.evaluate(() => window.__cantor.voice)).toBe(voice);
     await page.getByRole("button", { name: "Play" }).click();
@@ -88,7 +88,7 @@ test("a voice file with nothing to sing falls back to the neutral vowel", async 
     (url) => url.pathname === "/empty.cvox",
     (route) => route.fulfill({ body: empty }),
   );
-  await page.goto("/?test=1&voice=/empty.cvox");
+  await page.goto("/sing.html?test=1&voice=/empty.cvox");
   await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
   expect(await page.evaluate(() => window.__cantor.voice)).toBe("neutral");
 });

@@ -1012,11 +1012,7 @@ mod tests {
     #[test]
     fn a_part_reads_whole_words() {
         let lyric = |text: &str, word, syllable, start_s| Lyric {
-            note: Note {
-                midi: 60.0,
-                start_s,
-                dur_s: 0.5,
-            },
+            note: Note::new(60.0, start_s, 0.5),
             text: text.into(),
             word,
             syllable,

@@ -1,126 +1,82 @@
-// The guide voice: cantor-core's renderer (cantor.wasm) singing either the neutral vowel it
-// makes itself or a voice file of recorded vowels, which is private and loaded at runtime
-// from a URL the page is given. The page renders the part a chunk at a time, ahead of the
-// audio clock.
-import type { Timeline } from "neuma";
-
-interface Exports {
-  memory: WebAssembly.Memory;
-  cantor_input(len: number): number;
-  cantor_voice_new(): number;
-  cantor_voice_neutral(): number;
-  cantor_voice_centre(voice: number): number;
-  cantor_part_new(gabcLen: number): number;
-  cantor_part_free(part: number): void;
-  cantor_part_length(part: number, sampleRate: number): number;
-  cantor_sing(voice: number, part: number, sampleRate: number, from: number, len: number): number;
-}
-
-const WASM_URL = `${import.meta.env.BASE_URL}cantor.wasm`;
-
-/** The notes in the form cantor.wasm reads: one per line, MIDI, start and duration in
- * seconds, word and syllable indexes, and the syllable's text, tab-separated. */
-export function notesText(timeline: Timeline, pulse: number, midiOf: (semitones: number) => number): string {
-  return timeline.notes
-    .map((n) =>
-      [midiOf(n.semitones), n.start * pulse, n.duration * pulse, n.word, n.syllable, n.syllableText.replace(/[\t\n]/g, " ")].join("\t"),
-    )
-    .join("\n");
-}
-
-/** Whole octaves that bring `midis`' middle note nearest `centre`. */
-export function octaveShift(midis: number[], centre: number): number {
-  if (midis.length === 0) return 0;
-  const sorted = [...midis].sort((a, b) => a - b);
-  const middle = sorted[Math.floor(sorted.length / 2)]!;
-  return 12 * Math.round((centre - middle) / 12) || 0;
-}
-
-/** The chunks to render now: those starting before `horizon` samples, from `next` on, each
- * `size` samples long, the last cut at `total`. */
-export function chunksDue(next: number, horizon: number, size: number, total: number): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let from = next; from < total && from < horizon; from += size) out.push([from, Math.min(size, total - from)]);
-  return out;
-}
+// A neutral-vowel guide voice: a band-limited sawtooth, a soft envelope per note, through
+// the three formants of a schwa, so the guide sounds sung rather than played.
+const FORMANTS = [
+  { freq: 500, q: 6, gain: 1 },
+  { freq: 1500, q: 10, gain: 0.45 },
+  { freq: 2500, q: 14, gain: 0.2 },
+];
+const HARMONICS = 24;
+const ATTACK = 0.025;
+const RELEASE = 0.06;
+const LEVEL = 1.6;
 
 export class Voice {
-  private constructor(
-    private readonly wasm: Exports,
-    private readonly voice: number,
-  ) {}
+  /** Notes go here; the formants and master gain follow. */
+  readonly input: GainNode;
+  private readonly nodes: AudioNode[] = [];
+  private readonly oscillators = new Set<OscillatorNode>();
+  private readonly wave: PeriodicWave;
 
-  /** The neutral voice: every syllable on one made vowel. */
-  static async neutral(wasmUrl = WASM_URL): Promise<Voice> {
-    const wasm = await instantiate(fetchBytes(wasmUrl));
-    return new Voice(wasm, wasm.cantor_voice_neutral());
-  }
-
-  /** The voice file at `voiceUrl`, given up on after `timeoutMs`. */
-  static async load(voiceUrl: string, wasmUrl = WASM_URL, timeoutMs = 20_000): Promise<Voice> {
-    const [wasm, file] = await Promise.all([
-      instantiate(fetchBytes(wasmUrl)),
-      fetchBytes(voiceUrl, AbortSignal.timeout(timeoutMs)),
-    ]);
-    write(wasm, new Uint8Array(file));
-    const voice = wasm.cantor_voice_new();
-    if (!voice) throw new Error(`${voiceUrl}: not a voice file`);
-    return new Voice(wasm, voice);
-  }
-
-  /** The pitch (MIDI) the voice is at home at. */
-  get centre(): number {
-    return this.wasm.cantor_voice_centre(this.voice);
-  }
-
-  /** A part to sing: the GABC is read for its language, the notes are the timeline's. */
-  part(gabc: string, notes: string): Part {
-    const g = new TextEncoder().encode(gabc);
-    const n = new TextEncoder().encode(notes);
-    const bytes = new Uint8Array(g.length + n.length);
-    bytes.set(g);
-    bytes.set(n, g.length);
-    write(this.wasm, bytes);
-    return new Part(this.wasm, this.voice, this.wasm.cantor_part_new(g.length));
-  }
-}
-
-export class Part {
   constructor(
-    private readonly wasm: Exports,
-    private readonly voice: number,
-    private handle: number,
-  ) {}
-
-  /** Samples the whole part lasts at `sampleRate`. */
-  length(sampleRate: number): number {
-    return this.wasm.cantor_part_length(this.handle, sampleRate);
+    private readonly ctx: BaseAudioContext,
+    level = LEVEL,
+  ) {
+    const real = new Float32Array(HARMONICS + 1);
+    const imag = new Float32Array(HARMONICS + 1);
+    for (let k = 1; k <= HARMONICS; k++) imag[k] = 1 / k;
+    this.wave = ctx.createPeriodicWave(real, imag);
+    this.input = ctx.createGain();
+    const master = ctx.createGain();
+    master.gain.value = level;
+    master.connect(ctx.destination);
+    // A little of the source itself, low-passed, keeps the fundamental's body.
+    const body = ctx.createBiquadFilter();
+    body.type = "lowpass";
+    body.frequency.value = 700;
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.value = 0.25;
+    this.input.connect(body).connect(bodyGain).connect(master);
+    this.nodes.push(this.input, master, body, bodyGain);
+    for (const f of FORMANTS) {
+      const band = ctx.createBiquadFilter();
+      band.type = "bandpass";
+      band.frequency.value = f.freq;
+      band.Q.value = f.q;
+      const gain = ctx.createGain();
+      gain.gain.value = f.gain * 3;
+      this.input.connect(band).connect(gain).connect(master);
+      this.nodes.push(band, gain);
+    }
   }
 
-  /** `len` samples from sample `from`, a copy of the module's output. */
-  sing(sampleRate: number, from: number, len: number): Float32Array<ArrayBuffer> {
-    const ptr = this.wasm.cantor_sing(this.voice, this.handle, sampleRate, from, len);
-    return new Float32Array(this.wasm.memory.buffer, ptr, len).slice();
+  /** Sings `freq` from `start` to `end`, in the context's seconds. */
+  note(freq: number, start: number, end: number): void {
+    const osc = this.ctx.createOscillator();
+    osc.setPeriodicWave(this.wave);
+    osc.frequency.value = freq;
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(0.3, start + ATTACK);
+    env.gain.setValueAtTime(0.3, Math.max(start + ATTACK, end - RELEASE));
+    env.gain.linearRampToValueAtTime(0, end);
+    osc.connect(env).connect(this.input);
+    osc.start(start);
+    osc.stop(end);
+    this.oscillators.add(osc);
+    osc.onended = () => {
+      env.disconnect();
+      this.oscillators.delete(osc);
+    };
   }
 
-  free(): void {
-    this.wasm.cantor_part_free(this.handle);
-    this.handle = 0;
+  /** Silences every note and lets the graph go. */
+  close(): void {
+    for (const osc of this.oscillators) {
+      osc.onended = null;
+      osc.stop();
+      osc.disconnect();
+    }
+    this.oscillators.clear();
+    for (const node of this.nodes) node.disconnect();
   }
-}
-
-async function fetchBytes(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-  const r = await fetch(url, { signal });
-  if (!r.ok) throw new Error(`${url}: ${r.status}`);
-  return r.arrayBuffer();
-}
-
-async function instantiate(module: Promise<ArrayBuffer>): Promise<Exports> {
-  const { instance } = await WebAssembly.instantiate(await module, {});
-  return instance.exports as unknown as Exports;
-}
-
-function write(wasm: Exports, bytes: Uint8Array): void {
-  const ptr = wasm.cantor_input(bytes.length);
-  new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
 }

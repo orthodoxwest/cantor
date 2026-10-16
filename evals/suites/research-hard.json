@@ -1,0 +1,140 @@
+{
+  "name": "research-hard",
+  "pulse_s": 0.4,
+  "voice": "vowel",
+  "scoop_cents": 150,
+  "scoop_s": 0.12,
+  "vibrato_cents": 45,
+  "vibrato_hz": 5.5,
+  "wander_cents": 12,
+  "takes": [
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 905,
+      "key_cents": -1800,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.0,
+      "level_db": 0
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 906,
+      "key_cents": -1800,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.02,
+      "level_db": -6
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 907,
+      "key_cents": -1800,
+      "reverb_rt60_s": 3.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.0,
+      "level_db": 0
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 908,
+      "key_cents": -1800,
+      "reverb_rt60_s": 3.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.02,
+      "level_db": -6
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 909,
+      "key_cents": -1500,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.0,
+      "level_db": 0
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 910,
+      "key_cents": -1500,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.02,
+      "level_db": -6
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 911,
+      "key_cents": -1500,
+      "reverb_rt60_s": 3.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.0,
+      "level_db": 0
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 912,
+      "key_cents": -1500,
+      "reverb_rt60_s": 3.0,
+      "reverb_wet": 0.6,
+      "phone": true,
+      "noise_rms": 0.02,
+      "level_db": -6
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 913,
+      "key_cents": -1100,
+      "guide": "full",
+      "lead_in_s": 2.0,
+      "bleed_db": -10,
+      "bleed_delay_s": 0.12,
+      "reverb_rt60_s": 0.5,
+      "reverb_wet": 0.5,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 914,
+      "key_cents": -1100,
+      "guide": "full",
+      "lead_in_s": 2.0,
+      "bleed_db": -10,
+      "bleed_delay_s": 0.12,
+      "reverb_rt60_s": 2.0,
+      "reverb_wet": 0.5,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 915,
+      "key_cents": -1100,
+      "guide": "full",
+      "lead_in_s": 2.0,
+      "bleed_db": -8,
+      "bleed_delay_s": 0.12,
+      "reverb_rt60_s": 0.5,
+      "reverb_wet": 0.5,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 916,
+      "key_cents": -1100,
+      "guide": "full",
+      "lead_in_s": 2.0,
+      "bleed_db": -8,
+      "bleed_delay_s": 0.12,
+      "reverb_rt60_s": 2.0,
+      "reverb_wet": 0.5,
+      "phone": true
+    }
+  ]
+}

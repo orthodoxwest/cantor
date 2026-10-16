@@ -5,7 +5,7 @@ import { Listener } from "./listen";
 import { describePitch } from "./notes";
 import { SAMPLE } from "./sample";
 import { Score } from "./score";
-import { Voice } from "./voice";
+import { neutralTable, VoiceTable } from "./singer";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
@@ -47,12 +47,12 @@ const failed = (error: unknown) => {
   console.error("guide voice:", error);
   return undefined;
 };
-const recorded = voiceUrl ? await Voice.load(voiceUrl).catch(failed) : undefined;
-const voice = recorded ?? (await Voice.neutral().catch(failed));
+const recorded = voiceUrl ? await VoiceTable.load(voiceUrl).catch(failed) : undefined;
+const table = recorded ?? (await neutralTable().catch(failed));
 const guide =
-  voice &&
+  table &&
   new Guide(score, cursor, {
-    voice,
+    table,
     gabc: SAMPLE,
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
@@ -71,7 +71,9 @@ if (test) {
     frames: listener.frames,
     timeline: score.timeline,
     visited: guide?.visited ?? [],
-    chunks: guide?.chunks ?? [],
-    voice: recorded ? "recorded" : voice ? "neutral" : "none",
+    get chunks() {
+      return guide?.chunks ?? [];
+    },
+    voice: recorded ? "recorded" : table ? "neutral" : "none",
   };
 }

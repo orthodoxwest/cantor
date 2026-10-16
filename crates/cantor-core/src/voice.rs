@@ -661,7 +661,7 @@ mod tests {
 
     fn sung(midi: f32, start_s: f32, dur_s: f32, vowel: Vowel, new_syllable: bool) -> Sung {
         Sung {
-            note: Note { midi, start_s, dur_s },
+            note: Note::new(midi, start_s, dur_s),
             diction: Diction {
                 onset: Consonants::Unvoiced,
                 vowel,

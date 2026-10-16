@@ -2,23 +2,28 @@
 //! inputs and returns a value, so the same code runs in a browser worklet, on a server and
 //! in tests.
 //!
-//! The research loop this crate skeletons: [`synth`] renders a take with planted faults,
-//! [`pitch`] tracks it, and [`score`] measures the track against the notes [`timeline`] read
-//! from the chant.
+//! The research loop: [`synth`] renders a take with planted faults through a [`room`],
+//! [`listen`] tracks it and masks the guide's bleed, [`score`] measures the track against the
+//! notes [`timeline`] read from the chant, and [`judge`] decides what the singer is told.
 
 #![forbid(unsafe_code)]
 
 pub mod diction;
+pub mod judge;
+pub mod listen;
 pub mod pitch;
+pub mod room;
 pub mod score;
 pub mod synth;
 pub mod timeline;
 pub mod voice;
 
 pub use diction::{Language, Lyric, Sung, Vowel};
+pub use judge::{Mark, MarkKind, Outcome, Verdict, judge};
+pub use listen::{Guide, listen};
 pub use pitch::{Frame, track};
 pub use score::{NoteResult, Report, score};
-pub use synth::{Note, Profile, render};
+pub use synth::{Note, Planted, Profile, Take, render, render_take};
 pub use timeline::{notes_from_gabc, part_from_gabc};
 pub use voice::{Voice, VoiceError, sing};
 

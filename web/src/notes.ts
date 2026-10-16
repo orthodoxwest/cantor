@@ -5,6 +5,8 @@ export const DO = 60;
 
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
+export const midiToFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
+
 /** A pitch as its nearest note name and the offset from it in cents, "A4 +3¢". */
 export function describePitch(midi: number): string {
   const nearest = Math.round(midi);

@@ -13,10 +13,13 @@
     {
       "binding": "DB",
       "database_name": "cantor",
-      // Placeholder: `wrangler d1 create cantor` prints the real id.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "9fc51a09-6360-41bf-a46b-78e2763c5a43",
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }]
+  // Production value; .dev.vars and the test config override it with "dev".
+  "vars": { "ENV": "prod" },
+  // Takes will live in R2 once it is enabled on the account:
+  // "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }]
+  "workers_dev": true
 }

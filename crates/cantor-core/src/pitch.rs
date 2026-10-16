@@ -37,6 +37,13 @@ pub struct Frame {
     pub clarity: f32,
     /// The frame's root mean square.
     pub rms: f32,
+    /// The frame was voiced but no louder than the guide's bleed could make it, so its
+    /// pitch was dropped (see [`crate::listen`]).
+    #[serde(default)]
+    pub masked: bool,
+    /// The frame was below the loudness floor: evidence of silence, not just of no pitch.
+    #[serde(default)]
+    pub quiet: bool,
 }
 
 /// What [`detect`] hears in one frame.
@@ -53,6 +60,11 @@ pub struct Detection {
 /// Tracks `samples` with frames of `frame` samples every `hop` samples, at the default
 /// loudness and clarity floors. A frame's time is its centre.
 pub fn track(samples: &[f32], sample_rate: f32, frame: usize, hop: usize) -> Vec<Frame> {
+    track_with(samples, sample_rate, frame, hop, DEFAULT_MIN_RMS)
+}
+
+/// [`track`] with a loudness floor of `min_rms`.
+pub fn track_with(samples: &[f32], sample_rate: f32, frame: usize, hop: usize, min_rms: f32) -> Vec<Frame> {
     let hop = hop.max(1);
     let mut frames = Vec::new();
     if frame == 0 || samples.len() < frame {
@@ -60,12 +72,14 @@ pub fn track(samples: &[f32], sample_rate: f32, frame: usize, hop: usize) -> Vec
     }
     let mut start = 0;
     while start + frame <= samples.len() {
-        let d = detect(&samples[start..start + frame], sample_rate, DEFAULT_MIN_RMS, DEFAULT_MIN_CLARITY);
+        let d = detect(&samples[start..start + frame], sample_rate, min_rms, DEFAULT_MIN_CLARITY);
         frames.push(Frame {
             t: (start as f32 + frame as f32 / 2.0) / sample_rate,
             midi: d.midi,
             clarity: d.clarity,
             rms: d.rms,
+            masked: false,
+            quiet: d.rms < min_rms,
         });
         start += hop;
     }
