@@ -36,21 +36,27 @@ const fromBase64Url = (s: string) =>
   Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 const json = (part: string): unknown => JSON.parse(decoder.decode(fromBase64Url(part)));
 
-/** The team's signing keys by key id, fetched again when a token names one not seen yet. */
-const keys = new Map<string, CryptoKey>();
+/** Each team's signing keys by key id, as last fetched, and when. */
+const teams = new Map<string, { keys: Map<string, CryptoKey>; fetched: number }>();
+/** Keys are fetched again after an hour, so a key Access drops stops working; a token naming a
+ * key not seen fetches them again at most once a minute. */
+const KEYS_TTL = 3_600_000;
+const REFETCH = 60_000;
 
-async function signingKey(team: string, kid: string): Promise<CryptoKey | undefined> {
-  const cached = keys.get(`${team} ${kid}`);
-  if (cached) return cached;
+async function signingKey(team: string, kid: string, now: number): Promise<CryptoKey | undefined> {
+  const known = teams.get(team);
+  const fresh = known && now - known.fetched < KEYS_TTL;
+  if (fresh && (known.keys.has(kid) || now - known.fetched < REFETCH)) return known.keys.get(kid);
   const res = await fetch(`${team}/cdn-cgi/access/certs`);
   if (!res.ok) return undefined;
   const { keys: jwks } = (await res.json()) as { keys?: Array<JsonWebKey & { kid?: string }> };
+  const keys = new Map<string, CryptoKey>();
   for (const jwk of jwks ?? []) {
     if (!jwk.kid || jwk.kty !== "RSA") continue;
-    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
-    keys.set(`${team} ${jwk.kid}`, key);
+    keys.set(jwk.kid, await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]));
   }
-  return keys.get(`${team} ${kid}`);
+  teams.set(team, { keys, fetched: now });
+  return keys.get(kid);
 }
 
 async function verifyAccessJwt(jwt: string, team: string, aud: string, now: number): Promise<Identity | null> {
@@ -59,7 +65,7 @@ async function verifyAccessJwt(jwt: string, team: string, aud: string, now: numb
   const [head, body, signature] = parts as [string, string, string];
   const header = json(head) as { alg?: unknown; kid?: unknown };
   if (header.alg !== "RS256" || typeof header.kid !== "string") return null;
-  const key = await signingKey(team, header.kid);
+  const key = await signingKey(team, header.kid, now);
   if (!key) return null;
   const signed = new TextEncoder().encode(`${head}.${body}`);
   if (!(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, fromBase64Url(signature), signed))) return null;

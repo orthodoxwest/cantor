@@ -212,7 +212,11 @@ function snapshot(): Snapshot {
   return { setting: state.setting, tone: state.tone, gloria: state.gloria, verses: state.verses, own: state.own, text: state.text, unsure: new Set(state.unsure) };
 }
 
+/** Counts the visitor's changes, so a load that waited on the network knows it was overtaken. */
+let changes = 0;
+
 function pushUndo(): void {
+  changes++;
   undoStack.push(snapshot());
   if (undoStack.length > 100) undoStack.shift();
   els.undo.disabled = false;
@@ -270,6 +274,7 @@ els.psalm.addEventListener("change", () => {
   state.verses = null;
   state.setting = null;
   booklets = [];
+  changes++;
   undoStack.length = 0;
   els.undo.disabled = true;
   repoint();
@@ -335,6 +340,7 @@ for (const input of [els.from, els.to]) {
     const whole = [entry.first, entry.first + entry.verses.length - 1].join();
     state.verses = next.join() === whole ? null : next;
     if (String(state.verses) === String(before)) return syncControls();
+    changes++;
     undoStack.push({ ...snapshot(), verses: before });
     els.undo.disabled = false;
     repointKeepingEdits();
@@ -841,10 +847,10 @@ async function load(hash: string): Promise<void> {
   booklets = [];
   // A shared booklet setting needs the settings first; otherwise they come when they come.
   if (shared?.setting && state.psalm !== OWN) {
-    const psalm = state.psalm;
-    const found = await fetchBooklets(psalter.get(psalm));
-    // Another load, or another psalm chosen meanwhile, has the page now.
-    if (token !== loading || state.psalm !== psalm) return;
+    const seen = changes;
+    const found = await fetchBooklets(psalter.get(state.psalm));
+    // Another load, or the visitor's own change meanwhile, has the page now.
+    if (token !== loading || changes !== seen) return;
     booklets = found;
     if (booklets.some((b) => b.id === shared.setting)) state.setting = shared.setting;
   } else if (state.psalm !== OWN) void offerBooklets();

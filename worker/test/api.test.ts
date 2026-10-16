@@ -103,6 +103,11 @@ describe("api", () => {
       expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
     });
 
+    it("takes a single audience as well as a list", async () => {
+      const jwt = await token({ ...good(), aud: AUD });
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
+    });
+
     it("lets in no forged, foreign, expired or dev-header caller", async () => {
       const other = (await crypto.subtle.generateKey(
         { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -123,6 +128,10 @@ describe("api", () => {
         expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(401);
         expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(401);
       }
+      const none = `${text('{"alg":"none","kid":"k1"}')}.${text(JSON.stringify(good()))}.`;
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": none }, prod)).status).toBe(401);
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": "not.a!.token" }, prod)).status).toBe(401);
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token({ ...good(), nbf: now() + 60 }) }, prod)).status).toBe(401);
       expect((await get("/api/pointing/116", { "X-Dev-User": "student" }, prod)).status).toBe(401);
       // Without the team and audience configured, nobody is signed in.
       const unset = { ...env, ENV: "prod", ACCESS_TEAM: "", ACCESS_AUD: "" };
