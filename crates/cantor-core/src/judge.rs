@@ -96,8 +96,9 @@ impl Mark {
 pub struct Cadence {
     pub first: usize,
     pub last: usize,
-    /// Its note furthest from the key and the drift, in cents, of the notes heard and at least
-    /// [`HEARD_MIN_S`] long; none when no such note was heard.
+    /// Its note furthest from the key and the drift, in cents, of the notes at least
+    /// [`HEARD_MIN_S`] long; none unless each of them was heard with frames that agree, as a
+    /// marked note's must.
     pub cents: Option<f32>,
 }
 
@@ -183,8 +184,7 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
             continue;
         }
         let (Some(rel), r) = (relative[i], &results[i]) else { continue };
-        let agreed = r.voiced_frames >= MARK_MIN_FRAMES && r.spread_cents.is_some_and(|s| s < MARK_MAX_SPREAD);
-        if notes[i].phrase > 0 && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS && agreed {
+        if notes[i].phrase > 0 && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS && agreed(r) {
             marks.push(Mark {
                 kind: MarkKind::Note,
                 first: i,
@@ -208,10 +208,15 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         .map(|(first, last)| Cadence {
             first,
             last,
+            // A note not clearly heard could be the one off: then the cadence is not judged.
             cents: (first..=last)
                 .filter(|&i| notes[i].dur_s >= HEARD_MIN_S)
-                .filter_map(|i| relative[i])
-                .max_by(|a, b| a.abs().total_cmp(&b.abs())),
+                .map(|i| relative[i].filter(|_| agreed(&results[i])))
+                .try_fold(None::<f32>, |worst, rel| {
+                    let rel = rel?;
+                    Some(Some(worst.map_or(rel, |w| if rel.abs() > w.abs() { rel } else { w })))
+                })
+                .flatten(),
         })
         .collect();
     Verdict {
@@ -273,6 +278,11 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
         first = last + 1;
     }
     out
+}
+
+/// Whether a note's frames agree on its pitch: enough of them, close together.
+fn agreed(r: &NoteResult) -> bool {
+    r.voiced_frames >= MARK_MIN_FRAMES && r.spread_cents.is_some_and(|s| s < MARK_MAX_SPREAD)
 }
 
 fn mid(n: &Note) -> f32 {
@@ -669,7 +679,10 @@ mod tests {
         assert!(v.marks.is_empty(), "{:?}", v.marks);
         let on: Vec<Option<bool>> = v.cadences.iter().map(Cadence::on_pitch).collect();
         assert_eq!(on, [Some(false), Some(true), Some(true)]);
-        // A cadence not heard is neither.
+        // A cadence with a note whose frames disagree is not judged, nor one not heard.
+        let mut disagreeing = report(&cents);
+        disagreeing.notes[12].spread_cents = Some(200.0);
+        assert_eq!(judge(&notes, &disagreeing).cadences[1].on_pitch(), None);
         let mut cents = cents;
         cents[22..=24].fill(None);
         let v = judge(&notes, &report(&cents));

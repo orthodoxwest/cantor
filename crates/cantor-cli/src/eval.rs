@@ -39,7 +39,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
-use cantor_core::{Cadence, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
+use cantor_core::{
+    Cadence, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

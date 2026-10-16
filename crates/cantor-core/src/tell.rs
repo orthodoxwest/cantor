@@ -33,7 +33,7 @@ pub fn told(verdict: &Verdict) -> Vec<String> {
 /// What the singer is told of the take as a whole, in two sentences: whether the reciting
 /// tone (the pitch, in a chant not recited) held steady, from the judge's drift, and whether
 /// the cadences were on pitch, from the judge's cadences. Nothing of timing or breath. None for
-/// a take not heard; one sentence when no cadence was heard.
+/// a take not heard; one sentence when no cadence was clearly heard.
 pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
@@ -52,14 +52,14 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
     let heard: Vec<bool> = verdict.cadences.iter().filter_map(|c| c.on_pitch()).collect();
     let off = heard.iter().filter(|on| !**on).count();
     let n = heard.len();
-    // Cadences not heard are neither on pitch nor off.
-    let which = if n == verdict.cadences.len() { "" } else { " heard" };
+    // Cadences not clearly heard are neither on pitch nor off.
+    let which = if n == verdict.cadences.len() { "" } else { " clearly heard" };
     let sentence = match (n, off) {
         (0, _) => None,
         (1, 0) if which.is_empty() => Some("The cadence was on pitch.".to_string()),
         (1, _) if which.is_empty() => Some("The cadence went off pitch.".to_string()),
-        (1, 0) => Some("The one cadence heard was on pitch.".to_string()),
-        (1, _) => Some("The one cadence heard went off pitch.".to_string()),
+        (1, 0) => Some("The one cadence clearly heard was on pitch.".to_string()),
+        (1, _) => Some("The one cadence clearly heard went off pitch.".to_string()),
         (_, 0) => Some(format!("Every cadence{which} was on pitch.")),
         _ if off == n => Some(format!("Every cadence{which} went off pitch.")),
         _ => {
@@ -248,16 +248,19 @@ mod tests {
     fn cadences_not_heard_are_left_out() {
         let notes = psalm();
         let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences)).get(1).cloned();
-        assert_eq!(told(&[Some(20.0), None, Some(10.0)]).unwrap(), "Every cadence heard was on pitch.");
+        assert_eq!(
+            told(&[Some(20.0), None, Some(10.0)]).unwrap(),
+            "Every cadence clearly heard was on pitch."
+        );
         assert_eq!(
             told(&[Some(200.0), None, Some(-150.0)]).unwrap(),
-            "Every cadence heard went off pitch."
+            "Every cadence clearly heard went off pitch."
         );
         assert_eq!(
             told(&[Some(200.0), None, Some(15.0)]).unwrap(),
-            "One of the two cadences heard went off pitch."
+            "One of the two cadences clearly heard went off pitch."
         );
-        assert_eq!(told(&[None, Some(15.0)]).unwrap(), "The one cadence heard was on pitch.");
+        assert_eq!(told(&[None, Some(15.0)]).unwrap(), "The one cadence clearly heard was on pitch.");
         assert_eq!(told(&[None, None]), None);
         assert_eq!(told(&[]), None);
     }
