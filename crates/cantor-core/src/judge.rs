@@ -50,9 +50,6 @@ pub const CADENCE_CENTS: f32 = 100.0;
 const RECITED_SHARE: f32 = 1.0 / 3.0;
 /// The notes ending a phrase that are its cadence where no reciting tone shows where it starts.
 const CADENCE_NOTES: usize = 2;
-/// The most notes a cadence found without a recitation before it reaches back over: a psalm
-/// tone's longest, accent to final.
-const CADENCE_MAX_NOTES: usize = 5;
 
 /// What became of the take as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,8 +239,9 @@ pub fn recited(notes: &[Note]) -> bool {
 /// last note off it, or, with none, after the last two notes in a row on the tone: a psalm
 /// tone's mediant or termination, accent and all. A phrase that never leaves the tone has none.
 /// One that neither recites nor holds the tone before leaving it runs from its first note off
-/// the tone after its first note, but at most its last [`CADENCE_MAX_NOTES`] and always its last
-/// note off the tone; it has none when it ends on two or more notes back on the tone.
+/// the tone after its first note ("and cléanse me fróm my sin"); it has none when it ends on two
+/// or more notes back on the tone. So in a recited chant an antiphon's phrase is nearly all
+/// cadence.
 ///
 /// In a chant not recited a cadence is each phrase's last [`CADENCE_NOTES`].
 pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
@@ -275,10 +273,7 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
                 let held = || (first + 1..off).rev().find(|&i| pitch(&notes[i]) == t && pitch(&notes[i - 1]) == t);
                 match recited.or_else(held) {
                     Some(i) => Some(i + 1),
-                    None => (last - off < CADENCE_NOTES).then(|| {
-                        let left = (first + 1..=off).find(|&i| pitch(&notes[i]) != t).unwrap_or(off);
-                        left.max((last + 1).saturating_sub(CADENCE_MAX_NOTES)).min(off)
-                    }),
+                    None => (last - off < CADENCE_NOTES).then(|| (first + 1..=off).find(|&i| pitch(&notes[i]) != t).unwrap_or(off)),
                 }
             }),
             None => Some(ends),
@@ -691,6 +686,13 @@ mod tests {
             0.5,
         );
         assert_eq!(cadences(&notes)[1], (15, 20));
+        // A half-verse with no recitation is cadence from its first note off the tone, however
+        // many notes its final's neume adds.
+        let notes = crate::notes_from_gabc(
+            "(c4) Glo(h)ry(h) be(h) to(h) the(h) Fa(h)ther(g) (:) and(h) cléanse(i) me(h) fróm(g) my(g) sin.(gfedf) (::)",
+            0.5,
+        );
+        assert_eq!(cadences(&notes)[1], (8, 16));
     }
 
     #[test]

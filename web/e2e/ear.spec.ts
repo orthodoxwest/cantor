@@ -212,7 +212,7 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   // The take's own sentences: its tone as the eval's, its cadences as the eval's but for one
   // too near the line to call.
   const told = (await page.locator("#summary").textContent()) ?? "";
-  expect(told.startsWith(`${want.summary[0]} `)).toBe(true);
+  expect(told.startsWith(want.summary[0])).toBe(true);
   if (!borderline(want)) expect(told).toEqual(want.summary.join(" "));
   else expect(told).toMatch(/cadences? (clearly heard )?(was|were|went)/);
   // The next take clears this one's view, and Stop ends it.

@@ -19,7 +19,7 @@
 //! The gates. Every suite, gated or not, must have no false marks.
 //! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
 //!   0.3 s or more heard over the suite and 90% in every take; 90% of all notes heard; a
-//!   steady reciting tone; every cadence judged on pitch, and 80% of them judged; every take
+//!   steady reciting tone; no cadence called off pitch, and 80% of them judged; every take
 //!   judged.
 //! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
 //!   them caught, nothing planted 100 cents or more off called in tune, the key found within
