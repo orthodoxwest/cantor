@@ -167,6 +167,7 @@ test("one signed in puts their name to their comment", async ({ page }) => {
   await page.getByRole("button", { name: "Post" }).click();
   await expect(page.locator("#comments li").first()).toHaveText(/^Note \d+ · Fr\. Director \(signed in\) · .*Breathe before the turn\.$/s);
   expect(named).toEqual([{ name: "Fr. Director" }]);
+  await expect(page.locator("#comments li .named bdi")).toHaveText("Fr. Director");
   // The name is kept, so the next comment does not give it again.
   await page.locator("#body").fill("And here.");
   await page.getByRole("button", { name: "Post" }).click();

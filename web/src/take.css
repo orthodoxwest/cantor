@@ -53,6 +53,10 @@
   padding-left: 0.8rem;
   border-left: 2px solid var(--gold-line);
 }
+/* A name a writer gave, set apart from the page's own words for writers. */
+.named {
+  font-style: italic;
+}
 .note-link,
 .remove {
   font: inherit;
