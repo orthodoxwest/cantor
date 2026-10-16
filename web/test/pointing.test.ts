@@ -133,3 +133,12 @@ describe("nucleus", () => {
     expect(nucleus("s")).toBe(-1);
   });
 });
+
+describe("in-word splits", () => {
+  it("keeps the syllables on either side of a hand split apart", () => {
+    // neuma 0fd4356: a split inside a word no longer runs the syllables around it together.
+    const text = "1 Great is thy ope·rátion * and thy mercy endureth for ever.";
+    const texts = syllables(text, "8.G", 0, "mediant").map((s) => s.text);
+    expect(texts.slice(-4)).toEqual(["o", "pe", "rá", "tion"]);
+  });
+});
