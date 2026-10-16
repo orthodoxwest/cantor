@@ -1144,7 +1144,7 @@ mod tests {
                 }
                 let heard = hearing.finish().expect("heard");
                 let offset = want.lead_in_s + heard.onset.expect("sound") - want.onset_s.expect("sound");
-                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &heard.frames);
+                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &heard.frames, None);
                 let at = format!("{rate} Hz, {quarter}/4 hop");
                 let heard = (got.report.heard_fraction - want.report.heard_fraction).abs();
                 let key = (got.verdict.key_cents.expect("key") - want.verdict.key_cents.expect("key")).abs();

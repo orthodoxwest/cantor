@@ -51,18 +51,31 @@ picker.addEventListener("change", () => {
 const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
-// After a scored take: the ribbon under the staff, the core's marks on the notes, the core's
-// two sentences on the take, the singer's key, the note the ribbon is re-based on, and the words
-// of the mark tapped.
+// After a scored take: above the score, the core's two sentences on the take, the singer's key
+// and the note the ribbon is re-based on; on the score, the ribbon under the staff and the core's
+// marks on the notes; below it, the words of the mark tapped.
 const result = byId<HTMLElement>("result");
 const summaryText = byId<HTMLParagraphElement>("summary");
 const keyText = byId<HTMLParagraphElement>("key");
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
 const why = byId<HTMLParagraphElement>("why");
+const cutText = byId<HTMLParagraphElement>("cut");
 let shown: Judged | null = null;
+/** The note the singer stopped the take shown at, or null when it ran to the end; and whether
+ * the guide was in their headphones. */
+let cutAt: number | null = null;
+let shownWorn = false;
 let base: number | null = null;
 let open: number | null = null;
+
+/** What the core found of a take it could not judge, and what to try. */
+function unheard(judged: Judged): string {
+  if (judged.verdict.outcome === "masked")
+    return "The guide was louder than your voice, so too little of it was heard to judge the take. Use headphones, or untick Headphones so the guide gives only the opening notes.";
+  const begin = shownWorn ? "with the guide" : "when the cursor appears";
+  return `Too little of your voice was heard to judge the take. Sing nearer the microphone and a little louder, beginning ${begin}.`;
+}
 
 /** Shows `text` as the words of the mark open, announcing it only when it changes. */
 function say(text: string): void {
@@ -75,13 +88,24 @@ function drawResult(): void {
   result.hidden = !judged;
   summaryText.textContent = judged?.summary.join(" ") ?? "";
   summaryText.hidden = !summaryText.textContent;
+  // A take stopped is judged to the end of the last phrase finished (the ear's `judge_gabc`).
+  const total = score.timeline.notes.length;
+  const through = judged?.ribbon.length ?? 0;
+  cutText.hidden = !judged || cutAt === null || through >= total;
+  if (judged && cutAt !== null)
+    cutText.textContent =
+      through === 0
+        ? `You stopped the take at note ${cutAt + 1} of ${total}, before its first phrase was sung through, so there is nothing to judge yet.`
+        : `You stopped the take at note ${cutAt + 1} of ${total}, so it is judged through note ${through}, where the last phrase you sang through ended.`;
   if (!judged || key === null) {
     score.showStrips(null);
     say("");
     baseLine.hidden = true;
-    if (judged) keyText.textContent = "Too little was heard to show.";
+    keyText.hidden = judged?.ribbon.length === 0;
+    if (judged) keyText.textContent = unheard(judged);
     return;
   }
+  keyText.hidden = false;
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
   score.showStrips(
     (timeline, room) =>
@@ -165,9 +189,12 @@ sendButton.addEventListener("click", () => {
   );
 });
 
-/** Shows a judged take, or clears it. */
-function showResult(judged: Judged | null): void {
+/** Shows a judged take, stopped by the singer at note `cut` if it was and sung with the guide
+ * in headphones if `worn`, or clears it. */
+function showResult(judged: Judged | null, cut: number | null = null, worn = false): void {
   shown = judged;
+  cutAt = judged ? cut : null;
+  shownWorn = worn;
   base = null;
   open = null;
   toSend = null;
@@ -178,6 +205,15 @@ function showResult(judged: Judged | null): void {
   // the status says stays).
   if (judged && status.textContent === heardLine) setStatus("");
   drawResult();
+}
+
+/** Does `change`, which may show or hide a line above the score, keeping the score where it
+ * was on the screen. */
+function steadily(change: () => void): void {
+  const before = score.host.getBoundingClientRect().top;
+  change();
+  const moved = score.host.getBoundingClientRect().top - before;
+  if (moved !== 0) window.scrollBy(0, moved);
 }
 
 // Tapping a heard note's band re-bases the ribbon on it, and tapping a mark shows its words;
@@ -199,7 +235,7 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   } else {
     return false;
   }
-  drawResult();
+  steadily(drawResult);
   // The strips were drawn again; keep a keyboard's place, and the mark in view above its words.
   const now = score.host.querySelector<SVGGElement>(again);
   if (keyboard) now?.focus();
@@ -212,7 +248,7 @@ score.host.addEventListener("keydown", (e) => {
 });
 byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
   base = null;
-  drawResult();
+  steadily(drawResult);
 });
 
 const readout = byId<HTMLOutputElement>("readout");
@@ -376,6 +412,12 @@ const wait = (seconds: number) => new Promise((resolve) => setTimeout(resolve, M
 
 /** The opening notes, while they sound. */
 let cueing: Singing | null = null;
+/** Whether the chant of the take under way has begun, so that Stop ends it and judges what
+ * was sung; and whether Stop was pressed then. */
+let chanting = false;
+let stopAsked = false;
+/** Ends the wait after the chant at once, while the take listens on for a late singer. */
+let hurry: (() => void) | null = null;
 
 async function takeScored(): Promise<void> {
   if (!guide || !table) return;
@@ -384,6 +426,8 @@ async function takeScored(): Promise<void> {
   const going = () => taking && take === takes;
   taking = true;
   timing = null;
+  stopAsked = false;
+  let shownNow = false;
   // Nothing else sounds or listens during a take.
   guide.stop();
   listener.stop();
@@ -427,12 +471,29 @@ async function takeScored(): Promise<void> {
     void wait(started.origin + started.first - ctx.currentTime).then(() => {
       if (going() && status.textContent === prompt) setStatus("");
     });
+    chanting = true;
     const finished = await started.ended;
-    if (finished) await wait(TAIL);
+    chanting = false;
+    // Stopped once the chant had begun, the take is judged as far as it was sung: where the
+    // cursor was, and below, by the singer's own time.
+    let cut = !finished && stopAsked ? guide.reached : null;
+    if (finished) {
+      await new Promise<void>((resolve) => {
+        hurry = () => {
+          cut = score.timeline.notes.length - 1;
+          resolve();
+        };
+        setTimeout(resolve, TAIL * 1000);
+      });
+      if (take === takes) hurry = null;
+    }
     if (!going()) return;
     listener.stop();
-    if (!finished) return;
-    setStatus("");
+    // A guide that failed has said why.
+    if (!finished && cut === null) return;
+    // Judging takes a moment; the take cannot be stopped or begun again meanwhile.
+    takeButton.disabled = true;
+    setStatus(cut === null ? "Listening back to your take…" : "Stopped. Listening back to what you sang…", true);
     const heard = await listener.heard;
     if (!heard || heard.startedAt === null) throw new Error("nothing was heard");
     // The singer hears the guide late by the output's latency, and is heard late by the
@@ -442,15 +503,37 @@ async function takeScored(): Promise<void> {
     const sound = firstSound(listener.frames, heard.startedAt, heard.onset, due - ONSET_EARLY);
     const at = firstNoteAt(due, sound);
     timing = { due, sound, at };
-    const json = await listener.judge(score.source, guide.pulse, at - started.first);
+    // A take stopped is judged through the last note the singer had time to sing whole, on
+    // their own time (they may be late on the cursor), to the end of the last phrase finished
+    // there (the ear's `judge_gabc`).
+    const offset = at - started.first;
+    let through: number | null = null;
+    if (cut !== null) {
+      const times = timed(score.timeline.notes, guide.pulse);
+      through = -1;
+      while (through + 1 < times.length && offset + times[through + 1]!.start + times[through + 1]!.duration <= heard.seconds) through++;
+      if (through < 0) {
+        setStatus("The take was stopped before its first note was sung through, so there is nothing to judge.", true);
+        return;
+      }
+    }
+    const json = await listener.judge(score.source, guide.pulse, offset, through);
     if (!going()) return;
     const judged = JSON.parse(json) as Judged;
-    showResult(judged);
-    offerSend({ gabc: score.source, pulse: guide.pulse, offset: at - started.first, judged });
+    setStatus("");
+    showResult(judged, cut, worn);
+    offerSend({ gabc: score.source, pulse: guide.pulse, offset, judged });
+    shownNow = true;
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     if (take === takes) endTake();
+    // The result is above the score, far from where the take ended; it comes into view once
+    // the page above it is laid out as it will stay.
+    if (shownNow) {
+      const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      requestAnimationFrame(() => result.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" }));
+    }
   }
 }
 
@@ -464,11 +547,13 @@ function stopTake(): void {
 }
 
 function endTake(): void {
-  taking = false;
+  taking = chanting = false;
+  hurry = null;
   cueing?.stop();
   cueing = null;
-  playButton.disabled = !guide;
+  playButton.disabled = takeButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
+  readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
   picker.disabled = headphonesBox.disabled = false;
   modeLine.hidden = !guide;
@@ -479,8 +564,15 @@ if (guide) {
   takeButton.disabled = false;
   takeButton.addEventListener("click", () => {
     if (!taking) return void takeScored();
+    // After the chant, Stop ends the take at once and it is judged whole; once the chant has
+    // begun, Stop ends it there and it is judged as far as it went.
+    if (hurry) return hurry();
+    if (chanting && guide.reached !== null) {
+      stopAsked = true;
+      return guide.stop();
+    }
     stopTake();
-    setStatus("The take was stopped.", true);
+    setStatus("The take was stopped before the chant began.", true);
   });
 } else {
   takeButton.title = "The guide voice could not load.";

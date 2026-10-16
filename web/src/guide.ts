@@ -41,6 +41,8 @@ export class Guide {
   pulse = PULSE;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
+  /** The index of the last note the cursor reached in the latest play, or null before the first. */
+  reached: number | null = null;
   private singing: Singing | null = null;
   private frame = 0;
   private timer = 0;
@@ -100,6 +102,7 @@ export class Guide {
     }
     this.singing = singing;
     this.visited.length = 0;
+    this.reached = null;
     this.times = timed(this.score.timeline.notes, this.pulse);
     const origin = (singing?.start ?? ctx.currentTime) + lead;
     const clock = this.options.clock ?? (() => ctx.currentTime);
@@ -165,6 +168,7 @@ export class Guide {
       this.cursor.show(bar.cx, this.score.line(bar.line), null);
       return true;
     }
+    this.reached = i;
     if (this.visited[this.visited.length - 1] !== note.id) this.visited.push(note.id);
     this.cursor.show(note.cx, this.score.line(note.line), note.id);
     return true;

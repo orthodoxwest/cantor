@@ -96,9 +96,20 @@ pub struct Judged {
 }
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
-/// judged on its `frames`.
-pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame]) -> Judged {
+/// judged on its `frames`; given `through`, the last note sung whole in a take stopped short,
+/// only its notes to the end of the last phrase finished there, none if none was: a phrase cut
+/// short would be judged as if it ended there, and its notes not sung would count as not heard.
+pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame], through: Option<usize>) -> Judged {
     let mut notes = notes_from_gabc(gabc, pulse_s);
+    if let Some(i) = through.filter(|&i| i + 1 < notes.len()) {
+        let at = notes[i].phrase;
+        let end = if notes[i + 1].phrase > at {
+            i + 1
+        } else {
+            notes.iter().position(|n| n.phrase == at).unwrap_or(0)
+        };
+        notes.truncate(end);
+    }
     for n in &mut notes {
         n.start_s += offset_s;
     }
@@ -245,17 +256,21 @@ pub extern "C" fn ear_onset() -> f32 {
 }
 
 /// Scores and judges the heard take against the notes of the GABC in the byte buffer's first
-/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take: the length of
-/// the JSON left in the output buffer, or -1 with the error there.
+/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take, to the end of
+/// the phrase of note `through` when it is not negative (the take was stopped there): the
+/// length of the JSON left in the output buffer, or -1 with the error there.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32) -> i32 {
+pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through: i32) -> i32 {
     let gabc = BYTES.with(|b| {
         let b = b.borrow();
         String::from_utf8_lossy(&b[..(gabc_len as usize).min(b.len())]).into_owned()
     });
     let json = TAKE.with(|t| match t.borrow().as_ref() {
-        Some(Take::Heard(heard)) => serde_json::to_string(&judge_gabc(&gabc, pulse_s, offset_s, &heard.frames)).map_err(|e| e.to_string()),
+        Some(Take::Heard(heard)) => {
+            serde_json::to_string(&judge_gabc(&gabc, pulse_s, offset_s, &heard.frames, usize::try_from(through).ok()))
+                .map_err(|e| e.to_string())
+        }
         _ => Err("no take heard".to_string()),
     });
     match json {
@@ -319,13 +334,25 @@ mod tests {
         let bytes = gabc.as_bytes();
         ear_bytes(bytes.len() as u32);
         BYTES.with(|b| b.borrow_mut().copy_from_slice(bytes));
-        let len = ear_judge(bytes.len() as u32, 0.5, 1.0);
+        let len = ear_judge(bytes.len() as u32, 0.5, 1.0, -1);
         assert_eq!(len, ear_output_len() as i32);
         let json = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
-        assert_eq!(json, serde_json::to_string(&judge_gabc(gabc, 0.5, 1.0, &whole)).unwrap());
+        assert_eq!(json, serde_json::to_string(&judge_gabc(gabc, 0.5, 1.0, &whole, None)).unwrap());
         assert_eq!(ear_stop(), -1, "a take stops once");
-        assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0), len, "and stays to be judged");
+        assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0, -1), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
+    }
+
+    #[test]
+    fn a_take_stopped_is_judged_to_the_end_of_its_phrase() {
+        let gabc = "(c4) Al(f)le(g) (,) lu(h)i(g)a.(f) (::)";
+        let judged = |through| judge_gabc(gabc, 0.5, 0.0, &[], through).ribbon.len();
+        assert_eq!(judged(None), 5);
+        assert_eq!(judged(Some(0)), 0, "no phrase finished: nothing");
+        assert_eq!(judged(Some(1)), 2, "the phrase's last note");
+        assert_eq!(judged(Some(3)), 2, "to the end of the last phrase finished");
+        assert_eq!(judged(Some(4)), 5, "the last note is the whole chant");
+        assert_eq!(judged(Some(9)), 5, "a note past the end is the whole chant");
     }
 
     #[test]

@@ -43,9 +43,8 @@
       <label class="pick">Chant <select id="chant"></select></label>
       <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
       <p id="status" class="status" role="status"></p>
-      <div id="score" class="score"></div>
-      <p id="why" class="why" aria-live="polite"></p>
-      <section id="result" class="result" hidden>
+      <section id="result" class="result lead" hidden>
+        <p id="cut" hidden></p>
         <p id="summary"></p>
         <p id="key"></p>
         <p id="base" hidden><span id="base-text"></span> <button id="rebase" class="btn" type="button">Back to your key</button></p>
@@ -54,6 +53,8 @@
           <span id="sent" aria-live="polite"></span>
         </p>
       </section>
+      <div id="score" class="score"></div>
+      <p id="why" class="why" aria-live="polite"></p>
     </main>
 
     <div class="bar">

@@ -19,7 +19,10 @@ export interface Band {
 
 /** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
 export interface Judged {
-  verdict: { key_cents: number | null; marks: Mark[] };
+  /** The outcome and the report come from the ear only; a sent take keeps neither. */
+  verdict: { outcome?: "heard" | "not-heard" | "masked"; key_cents: number | null; marks: Mark[] };
+  /** The notes as scored: a note with no cents was not heard. */
+  report?: { notes: Array<{ cents: number | null }> };
   ribbon: Band[];
   /** Each mark in words. */
   told: string[];

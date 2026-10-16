@@ -102,13 +102,17 @@ function show(take: Take, me: Me | null): void {
   const noteWords = byId<HTMLSpanElement>("note-words");
   const why = byId<HTMLParagraphElement>("why");
   const bodyInput = byId<HTMLTextAreaElement>("body");
-  const count = take.gabc ? null : judged.ribbon.length;
 
   // The score, its strips and the cursor, when the reader may see the score.
   const score = take.gabc ? new Score(byId("score"), new Chant(take.gabc), SCALE) : null;
   if (!score) byId("score").hidden = true;
   const cursor = score && new Cursor(score);
   const notes = (): readonly TimelineNote[] => score?.timeline.notes ?? [];
+  /** How many notes may be commented on: those judged, which for a take stopped short are
+   * fewer than the score's. */
+  const count = (): number => (score ? Math.min(notes().length, judged.ribbon.length) : judged.ribbon.length);
+  if (score && judged.ribbon.length < notes().length)
+    byId("key").append(` The take was stopped, and judged through note ${judged.ribbon.length}.`);
   let times: Timed[] = score ? timed(notes(), take.pulse) : [];
   /** Where note `i` was due, in seconds of the take: by the score when shown, else where its
    * judged band begins (already in seconds of the take). */
@@ -165,11 +169,10 @@ function show(take: Take, me: Me | null): void {
     }
   }
 
-  noteInput.max = String(count ?? notes().length);
+  noteInput.max = String(count());
   noteInput.addEventListener("change", () => {
     const n = Number(noteInput.value);
-    const last = count ?? notes().length;
-    if (Number.isInteger(n) && n >= 1 && n <= last) choose(n - 1);
+    if (Number.isInteger(n) && n >= 1 && n <= count()) choose(n - 1);
   });
 
   // Tapping a note's band or its ink chooses it; tapping a mark shows its words.
@@ -190,7 +193,7 @@ function show(take: Take, me: Me | null): void {
     } else if (ink) {
       const ids = (ink.dataset.note ?? "").split(" ").map(Number);
       const i = notes().findIndex((n) => n.id === ids[0]);
-      if (i < 0) return false;
+      if (i < 0 || i >= count()) return false;
       choose(i);
       return true;
     } else {
@@ -208,7 +211,7 @@ function show(take: Take, me: Me | null): void {
       const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
       if (!band || !step || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       e.preventDefault();
-      const to = Math.min(Math.max(Number(band.dataset.band) + step, 0), notes().length - 1);
+      const to = Math.min(Math.max(Number(band.dataset.band) + step, 0), count() - 1);
       choose(to, false);
       score.host.querySelector<SVGElement>(`[data-band="${to}"]`)?.focus();
     });

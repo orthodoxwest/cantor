@@ -60,9 +60,10 @@ class Ear {
   }
 
   /** The last take scored and judged against `gabc`'s notes, `pulse` seconds a pulse, the
-   * first starting `offset` seconds into the take, as JSON. */
-  async judge(gabc: string, pulse: number, offset: number): Promise<string> {
-    return (await this.ask<"judged">({ type: "judge", gabc, pulse, offset })).json;
+   * first starting `offset` seconds into the take, as JSON; given `through`, the note the take
+   * was stopped at, only to the end of its phrase. */
+  async judge(gabc: string, pulse: number, offset: number, through: number | null = null): Promise<string> {
+    return (await this.ask<"judged">({ type: "judge", gabc, pulse, offset, through: through ?? -1 })).json;
   }
 
   /** The last take heard as a WAV file, and its length in seconds. */
@@ -102,10 +103,10 @@ export class Listener {
   ) {}
 
   /** The last take judged once it has been heard; see `Ear.judge`. */
-  async judge(gabc: string, pulse: number, offset: number): Promise<string> {
+  async judge(gabc: string, pulse: number, offset: number, through: number | null = null): Promise<string> {
     if (!this.ear || !this.heard) throw new Error("nothing heard");
     await this.heard;
-    return this.ear.judge(gabc, pulse, offset);
+    return this.ear.judge(gabc, pulse, offset, through);
   }
 
   /** The last take heard, as a file to send; see `Ear.audio`. */

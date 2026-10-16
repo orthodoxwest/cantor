@@ -40,6 +40,12 @@
   border-top: 1px solid var(--gold-line);
   padding-top: 0.6rem;
 }
+/* The take just sung, above its score, so that it is read before the notes. */
+.result.lead {
+  border-block: 1px solid var(--gold-line);
+  padding-block: 0.4rem;
+  scroll-margin-top: 1rem;
+}
 .result p {
   margin: 0.5rem 0;
 }
@@ -147,4 +153,7 @@
 }
 #summary {
   font-size: 1.15rem;
+}
+#cut {
+  color: var(--muted);
 }
