@@ -1,10 +1,12 @@
 //! `cantor eval`: the listening gates. Every suite in `evals/suites/` is synthesized,
 //! listened to, scored and judged, and checked two ways: against its gate (what the take
-//! must and must not be told) and against `evals/baseline.json` (no metric may get worse
+//! must and must not be told) and against `evals/baseline.json`, or with `--nsdf-only`
+//! `evals/baseline-nsdf.json` (no metric may get worse
 //! past its tolerance, and the faults and takes counted must not change). Real takes from a
 //! directory given with `--takes` are held to the expert gate; they have no guide and no
 //! planted truth, so their tracking error is measured from the judge's own key. The scorecard
-//! is printed and written to `out/eval.json` and `out/eval.md`, and every take is drawn in
+//! is printed and written to `out/eval.json` and `out/eval.md` (`eval-nsdf.*` with
+//! `--nsdf-only`), and every take is drawn in
 //! `out/explain/`.
 //!
 //! What counts as a fault, and how long a note must be to count, are this file's own
@@ -62,6 +64,8 @@ const ALL_HEARD_FLOOR: f32 = 0.9;
 const RECALL_FLOOR: f32 = 0.95;
 const KEY_TOLERANCE: f32 = 50.0;
 const SILENT_CEILING: f32 = 0.01;
+/// Two trackers agree on a frame within this many cents, octaves aside.
+const AGREEMENT_CENTS: f32 = 50.0;
 /// The name real takes are reported under.
 const REAL: &str = "real-takes";
 
@@ -170,9 +174,9 @@ struct Metrics {
     unjudged: u32,
     /// Notes heard in tune, over all takes.
     in_tune: u32,
-    /// Of the frames the NSDF tracker found clear and SwiftF0 also voiced, the fraction where
-    /// the two agree (octaves aside); 1 when there were none.
-    agreement: f32,
+    /// Of the frames the NSDF tracker found clear and SwiftF0 also voiced, the fraction
+    /// within [`AGREEMENT_CENTS`] of each other, octaves aside; none when SwiftF0 did not listen.
+    agreement: Option<f32>,
 }
 
 impl Metrics {
@@ -193,7 +197,7 @@ impl Metrics {
                     && f.clarity >= cantor_core::pitch::DEFAULT_MIN_CLARITY
                 {
                     both += 1;
-                    agreed += usize::from(cantor_core::listen::agree(m, o));
+                    agreed += usize::from(fold((m - o) * 100.0).abs() <= AGREEMENT_CENTS);
                 }
             }
             let v = &take.verdict;
@@ -253,7 +257,7 @@ impl Metrics {
         m.tracking_cents = if tracked == 0 { 0.0 } else { errors / tracked as f32 };
         m.gross_error_rate = ratio(gross, tracked);
         m.recall = if m.faults == 0 { 1.0 } else { caught as f32 / m.faults as f32 };
-        m.agreement = if both == 0 { 1.0 } else { agreed as f32 / both as f32 };
+        m.agreement = (both > 0).then(|| agreed as f32 / both as f32);
         m
     }
 
@@ -351,7 +355,21 @@ impl Metrics {
             self.gross_error_rate > base.gross_error_rate + 0.02,
         );
         check("recall", self.recall, base.recall, self.recall < base.recall - 0.02);
-        check("agreement", self.agreement, base.agreement, self.agreement < base.agreement - 0.02);
+        if let (Some(now), Some(was)) = (self.agreement, base.agreement) {
+            check("agreement", now, was, now < was - 0.02);
+        }
+        check(
+            "summary_errors",
+            self.summary_errors as f32,
+            base.summary_errors as f32,
+            self.summary_errors > base.summary_errors,
+        );
+        check(
+            "key_error_cents",
+            self.key_error_cents,
+            base.key_error_cents,
+            self.key_error_cents > base.key_error_cents + 10.0,
+        );
         check(
             "false_marks",
             self.false_marks as f32,
@@ -469,7 +487,9 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         return Ok(ExitCode::SUCCESS);
     }
 
-    let baseline_path = root.join("evals/baseline.json");
+    // The NSDF tracker alone, as the browser listens, is held to a baseline of its own.
+    let tag = if ear.nsdf_only() { "-nsdf" } else { "" };
+    let baseline_path = root.join(format!("evals/baseline{tag}.json"));
     let baseline: BTreeMap<String, Metrics> = match std::fs::read_to_string(&baseline_path) {
         Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", baseline_path.display()))?,
         Err(_) => BTreeMap::new(),
@@ -499,13 +519,14 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
             scorecard.insert(name.clone(), metrics);
         }
         let failures: Vec<String> = gated.iter().chain(&moved).cloned().collect();
+        let agreement = metrics.agreement.map_or("-".to_string(), |a| format!("{a:.3}"));
         let result = if failures.is_empty() {
             "pass".to_string()
         } else {
             format!("FAIL: {}", failures.join("; "))
         };
         println!(
-            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5} {:>6.3}  {result}",
+            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5} {:>6}  {result}",
             name,
             gate.name(),
             metrics.takes,
@@ -517,10 +538,10 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
             metrics.faults,
             metrics.recall,
             metrics.false_marks,
-            metrics.agreement,
+            agreement,
         );
         md.push_str(&format!(
-            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {:.3} | {result} |\n",
+            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {} | {result} |\n",
             gate.name(),
             metrics.takes,
             metrics.heard_fraction,
@@ -531,7 +552,7 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
             metrics.faults,
             metrics.recall,
             metrics.false_marks,
-            metrics.agreement,
+            agreement,
         ));
         gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
@@ -555,8 +576,8 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         baseline_failures.push(format!("{name}: in the baseline but not in evals/suites"));
     }
 
-    write_json(&out_dir.join("eval.json"), &outputs)?;
-    std::fs::write(out_dir.join("eval.md"), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+    write_json(&out_dir.join(format!("eval{tag}.json")), &outputs)?;
+    std::fs::write(out_dir.join(format!("eval{tag}.md")), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
     if write_baseline {
         if !gate_failures.is_empty() {
             for f in &gate_failures {

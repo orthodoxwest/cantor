@@ -16,7 +16,7 @@
     "summary_errors": 0,
     "unjudged": 8,
     "in_tune": 0,
-    "agreement": 1.0
+    "agreement": null
   },
   "control-wrong-singer": {
     "takes": 4,
@@ -24,7 +24,7 @@
     "worst_take_heard": 1.0,
     "heard_all": 0.9965398,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.8454266,
+    "tracking_cents": 7.8454285,
     "gross_error_rate": 0.0034722222,
     "marks": 16,
     "false_marks": 0,

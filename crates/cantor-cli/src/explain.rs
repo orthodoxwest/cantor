@@ -2,8 +2,8 @@
 //! heard, the truth where it is known (a synthetic take's planted pitch), and the marks. A
 //! trace that leaves its bar where the truth stays on it is the tracker's error; a mark where
 //! the truth is on the bar is a false mark. SwiftF0's pitch, where it listened, is drawn in
-//! violet under the heard pitch: violet alone is a frame only SwiftF0 voiced, and violet away
-//! from blue is the two trackers disagreeing.
+//! violet under the heard pitch: violet alone is a frame only SwiftF0 voiced (or one under the
+//! take's loudness floor), and violet away from blue is the two trackers disagreeing.
 
 use std::fmt::Write;
 

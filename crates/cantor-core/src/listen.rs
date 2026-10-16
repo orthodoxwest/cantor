@@ -57,7 +57,7 @@ impl Track {
     /// The median of the voiced pitches whose centres lie within `half_s` of `t`, when at
     /// least half of those frames are voiced.
     fn at(&self, t: f32, half_s: f32) -> Option<f32> {
-        if self.hop_s <= 0.0 {
+        if self.hop_s.is_nan() || self.hop_s <= 0.0 {
             return None;
         }
         let first = ((t - half_s - self.start_s) / self.hop_s).ceil().max(0.0) as usize;
@@ -89,8 +89,9 @@ pub fn listen(samples: &[f32], sample_rate: f32, guide: Option<Guide>) -> Vec<Fr
 
 /// [`listen`] with a second tracker's opinion, `other`, recorded on each frame. A frame the
 /// NSDF tracker finds clear keeps its pitch whatever the other says; one it finds only
-/// [`WEAK_CLARITY`] clear is heard when the other agrees with it, so neither tracker alone
-/// can add a pitch the other contradicts.
+/// [`WEAK_CLARITY`] clear is heard when the other agrees with it, in the other's octave, so
+/// the second tracker never adds a pitch the NSDF tracker contradicts. Frames are fused
+/// before the loudness floor and the guide's mask, which drop fused frames like any other.
 pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, other: Option<&Track>) -> Vec<Frame> {
     let frame = pitch::default_frame(sample_rate);
     let hop = (pitch::DEFAULT_HOP_S * sample_rate).round() as usize;
@@ -108,8 +109,7 @@ pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, othe
             if let Some(m) = weak.midi
                 && agree(m, o)
             {
-                f.midi = Some(m);
-                f.clarity = weak.clarity;
+                f.midi = Some(m + 12.0 * ((o - m) / 12.0).round());
             }
         }
     }
@@ -300,6 +300,46 @@ mod tests {
         assert!(voiced_in_notes(&agreeing) > alone + 10, "{alone} -> {}", voiced_in_notes(&agreeing));
         assert_eq!(voiced_in_notes(&disagreeing), alone);
         assert!(agreeing.iter().filter(|f| f.t > 2.1).all(|f| f.other.is_some() || f.t > 4.9));
+    }
+
+    #[test]
+    fn a_second_tracker_hearing_the_guide_adds_nothing_the_mask_would_drop() {
+        let profile = Profile {
+            guide: GuideMode::Full,
+            bleed_db: -12.0,
+            bleed_delay_s: 0.08,
+            singer_silent: true,
+            noise_rms: 0.01,
+            ..Profile::default()
+        };
+        let take = render_take(&notes(), &profile, SR, 1);
+        let guide = Guide {
+            samples: take.guide.as_deref().expect("guide"),
+            alone: (0.2, 1.6),
+        };
+        let len_s = take.samples.len() as f32 / SR;
+        let frames = listen_with(&take.samples, SR, Some(guide), Some(&track_off(&notes(), 0.0, len_s)));
+        assert_eq!(voiced_in_notes(&frames), 0);
+    }
+
+    #[test]
+    fn a_fused_frame_takes_the_second_trackers_octave() {
+        let profile = Profile {
+            noise_rms: 0.06,
+            ..Profile::default()
+        };
+        let take = render_take(&notes(), &profile, SR, 3).samples;
+        let len_s = take.len() as f32 / SR;
+        let octave_up = listen_with(&take, SR, None, Some(&track_off(&notes(), 1200.0, len_s)));
+        let alone = listen(&take, SR, None);
+        let fused: Vec<&Frame> = octave_up
+            .iter()
+            .zip(&alone)
+            .filter(|(f, a)| f.midi.is_some() && a.midi.is_none())
+            .map(|(f, _)| f)
+            .collect();
+        assert!(!fused.is_empty());
+        assert!(fused.iter().all(|f| (f.midi.unwrap() - f.other.unwrap()).abs() < 0.5), "{fused:?}");
     }
 
     #[test]

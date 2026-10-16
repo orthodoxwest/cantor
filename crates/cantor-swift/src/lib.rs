@@ -29,8 +29,6 @@ const SILENCE_PEAK: f32 = 1e-3;
 const WINDOW_FRAMES: usize = 1875;
 const LEFT_FRAMES: usize = 11;
 const LOOKAHEAD_FRAMES: usize = 10;
-/// Audio is planned in whole multiples of this many samples (128 frames).
-const BUCKET: usize = 128 * HOP;
 
 type Plan = Arc<TypedRunnableModel>;
 
@@ -71,21 +69,30 @@ impl SwiftF0 {
     }
 
     fn plan(&self, len: usize) -> TractResult<Plan> {
-        let mut plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(plan) = plans.get(&len) {
+        let plans = || self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = plans().get(&len) {
             return Ok(plan.clone());
         }
+        // Planned without the lock, so that takes of different lengths plan side by side.
         let mut model = self.model.clone();
         model.set_input_fact(0, f32::fact([1, len]).into())?;
         model.set_input_fact(1, f32::scalar_fact().into())?;
         model.set_input_fact(2, f32::scalar_fact().into())?;
         let plan = model.into_optimized()?.into_runnable()?;
-        plans.insert(len, plan.clone());
-        Ok(plan)
+        Ok(plans().entry(len).or_insert(plan).clone())
     }
 
-    /// Tracks 16 kHz `samples`: one frame every 16 ms, frame `i` centred at `i` hops.
-    pub fn track(&self, samples: &[f32]) -> TractResult<Track> {
+    /// Tracks `samples` at `sample_rate`, resampled to 16 kHz for the model: one frame every
+    /// 16 ms, frame `i` centred at `i` hops.
+    pub fn track(&self, samples: &[f32], sample_rate: f32) -> TractResult<Track> {
+        if sample_rate == SAMPLE_RATE {
+            self.track_16k(samples)
+        } else {
+            self.track_16k(&resample(samples, sample_rate, SAMPLE_RATE))
+        }
+    }
+
+    fn track_16k(&self, samples: &[f32]) -> TractResult<Track> {
         let n = (samples.len() / HOP).max(1);
         let mut midi = Vec::with_capacity(n);
         let mut start = 0;
@@ -122,11 +129,12 @@ impl SwiftF0 {
     }
 
     fn run(&self, window: &[f32]) -> TractResult<(Vec<f32>, Vec<f32>)> {
-        // Planning takes longer than running, so the audio is padded with silence to a whole
-        // number of buckets and fewer lengths are planned; the padding's frames are past the
-        // end and dropped, and the model pads with silence itself.
+        // The model needs at least one hop. Padding changes the frames near the end, so a
+        // window is planned at its own length.
         let mut audio = window.to_vec();
-        audio.resize(window.len().max(1).div_ceil(BUCKET) * BUCKET, 0.0);
+        if audio.len() < HOP {
+            audio.resize(HOP, 0.0);
+        }
         let len = audio.len();
         let out = self.plan(len)?.run(tvec!(
             tract_ndarray::Array2::from_shape_vec((1, len), audio)?.into_tvalue(),
@@ -138,6 +146,43 @@ impl SwiftF0 {
         let (pitch, confidence) = (values(&out[0])?, values(&out[1])?);
         Ok((pitch, confidence))
     }
+}
+
+/// Half the width of the resampler's kernel, in input samples at the lower of the two rates.
+const RESAMPLE_HALF: f32 = 16.0;
+
+/// `samples` at `to` hertz: a Hann-windowed sinc low-passed below both rates' Nyquist.
+pub fn resample(samples: &[f32], from: f32, to: f32) -> Vec<f32> {
+    if samples.is_empty() || from <= 0.0 || to <= 0.0 {
+        return Vec::new();
+    }
+    let ratio = to / from;
+    // The cutoff, as a fraction of the input's Nyquist, a little under the lower rate's.
+    let cutoff = 0.95 * ratio.min(1.0);
+    let half = RESAMPLE_HALF / cutoff;
+    let len = (samples.len() as f64 * ratio as f64).floor() as usize;
+    (0..len)
+        .map(|j| {
+            let centre = j as f32 / ratio;
+            let first = (centre - half).ceil().max(0.0) as usize;
+            let last = ((centre + half).floor() as usize).min(samples.len() - 1);
+            let (mut sum, mut weight) = (0.0f32, 0.0f32);
+            for (i, x) in samples.iter().enumerate().take(last + 1).skip(first) {
+                let d = i as f32 - centre;
+                let sinc = if d == 0.0 {
+                    1.0
+                } else {
+                    let a = std::f32::consts::PI * cutoff * d;
+                    a.sin() / a
+                };
+                let hann = 0.5 + 0.5 * (std::f32::consts::PI * d / half).cos();
+                let w = sinc * hann;
+                sum += x * w;
+                weight += w;
+            }
+            if weight == 0.0 { 0.0 } else { sum / weight }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -157,11 +202,86 @@ mod tests {
             })
             .collect();
         samples.resize(32_000, 0.0);
-        let track = SwiftF0::new().expect("model").track(&samples).expect("run");
+        let track = SwiftF0::new().expect("model").track(&samples, SAMPLE_RATE).expect("run");
         assert_eq!(track.midi.len(), 125);
         let voiced: Vec<f32> = track.midi[10..50].iter().flatten().copied().collect();
         assert!(voiced.len() > 35, "{}", voiced.len());
         assert!(voiced.iter().all(|m| (m - 57.0).abs() < 0.3), "{voiced:?}");
         assert!(track.midi[80..].iter().all(Option::is_none));
+    }
+
+    fn tone(hz: f32, sr: f32, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / sr;
+                (1..6)
+                    .map(|k| (2.0 * std::f32::consts::PI * hz * k as f32 * t).sin() / k as f32)
+                    .sum::<f32>()
+                    * 0.1
+            })
+            .collect()
+    }
+
+    #[test]
+    fn long_audio_tracks_as_one_run_would() {
+        // A glissando with noise, long enough for two windows, sounding to the end.
+        let sr = SAMPLE_RATE;
+        let n = (WINDOW_FRAMES + 300) * HOP + 123;
+        let mut state = 1u32;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / sr;
+                let hz = 150.0 + 20.0 * t;
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                0.1 * (2.0 * std::f32::consts::PI * hz * t).sin() + 0.02 * (state as f32 / u32::MAX as f32 - 0.5)
+            })
+            .collect();
+        let swift = SwiftF0::new().expect("model");
+        let windowed = swift.track(&samples, sr).expect("run").midi;
+        let (pitch, confidence) = swift.run(&samples).expect("run");
+        assert_eq!(windowed.len(), n / HOP);
+        let mut worst = 0.0f32;
+        for (i, m) in windowed.iter().enumerate() {
+            let whole = (confidence[i] >= VOICED).then(|| hz_to_midi(pitch[i]));
+            assert_eq!(m.is_some(), whole.is_some(), "frame {i}");
+            if let (Some(a), Some(b)) = (m, whole) {
+                worst = worst.max((a - b).abs());
+            }
+        }
+        assert!(worst < 0.001, "{worst}");
+    }
+
+    #[test]
+    fn frames_are_centred_on_their_hop() {
+        // Silence, then a note from sample 24000: frame 93 (centred at 23808) is before it and
+        // frame 95 (24320) inside it.
+        let mut samples = vec![0.0f32; 24_000];
+        samples.extend(tone(220.0, SAMPLE_RATE, 16_000));
+        let track = SwiftF0::new().expect("model").track(&samples, SAMPLE_RATE).expect("run");
+        assert_eq!((track.start_s, track.hop_s), (0.0, 0.016));
+        let midi = track.midi;
+        assert!(midi[..=93].iter().all(Option::is_none), "{:?}", &midi[88..=93]);
+        assert!(midi[96..140].iter().all(|m| m.is_some_and(|m| (m - 57.0).abs() < 0.3)));
+    }
+
+    #[test]
+    fn digital_silence_is_never_voiced() {
+        // A note with a stretch of near-silence (peaks under the floor) in its middle.
+        let mut samples = tone(220.0, SAMPLE_RATE, 32_000);
+        for s in &mut samples[12_800..19_200] {
+            *s *= 0.005;
+        }
+        let midi = SwiftF0::new().expect("model").track(&samples, SAMPLE_RATE).expect("run").midi;
+        assert!(midi[51..74].iter().all(Option::is_none), "{:?}", &midi[50..75]);
+        assert!(midi[10..45].iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn other_rates_are_resampled() {
+        let samples = tone(220.0, 48_000.0, 48_000);
+        let midi = SwiftF0::new().expect("model").track(&samples, 48_000.0).expect("run").midi;
+        assert_eq!(midi.len(), 62);
+        let voiced: Vec<f32> = midi[5..55].iter().flatten().copied().collect();
+        assert!(voiced.len() > 45 && voiced.iter().all(|m| (m - 57.0).abs() < 0.1), "{voiced:?}");
     }
 }
