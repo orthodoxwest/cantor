@@ -244,7 +244,18 @@ function show(take: Take, me: Me | null): void {
 
   // The comments, in the order of the notes.
   const list = byId<HTMLOListElement>("comments");
-  const who = (c: Comment) => (c.by === "singer" ? (take.mine ? "You" : "The singer") : (c.name ?? "A reader"));
+  /** Who wrote `c`: a name a writer gave is set apart, in its own direction, and marked as given
+   * by one signed in, so it cannot pass for the page's own words. */
+  const who = (c: Comment): Node => {
+    if (c.by === "singer") return document.createTextNode(take.mine ? "You" : "The singer");
+    if (c.by !== "known" || !c.name) return document.createTextNode("A reader");
+    const span = document.createElement("span");
+    span.className = "named";
+    const name = document.createElement("bdi");
+    name.textContent = c.name;
+    span.append(name, " (signed in)");
+    return span;
+  };
   function drawComments(): void {
     const sorted = [...comments].sort((a, b) => a.note - b.note || a.id - b.id);
     list.replaceChildren(
@@ -259,7 +270,7 @@ function show(take: Take, me: Me | null): void {
         note.textContent = `Note ${c.note + 1}`;
         note.addEventListener("click", () => choose(c.note));
         const when = new Date(c.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-        head.append(note, ` · ${who(c)} · ${when}`);
+        head.append(note, " · ", who(c), ` · ${when}`);
         // The singer may take any comment off their take.
         if (take.mine) {
           const remove = document.createElement("button");

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import pkg from "../package.json";
 import { identity } from "./identity";
-import takes from "./takes";
+import { nameFrom } from "./people";
+import takes, { bounded } from "./takes";
 
 interface ChantRow {
   slug: string;
@@ -79,27 +80,29 @@ app.get("/api/me", async (c) => {
   const user = await identity(c.req.raw.headers, c.env);
   c.header("Cache-Control", "private, no-store");
   if (!user) return c.json({ error: "unauthorized" }, 401);
-  const named = await c.env.DB.prepare("SELECT name FROM people WHERE user_id = ?").bind(user.id).first<{ name: string }>();
+  // Who is signed in does not wait on their name: without it they are still signed in.
+  const named = await c.env.DB.prepare("SELECT name FROM people WHERE user_id = ?")
+    .bind(user.id)
+    .first<{ name: string }>()
+    .catch(() => null);
   return c.json({ ...user, name: named?.name ?? null });
 });
 
-/** The longest name a person may give. */
-export const MAX_NAME = 60;
-
-// The name a signed-in person gives, shown beside their comments; empty forgets it.
+// The name a signed-in person gives, shown beside the comments they write from now on; empty
+// forgets it.
 app.put("/api/me", async (c) => {
   c.header("Cache-Control", "no-store");
   if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.json({ error: "forbidden" }, 403);
   const user = await identity(c.req.raw.headers, c.env);
   if (!user) return c.json({ error: "unauthorized" }, 401);
-  if (Number(c.req.header("Content-Length") ?? 0) > 4096) return c.json({ error: "too large" }, 413);
-  const sent = await c.req
+  const raw = await bounded(c.req.raw, 4096);
+  if (!raw) return c.json({ error: "too large" }, 413);
+  const sent = await raw
     .text()
-    .then((text) => (text.length > 4096 ? null : (JSON.parse(text) as { name?: unknown } | null)))
+    .then((text) => JSON.parse(text) as { name?: unknown } | null)
     .catch(() => null);
-  const name = typeof sent?.name === "string" ? sent.name.replace(/\s+/g, " ").trim() : null;
-  // A name is shown as text, but no control characters even so.
-  if (name === null || name.length > MAX_NAME || /[\p{Cc}\p{Cf}]/u.test(name)) return c.json({ error: "bad request" }, 400);
+  const name = nameFrom(sent?.name);
+  if (name === null) return c.json({ error: "that name cannot be used" }, 400);
   if (!name) await c.env.DB.prepare("DELETE FROM people WHERE user_id = ?").bind(user.id).run();
   else
     await c.env.DB.prepare(

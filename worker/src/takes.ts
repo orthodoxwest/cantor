@@ -19,7 +19,7 @@ export const MAX_RECORD = 2 * 1024 * 1024;
 const MAX_BODY = MAX_AUDIO + MAX_RECORD + 64 * 1024;
 
 /** `request`'s body, read no further than `max` bytes; null when it is longer. */
-async function bounded(request: Request, max: number): Promise<Blob | null> {
+export async function bounded(request: Request, max: number): Promise<Blob | null> {
   if (Number(request.headers.get("Content-Length") ?? 0) > max) return null;
   if (!request.body) return new Blob([]);
   const chunks: Uint8Array[] = [];
@@ -249,9 +249,7 @@ takes.get("/:id", async (c) => {
   // take; a private chant (booklet-derived) is shown only to a known caller.
   const open = who !== null || found.public === 1;
   const { results: comments } = await c.env.DB.prepare(
-    `SELECT c.id, c.note, c.body, c.by_singer, c.author_id, p.name, c.created_at
-     FROM take_comments c LEFT JOIN people p ON p.user_id = c.author_id
-     WHERE c.take_id = ? ORDER BY c.id`,
+    "SELECT id, note, body, by_singer, author_id, author_name AS name, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
   )
     .bind(id)
     .all<CommentRow>();
@@ -280,7 +278,7 @@ interface CommentRow {
   body: string;
   by_singer: number;
   author_id: string | null;
-  /** The name its writer gave, when signed in. */
+  /** The name its writer had given when they wrote it, when signed in. */
   name: string | null;
   created_at: string;
 }
@@ -316,10 +314,10 @@ takes.post("/:id/comments", async (c) => {
   // A writer the Worker does not know may add one while the take holds fewer than
   // MAX_COMMENTS of theirs, counted in the same statement that adds it.
   const added = await c.env.DB.prepare(
-    `INSERT INTO take_comments (take_id, note, body, by_singer, author_id)
-     SELECT ?1, ?2, ?3, ?4, ?5
+    `INSERT INTO take_comments (take_id, note, body, by_singer, author_id, author_name)
+     SELECT ?1, ?2, ?3, ?4, ?5, (SELECT name FROM people WHERE user_id = ?5)
      WHERE ?5 IS NOT NULL OR (SELECT count(*) FROM take_comments WHERE take_id = ?1 AND author_id IS NULL) < ?6
-     RETURNING id, note, body, by_singer, author_id, (SELECT name FROM people WHERE user_id = ?5) AS name, created_at`,
+     RETURNING id, note, body, by_singer, author_id, author_name AS name, created_at`,
   )
     .bind(id, note, body, bySinger, who?.id ?? null, MAX_COMMENTS)
     .first<CommentRow>();

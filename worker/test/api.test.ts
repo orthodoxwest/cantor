@@ -102,7 +102,11 @@ describe("api", () => {
     expect(await (await get("/api/me", { "X-Dev-User": "director" })).json()).toEqual({ id: "director", email: null, name: "Choir director" });
     expect((await put("Someone", { Origin: "https://evil.example" })).status).toBe(403);
     expect((await put("Someone", { "X-Dev-User": "" })).status).toBe(401);
-    for (const bad of [3, null, "x".repeat(61), "a\u0000b", "a\u202eb"]) expect((await put(bad)).status).toBe(400);
+    for (const bad of [3, null, "x".repeat(61), "a\u0000b", "a\u202eb", "a\u200fb", "e\u0301\u0301\u0301\u0301", "You", " the  SINGER! ", "A reader", "Ｙｏｕ", "..."])
+      expect([bad, (await put(bad)).status]).toEqual([bad, 400]);
+    // Names written with joiners, and in any script, are kept as given.
+    for (const good of ["\u0645\u06cc\u200c\u0631\u0632\u0627", "Fr. Ñuño", "Y".repeat(60)]) expect(await (await put(good)).json()).toMatchObject({ name: good });
+    expect((await app.request("/api/me", { method: "PUT", body: JSON.stringify({ name: "x".repeat(5000) }), headers: { Origin: "http://localhost", "X-Dev-User": "director" } }, env)).status).toBe(413);
     expect(await (await put("")).json()).toMatchObject({ name: null });
     expect(await (await get("/api/me", { "X-Dev-User": "director" })).json()).toMatchObject({ name: null });
   });
