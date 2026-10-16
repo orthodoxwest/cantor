@@ -82,10 +82,11 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # Only cantor's own target: neuma's checkout exists only when scripts/neuma.sh
+        # rebuilds the module, and the cache's post step fails on a missing workspace.
         with:
           workspaces: |
             . -> target
-            vendor/neuma-src -> vendor/neuma-src/target
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
