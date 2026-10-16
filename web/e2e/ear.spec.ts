@@ -163,14 +163,23 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   await take.click();
   await expect(page.locator("#status")).toHaveText("Listen to the opening notes.");
   await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
-  await expect(page.locator("#status")).toHaveText("Begin with the cursor.", { timeout: 10_000 });
+  await expect(page.locator("#status")).toHaveText("Begin when the cursor appears.", { timeout: 10_000 });
   // The take is judged when the chant is over, with nothing pressed.
   await expect(page.locator("#key")).toHaveText(/^Your key: /, { timeout: (seconds + 30) * 1000 });
-  await expect(page.getByRole("button", { name: "Sing a take" })).toHaveAttribute("aria-pressed", "false");
+  await expect(take).toHaveText("Sing a take");
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+  // The first note was due when the cursor began, a moment after listening did; the take was
+  // timed by the singer's first sound, which is where the file's voice begins.
+  const timing = (await page.evaluate(() => window.__cantor.take()))!;
+  expect(timing.due).toBeGreaterThan(1.45);
+  expect(timing.due).toBeLessThan(2);
+  const heard = (await page.evaluate(() => window.__cantor.heard()))!;
+  expect(timing.at).toBe(timing.sound);
+  expect(Math.abs(timing.sound! - heard.onset!)).toBeLessThan(0.1);
   const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
   const wanted = want.verdict.marks.flatMap((m: { first: number; last: number }) =>
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
 });
-

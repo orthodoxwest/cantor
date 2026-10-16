@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { describe, expect, it } from "vitest";
-import { firstNoteAt, headphonesIn, noteAt, RECITATION, timed } from "../src/timing";
+import { firstNoteAt, firstSound, headphonesIn, noteAt, RECITATION, timed } from "../src/timing";
 
 const note = (start: number, duration: number, recitation = false) => ({ start, duration, recitation }) as TimelineNote;
 
@@ -20,9 +20,25 @@ describe("timing", () => {
 
   it("times the take by the singer's first sound when it is near where the note was due", () => {
     expect(firstNoteAt(1.6, 2.0)).toBe(2.0);
-    expect(firstNoteAt(1.6, 1.0)).toBe(1.0);
+    expect(firstNoteAt(1.6, 1.5)).toBe(1.5);
+    // Early, the singer holds the first note until the cursor moves.
+    expect(firstNoteAt(1.6, 1.0)).toBe(1.6);
     expect(firstNoteAt(1.6, 2.7)).toBe(1.6);
     expect(firstNoteAt(1.6, null)).toBe(1.6);
+  });
+
+  it("hears the first sound where the voice holds, not at a click or a breath", () => {
+    // Frames every 30 ms from 10.0 s on the audio clock: a click at frame 10, the voice from
+    // frame 34 (1.02 s).
+    const frames = Array.from({ length: 60 }, (_, i) => ({ t: 10 + i * 0.03, midi: i === 10 || i >= 34 ? 57 : null }));
+    expect(firstSound(frames, 10, null)).toBeCloseTo(1.02, 6);
+    // The first loud sample just before the first voiced frame sharpens it; one long before
+    // (the room's noise) does not.
+    expect(firstSound(frames, 10, 0.96)).toBe(0.96);
+    expect(firstSound(frames, 10, 0.01)).toBeCloseTo(1.02, 6);
+    // Times are from the take's own start.
+    expect(firstSound(frames, 10.5, null)).toBeCloseTo(0.52, 6);
+    expect(firstSound(frames.map((f) => ({ ...f, midi: null })), 10, 0.5)).toBeNull();
   });
 
   it("knows headphones by the output's name, and says when it cannot tell", () => {
@@ -32,6 +48,8 @@ describe("timing", () => {
     expect(headphonesIn([out("Default - MacBook Pro Speakers"), out("AirPods Pro", "x")])).toBe(false);
     expect(headphonesIn([out("Galaxy Buds2", "x")])).toBe(true);
     expect(headphonesIn([out("")])).toBeNull();
+    // A laptop's one output, named for both whatever is plugged in.
+    expect(headphonesIn([out("Speakers/Headphones (Realtek(R) Audio)")])).toBeNull();
     expect(headphonesIn([mic])).toBeNull();
   });
 });

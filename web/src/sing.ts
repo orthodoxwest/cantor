@@ -9,7 +9,7 @@ import { drawMarks } from "./marks";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
-import { firstNoteAt, headphonesIn, timed } from "./timing";
+import { firstNoteAt, firstSound, headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
@@ -168,7 +168,7 @@ const guide =
     gabc: SAMPLE,
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
-    onError: (message) => setStatus(message),
+    onError: (message) => setStatus(taking ? "The guide voice failed, so the take was stopped." : message),
   });
 if (!guide) {
   playButton.title = "The guide voice could not load.";
@@ -193,10 +193,14 @@ const headphonesBox = byId<HTMLInputElement>("headphones");
 /** What the browser says of headphones, until the singer says otherwise. */
 let detected: boolean | null = null;
 let chosen = false;
-/** How long the cursor waits on the first note, after listening begins, in seconds. */
+/** How long the cursor waits before the chant begins, after listening begins, in seconds. */
 const LEAD = 1.5;
-/** How long listening goes on after the last note, in seconds. */
-const TAIL = 0.6;
+/** How long listening goes on after the last note is due, in seconds: past the latest a take
+ * timed by the singer's first sound may run ([`ONSET_WINDOW`]). */
+const TAIL = ONSET_WINDOW + 0.5;
+/** How the last take was timed, in seconds of the take: when its first note was due, when the
+ * singer first sounded, and the first note's start it was judged by. */
+let timing: { due: number; sound: number | null; at: number } | null = null;
 
 function showMode(): void {
   const worn = headphonesBox.checked;
@@ -210,8 +214,8 @@ function showMode(): void {
         ? "headphones are in"
         : "no headphones are in";
   modeText.textContent = worn
-    ? `A take is scored with the guide in your headphones (${why}). Play sings through the speaker and is never scored.`
-    : `A take is scored with the opening notes only, then the cursor leads: through the speaker the microphone would hear the guide (${why}). Play sings with you and is never scored.`;
+    ? `A take is scored with the guide in your headphones (${why}). Play sings the chant to you and is never scored.`
+    : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
 }
 
 async function detect(): Promise<void> {
@@ -230,6 +234,18 @@ headphonesBox.addEventListener("change", () => {
 navigator.mediaDevices?.addEventListener?.("devicechange", () => void detect());
 void detect();
 
+/** Asks for the microphone if it is not yet allowed, so that the question does not come
+ * between the opening notes and the take, and the outputs are named. */
+async function allowMicrophone(): Promise<void> {
+  try {
+    if ((await navigator.permissions.query({ name: "microphone" as PermissionName })).state === "granted") return;
+  } catch {
+    // The browser cannot say; ask.
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  stream.getTracks().forEach((track) => track.stop());
+}
+
 /** The opening notes the take is given without headphones: the first note, then the reciting
  * tone if it is another. */
 function cueNotes(notes: readonly SungNote[]): SungNote[] {
@@ -241,6 +257,8 @@ function cueNotes(notes: readonly SungNote[]): SungNote[] {
   return cue;
 }
 
+const wait = (seconds: number) => new Promise((resolve) => setTimeout(resolve, Math.max(seconds, 0) * 1000));
+
 /** Counts takes, so a take stopped while it is starting does not go on. */
 let takes = 0;
 let taking = false;
@@ -250,42 +268,62 @@ let cueing: Singing | null = null;
 async function takeScored(): Promise<void> {
   if (!guide || !table) return;
   const take = ++takes;
+  // A take that is no longer going leaves the page alone: whatever stopped it has seen to it.
   const going = () => taking && take === takes;
   taking = true;
+  timing = null;
   // Nothing else sounds or listens during a take.
+  guide.stop();
+  if (listener.listening) {
+    listener.stop();
+    listenButton.setAttribute("aria-pressed", "false");
+  }
   playButton.disabled = listenButton.disabled = true;
-  takeButton.setAttribute("aria-pressed", "true");
   takeButton.textContent = "Stop";
   showResult(null);
   setStatus("");
-  const worn = headphonesBox.checked;
   try {
     const ctx = await audioContext();
+    await allowMicrophone();
+    if (!going()) return;
+    await detect();
+    if (!going()) return;
+    const worn = headphonesBox.checked;
     if (!worn) {
       setStatus("Listen to the opening notes.", true);
-      const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source });
+      const cue = await sing(ctx, cueNotes(guide.notes()), {
+        table,
+        gabc: score.source,
+        onError: (error) => console.error("opening notes:", error),
+      });
       if (!going()) return cue.stop();
       cueing = cue;
-      await new Promise((resolve) => setTimeout(resolve, (cue.end - ctx.currentTime + 0.3) * 1000));
+      await wait(cue.end - ctx.currentTime + 0.3);
       if (!going()) return;
     }
     await listener.start();
-    if (!going()) return listener.stop();
-    void detect();
-    setStatus("Begin with the cursor.", true);
+    if (!going()) return;
+    setStatus(worn ? "Begin with the guide." : "Begin when the cursor appears.", true);
     const started = await guide.play({ voice: worn, lead: LEAD });
-    if (!started || !going()) return listener.stop();
-    // The singer hears the guide late by the output's latency, and is heard late by the
-    // input's.
-    const due = started.origin - listener.startedAt + listener.inputLatency + (worn ? ctx.outputLatency || 0 : 0);
+    if (!going()) return;
+    // A guide that did not start, or failed, has said why.
+    if (!started) return listener.stop();
     const finished = await started.ended;
-    if (finished) await new Promise((resolve) => setTimeout(resolve, TAIL * 1000));
+    if (finished) await wait(TAIL);
+    if (!going()) return;
     listener.stop();
-    // Whatever stopped the take has said so: the Stop button, or the guide when it failed.
-    if (!finished || !going()) return;
+    if (!finished) return;
     setStatus("");
-    const heard = await listener.heard!;
-    const json = await listener.judge(score.source, guide.pulse, firstNoteAt(due, heard.onset));
+    const heard = await listener.heard;
+    if (!heard || heard.startedAt === null) throw new Error("nothing was heard");
+    // The singer hears the guide late by the output's latency, and is heard late by the
+    // input's; the cursor is seen at once.
+    const output = worn ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0;
+    const due = started.origin + started.first - heard.startedAt + listener.inputLatency + output;
+    const sound = firstSound(listener.frames, heard.startedAt, heard.onset);
+    const at = firstNoteAt(due, sound);
+    timing = { due, sound, at };
+    const json = await listener.judge(score.source, guide.pulse, at - started.first);
     if (going()) showResult(JSON.parse(json) as Judged);
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -300,7 +338,6 @@ function endTake(): void {
   cueing = null;
   playButton.disabled = !guide;
   listenButton.disabled = false;
-  takeButton.setAttribute("aria-pressed", "false");
   takeButton.textContent = "Sing a take";
 }
 
@@ -316,6 +353,7 @@ if (guide) {
   });
 } else {
   takeButton.title = "The guide voice could not load.";
+  modeText.parentElement!.hidden = true;
 }
 
 if (test) {
@@ -330,6 +368,7 @@ if (test) {
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
     heard: () => listener.heard,
+    take: () => timing,
     // Puts `gabc` on the page at `pulse` seconds a pulse, for a take of another chant.
     practise: (gabc: string, pulse: number) => {
       if (gabc !== score.source) score.setChant(new Chant(gabc));

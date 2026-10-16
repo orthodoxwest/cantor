@@ -41,12 +41,23 @@ export type ToEar =
 export type Block = { t: number; samples: Float32Array } | { end: true };
 
 /** What the ear sends back: frames as they are tracked; then the take heard (its length and
- * rate, frame count, first sound in seconds from its start, the share of its length spent
+ * rate, frame count, first sound in seconds from its start, its first sample's time on the
+ * audio clock (null when none came), the share of its length spent
  * hearing it as it came, and the milliseconds spent finishing it); then, when asked, the take
  * judged. Each answer, or the error in its place, carries the `id` of the request it answers. */
 export type FromEar =
   | { type: "frames"; frames: Frame[] }
-  | { type: "heard"; id: number; seconds: number; sampleRate: number; frames: number; onset: number | null; busy: number; stopMs: number }
+  | {
+      type: "heard";
+      id: number;
+      seconds: number;
+      sampleRate: number;
+      frames: number;
+      onset: number | null;
+      startedAt: number | null;
+      busy: number;
+      stopMs: number;
+    }
   | { type: "judged"; id: number; json: string }
   | { type: "error"; id: number; message: string };
 
@@ -135,6 +146,7 @@ function onBlock(ear: Exports, id: number, block: Block): void {
     sampleRate,
     frames,
     onset: onset < 0 ? null : onset,
+    startedAt: start ?? null,
     busy: pushed ? trackMs / 1000 / (pushed / sampleRate) : 0,
     stopMs,
   });

@@ -27,10 +27,11 @@ export interface PlayOptions {
   lead?: number;
 }
 
-/** A play under way: when its first note is due on the audio clock, and whether it ran to
- * the end (true) or was stopped (false). */
+/** A play under way: when its pulse 0 falls on the audio clock, how long after that its
+ * first note starts, in seconds, and whether it ran to the end (true) or was stopped (false). */
 export interface Started {
   origin: number;
+  first: number;
   ended: Promise<boolean>;
 }
 
@@ -42,6 +43,7 @@ export class Guide {
   readonly visited: number[] = [];
   private singing: Singing | null = null;
   private frame = 0;
+  private timer = 0;
   /** Counts plays, so a play stopped while it was starting does not go on. */
   private plays = 0;
   private times: Timed[] = [];
@@ -106,14 +108,26 @@ export class Guide {
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const zero = clock() + (origin - ctx.currentTime);
     const ended = new Promise<boolean>((resolve) => (this.end = resolve));
-    const tick = () => {
-      if (!this.playing) return;
+    // The cursor appears when the chant begins, after the lead.
+    const step = (): boolean => {
+      if (!this.playing) return false;
+      const t = clock() - zero;
+      if (t < 0) {
+        this.cursor.hide();
+        return true;
+      }
       // At the end the voice is left to die away.
-      if (!this.follow(Math.max(clock() - zero, 0))) return this.halt(true);
-      this.frame = requestAnimationFrame(tick);
+      if (this.follow(t)) return true;
+      this.halt(true);
+      return false;
     };
+    const tick = () => {
+      if (step()) this.frame = requestAnimationFrame(tick);
+    };
+    // A hidden page draws no frames, and the play still ends on time.
+    this.timer = window.setInterval(step, 250);
     tick();
-    return { origin, ended };
+    return { origin, first: this.times[0]?.start ?? 0, ended };
   }
 
   stop(): void {
@@ -131,6 +145,7 @@ export class Guide {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.frame);
+    clearInterval(this.timer);
     this.singing?.stop(finished);
     this.cursor.hide();
     this.end?.(finished);

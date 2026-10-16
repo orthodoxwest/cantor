@@ -42,26 +42,51 @@ export function noteAt(times: readonly Timed[], t: number): number {
   return lo - 1;
 }
 
-/** How far the singer's first sound may be from where the first note was due, in seconds,
+/** How late the singer's first sound may be from where the first note was due, in seconds,
  * for the take to be timed by it. */
 export const ONSET_WINDOW = 1;
+/** And how early: a singer who starts early holds the first note until the cursor moves, so an
+ * early sound says nothing of when the notes fall. */
+export const ONSET_EARLY = 0.15;
 
 /** When the take's first note starts, in seconds of the take: where the singer first sounded,
- * if that is within [`ONSET_WINDOW`] of where the note was due (`due`), else when it was due.
- * The singer follows the guide or the cursor a little late, and the first sound is the
- * truest measure of how late. */
+ * if that is within [`ONSET_EARLY`] before or [`ONSET_WINDOW`] after where the note was due
+ * (`due`), else when it was due. The singer follows the guide or the cursor a little late, and
+ * the first sound is the truest measure of how late. */
 export function firstNoteAt(due: number, onset: number | null): number {
-  return onset !== null && Math.abs(onset - due) <= ONSET_WINDOW ? onset : due;
+  return onset !== null && onset >= due - ONSET_EARLY && onset <= due + ONSET_WINDOW ? onset : due;
+}
+
+/** Voiced frames in a row that make a first sound, and not a click or a breath. */
+const VOICED_RUN = 4;
+/** How far before the first voiced frame's centre the first loud sample may be and still be
+ * where the voice began, in seconds: half a frame and a hop. */
+const SHARPEN = 0.1;
+
+/** Where the singer first sounded, in seconds from `start` (the take's first sample, on the
+ * frames' clock): the first of [`VOICED_RUN`] voiced frames in a row, or the first loud sample
+ * (`loud`, in seconds of the take) when it falls just before; null when nothing was voiced. */
+export function firstSound(frames: readonly { t: number; midi: number | null }[], start: number, loud: number | null): number | null {
+  let run = 0;
+  for (const [i, frame] of frames.entries()) {
+    run = frame.t < start || frame.midi === null ? 0 : run + 1;
+    if (run < VOICED_RUN) continue;
+    const voiced = frames[i - VOICED_RUN + 1]!.t - start;
+    return loud !== null && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
+  }
+  return null;
 }
 
 /** Output devices whose name says they are worn. */
 const WORN = /head(phone|set)|ear(bud|phone|pod)|airpods|\bbuds/i;
 
 /** Whether the audio goes to headphones, from the devices the browser lists: null when it does
- * not say (no outputs listed, or none named, as before the microphone is allowed). */
+ * not say (no outputs listed, or none named, as before the microphone is allowed, or a name
+ * that is both, as "Speakers/Headphones" is whatever is plugged in). */
 export function headphonesIn(devices: readonly Pick<MediaDeviceInfo, "kind" | "label" | "deviceId">[]): boolean | null {
   const outputs = devices.filter((d) => d.kind === "audiooutput");
   if (outputs.length === 0 || outputs.every((d) => !d.label)) return null;
   const current = outputs.find((d) => d.deviceId === "default") ?? outputs[0]!;
+  if (/speaker/i.test(current.label) && WORN.test(current.label)) return null;
   return WORN.test(current.label);
 }
