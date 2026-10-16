@@ -12,6 +12,7 @@ declare global {
       heard: () =>
         | Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; startedAt: number | null; busy: number; stopMs: number }>
         | undefined;
+      listen: () => Promise<void>;
       take: () => { due: number; sound: number | null; at: number } | null;
       practise: (gabc: string, pulse: number) => void;
       timed: (pulse: number) => Array<{ start: number; duration: number }>;

@@ -1,9 +1,11 @@
 // Sings a run of a timeline's notes with the guide's singer (see singer.ts) and reports the
-// sounding note as it goes. One pulse is `pulse` seconds; pauses keep their weight.
-import { type TimelineNote, noteAtTime } from "neuma";
+// sounding note as it goes, at the times the practice page leads (timing.ts). One pulse is
+// `pulse` seconds; pauses keep their weight.
+import type { TimelineNote } from "neuma";
 import { audioContext } from "./audio";
 import { DO } from "./notes";
-import { fromTimeline, neutralTable, sing, type Singing } from "./singer";
+import { fromTimeline, neutralTable, sing, type Singing, type SungNote } from "./singer";
+import { noteAt } from "./timing";
 
 /** The pointer sings English. */
 const GABC = "language: English;\n%%\n";
@@ -38,6 +40,7 @@ export class Player {
     const current = () => this.playing && this.options === options;
     let ctx: AudioContext;
     let singing: Singing;
+    let sung: SungNote[];
     try {
       ctx = await audioContext();
       const table = await neutralTable();
@@ -49,7 +52,8 @@ export class Player {
         options.onError?.("The voice failed while singing. Press Play to try again.");
         this.stop();
       };
-      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC, onError });
+      sung = fromTimeline(notes, options.pulse, midi, notes[0]!.start);
+      singing = await sing(ctx, sung, { table, gabc: GABC, onError });
     } catch (error) {
       console.error("pointer:", error);
       if (this.options !== options) return;
@@ -59,21 +63,21 @@ export class Player {
     }
     if (!current()) return singing.stop();
     this.singing = singing;
-    const first = notes[0]!.start;
-    const last = notes[notes.length - 1]!;
-    const length = last.start + last.duration - first;
+    const last = sung[sung.length - 1]!;
+    const length = last.start + last.duration;
     const clock = options.clock ?? (() => ctx.currentTime);
     // The follower runs on the clock given, from when the singer's first sample plays; on the
     // audio clock, behind by the output's latency.
     const origin = clock() + (singing.start - ctx.currentTime) + (options.clock ? 0 : ctx.outputLatency || 0);
-    const run = { notes: [...notes] };
     this.started = true;
     let shown: TimelineNote | null | undefined;
     const tick = () => {
       if (!current()) return;
-      const t = (clock() - origin) / options.pulse;
+      const t = clock() - origin;
       if (t >= length) return this.stop(true);
-      const note = t < 0 ? null : noteAtTime(run, first + t);
+      const i = noteAt(sung, t);
+      // In a pause, no note sounds.
+      const note = i >= 0 && t < sung[i]!.start + sung[i]!.duration ? notes[i]! : null;
       if (note !== shown) options.onNote((shown = note));
       this.frame = requestAnimationFrame(tick);
     };

@@ -118,7 +118,7 @@
   background: var(--bg);
   border-top: 1px solid var(--gold-line);
 }
-/* Three buttons and the readout keep to one row on a phone. */
+/* The buttons and the readout keep to one row on a phone. */
 @media (max-width: 479.98px) {
   .bar-in {
     gap: 0.5rem;

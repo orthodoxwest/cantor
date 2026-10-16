@@ -4,7 +4,7 @@ import { audioContext } from "./audio";
 import type { Cursor } from "./cursor";
 import { DO } from "./notes";
 import type { Score } from "./score";
-import { octaveShift, sing, type Singing, type SungNote, type VoiceTable } from "./singer";
+import { fromTimeline, octaveShift, sing, type Singing, type SungNote, type VoiceTable } from "./singer";
 import { noteAt, timed, type Timed } from "./timing";
 
 export const PULSE = 0.5;
@@ -73,10 +73,7 @@ export class Guide {
       notes.map((n) => DO + n.semitones),
       this.options.table.centre,
     );
-    return timed(notes, this.pulse).map((at, i) => {
-      const n = notes[i]!;
-      return { midi: DO + n.semitones + shift, start: at.start, duration: at.duration, word: n.word, syllable: n.syllable, text: n.syllableText };
-    });
+    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + shift);
   }
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves

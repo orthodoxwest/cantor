@@ -35,12 +35,12 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   test.setTimeout((seconds + 60) * 1000);
   await page.goto("/sing.html?test=1");
   await page.waitForFunction(() => window.__cantor);
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   // The file ends with as much silence as it starts with; stop inside it.
   await page.waitForTimeout((seconds - 1) * 1000);
   // The live trace has followed the take.
   expect(await page.evaluate(() => window.__cantor.frames.filter((f) => f.midi !== null).length)).toBeGreaterThan(100);
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   const heard = await page.evaluate(() => window.__cantor.heard());
   expect(heard).toBeDefined();
   expect(heard!.onset).not.toBeNull();
@@ -137,11 +137,11 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   // A new take clears the last one's view, the words of a mark left open with it.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).toHaveText(got.told[0]);
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   await expect(page.locator("#why")).toHaveText("");
   await expect(page.locator(".mark-ring")).toHaveCount(0);
   await expect(page.locator("#result")).toBeHidden();
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
 });
@@ -164,11 +164,21 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   await expect(page.locator("#status")).toHaveText("Listen to the opening notes.");
   await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
   await expect(page.locator("#status")).toHaveText("Begin when the cursor appears.", { timeout: 10_000 });
+  // While it is sung the page shows the cursor and the note heard, and nothing else: no words,
+  // no ribbon, no marks.
+  await expect(page.locator("#status")).toHaveText("", { timeout: 5000 });
+  await expect(page.locator(".mode")).toBeHidden();
+  await expect(page.locator("#chant")).toBeDisabled();
+  await expect(page.locator("#readout")).toHaveText(/^[A-G]♯?\d$/, { timeout: 5000 });
+  await expect(page.locator("#result")).toBeHidden();
+  await expect(page.locator(".mark-ring, .band-trace")).toHaveCount(0);
+  await expect(page.locator("#why")).toHaveText("");
   // The take is judged when the chant is over, with nothing pressed.
   await expect(page.locator("#key")).toHaveText(/^Your key: /, { timeout: (seconds + 30) * 1000 });
   await expect(take).toHaveText("Sing a take");
+  await expect(page.locator(".mode")).toBeVisible();
+  await expect(page.locator("#chant")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
   // The first note was due when the cursor began, a moment after listening did; the take was
   // timed by the singer's first sound, which is where the file's voice begins.
   const timing = (await page.evaluate(() => window.__cantor.take()))!;
@@ -182,4 +192,14 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
+  // The next take clears this one's view, and Stop ends it.
+  await page.locator('[data-mark="0"]').click();
+  await expect(page.locator("#why")).not.toHaveText("");
+  await take.click();
+  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator(".mark-ring")).toHaveCount(0);
+  await expect(page.locator("#result")).toBeHidden();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.locator("#status")).toHaveText("The take was stopped.");
+  await expect(take).toHaveText("Sing a take");
 });

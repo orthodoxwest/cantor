@@ -4,6 +4,7 @@
 // at a time just ahead of the audio clock, so a long chant never schedules more than a couple
 // of seconds at once. It needs no score or cursor, so any page can sing a list of notes.
 import type { TimelineNote } from "neuma";
+import { timed } from "./timing";
 
 interface Exports {
   memory: WebAssembly.Memory;
@@ -34,18 +35,22 @@ export interface SungNote {
   text: string;
 }
 
-/** A timeline's notes to sing: pulse `from` at 0 s, a pulse `pulse` seconds, pitches by
- * `midiOf(semitones)`. */
+/** A timeline's notes to sing, timed as the core times them (timing.ts) from pulse `from`
+ * at 0 s, a pulse `pulse` seconds, pitches by `midiOf(semitones)`. */
 export function fromTimeline(
   notes: readonly TimelineNote[],
   pulse: number,
   midiOf: (semitones: number) => number,
   from = 0,
 ): SungNote[] {
-  return notes.map((n) => ({
+  const times = timed(
+    notes.map((n) => ({ ...n, start: n.start - from })),
+    pulse,
+  );
+  return notes.map((n, i) => ({
     midi: midiOf(n.semitones),
-    start: (n.start - from) * pulse,
-    duration: n.duration * pulse,
+    start: times[i]!.start,
+    duration: times[i]!.duration,
     word: n.word,
     syllable: n.syllable,
     text: n.syllableText,
