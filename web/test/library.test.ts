@@ -41,6 +41,8 @@ describe("searching the library", () => {
     expect(found("hymn")).toBe(false);
     expect(found("ii")).toBe(false);
     expect(found("ii", chant({ mode: "ii" }))).toBe(true);
+    expect(found("ii", chant({ mode: "iii" }))).toBe(false);
+    expect(found("vi", chant({ title: "Vidi aquam", mode: "viii" }))).toBe(true);
   });
 
   it("finds everything when nothing is searched", () => {
@@ -51,5 +53,6 @@ describe("searching the library", () => {
     expect(highlight("A light to lighten", terms("light"))).toBe("A <mark>light</mark> to <mark>light</mark>en");
     expect(highlight("Delight & <b>", terms("light"))).toBe("Delight &amp; &lt;b&gt;");
     expect(highlight("Psalm iii", terms("ii"))).toBe("Psalm iii");
+    expect(highlight("Lighten light", terms("l light"))).toBe("<mark>Light</mark>en <mark>light</mark>");
   });
 });

@@ -87,6 +87,7 @@ function drawFound(): void {
   else if (!everything) note = unreachable ? "The library could not be reached." : "Searching…";
   else if (!matches.length) note = `Nothing matches “${q}”.`;
   else if (matches.length > FOUND) note = `${FOUND} of ${matches.length}; another word narrows them.`;
+  else note = matches.length === 1 ? "1 chant" : `${matches.length} chants`;
   foundNote.textContent = note;
 }
 find.addEventListener("focus", reach);
@@ -105,7 +106,7 @@ find.addEventListener("keydown", (e) => {
   }
   const first = links()[0];
   if (!first) return;
-  if (e.key === "Enter") {
+  if (e.key === "Enter" && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     location.assign(first.href);
   } else if (e.key === "ArrowDown") {
@@ -114,6 +115,7 @@ find.addEventListener("keydown", (e) => {
   }
 });
 foundList.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") return find.focus();
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const all = links();
   const at = all.indexOf(document.activeElement as HTMLAnchorElement);

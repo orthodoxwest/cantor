@@ -77,7 +77,8 @@ const wordsOf = (s: string) =>
     .replace(/['’]/g, "")
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
-/** A mode's numerals, which find a whole word only, so that "ii" is not "viii". */
+/** A mode's numerals, which find no other numeral but themselves, so that "ii" is not "viii";
+ * they begin other words as any term does ("vi" finds "Vidi"). */
 const NUMERALS = new Set([...ROMAN.slice(1), "1", "2", "3", "4", "5", "6", "7", "8"]);
 
 /** The words of a search. */
@@ -95,7 +96,7 @@ function searchWords(c: LibraryChant): string[] {
   return words;
 }
 
-const begins = (t: string) => (w: string) => (NUMERALS.has(t) ? w === t : w.startsWith(t));
+const begins = (t: string) => (w: string) => w === t || (w.startsWith(t) && !(NUMERALS.has(t) && NUMERALS.has(w)));
 
 /** Whether every term begins one of the chant's words ("antiphon viii", "light lighten"). */
 export function finds(c: LibraryChant, ts: readonly string[]): boolean {
@@ -108,11 +109,13 @@ export function highlight(text: string, ts: readonly string[]): string {
   const f = fold(text);
   // Folding that changes the length would put the marks in the wrong places.
   if (!ts.length || f.length !== text.length) return escape(text);
+  // The longest term first, so that "l light" marks all of "light".
+  const longest = [...ts].sort((a, b) => b.length - a.length);
   let out = "";
   let from = 0;
   for (let i = 0; i < f.length; ) {
-    const t =
-      i === 0 || !WORD.test(f[i - 1]!) ? ts.find((t) => f.startsWith(t, i) && !(NUMERALS.has(t) && WORD.test(f[i + t.length] ?? ""))) : undefined;
+    const word = i === 0 || !WORD.test(f[i - 1]!) ? f.slice(i).match(/^[\p{L}\p{N}]*/u)![0] : "";
+    const t = word ? longest.find((t) => begins(t)(word)) : undefined;
     if (!t) {
       i++;
       continue;
