@@ -4,8 +4,9 @@
 //!
 //! The research loop: [`synth`] renders a take with planted faults through a [`room`],
 //! [`listen`] tracks it and masks the guide's bleed, [`score`] measures the track against the
-//! notes [`timeline`] read from the chant, [`judge`] decides what the singer is told, and
-//! [`ribbon`] lays it out note by note for the page to draw.
+//! notes [`timeline`] read from the chant, and [`judge`] decides what the singer is told:
+//! [`ribbon`] lays it out note by note for the page to draw, and [`tell`] puts each mark in
+//! words.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +18,7 @@ pub mod ribbon;
 pub mod room;
 pub mod score;
 pub mod synth;
+pub mod tell;
 pub mod timeline;
 pub mod voice;
 
@@ -27,6 +29,7 @@ pub use pitch::{Frame, track};
 pub use ribbon::{Band, ribbon};
 pub use score::{NoteResult, Report, score};
 pub use synth::{Note, Planted, Profile, Take, render, render_take};
+pub use tell::{tell, told};
 pub use timeline::{notes_from_gabc, part_from_gabc};
 pub use voice::{Voice, VoiceError, sing};
 

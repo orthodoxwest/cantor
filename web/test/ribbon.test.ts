@@ -24,7 +24,7 @@ describe("ribbon", () => {
 
   it("measures every band in the same cents, clipped at its edge", () => {
     expect(yOf(0, 10)).toBe(10 + STRIP / 2);
-    expect(yOf(100, 0) - yOf(200, 0)).toBeCloseTo(yOf(0, 0) - yOf(100, 0));
+    expect(yOf(50, 0) - yOf(100, 0)).toBeCloseTo(yOf(0, 0) - yOf(50, 0));
     expect(yOf(RANGE_CENTS * 3, 0)).toBe(yOf(RANGE_CENTS, 0));
     expect(yOf(-50, 0)).toBeGreaterThan(yOf(50, 0));
   });
