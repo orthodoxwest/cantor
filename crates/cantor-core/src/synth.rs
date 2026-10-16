@@ -159,6 +159,8 @@ pub struct Profile {
 
     // The guide.
     pub guide: GuideMode,
+    /// The key the guide plays in, in cents from the score's; `None` is the singer's key.
+    pub guide_key_cents: Option<f32>,
     /// The guide's level at the microphone in dB from the singer's.
     pub bleed_db: f32,
     /// How late the guide reaches the microphone.
@@ -381,9 +383,10 @@ pub fn render_take(notes: &[Note], profile: &Profile, sample_rate: f32, seed: u6
     Take { samples: out, guide }
 }
 
-/// The guide as played: the pulse voice at the singer's key, with no faults, the first note
-/// as a cue before the take and, in [`GuideMode::Full`], every note.
+/// The guide as played: the pulse voice at its key, with no faults, the first note as a cue
+/// before the take and, in [`GuideMode::Full`], every note.
 fn render_guide(notes: &[Note], profile: &Profile, len: usize, sample_rate: f32) -> Vec<f32> {
+    let key = profile.guide_key_cents.unwrap_or(profile.key_cents);
     let mut out = vec![0.0f32; len];
     if let Some((start, end)) = cue_span(notes) {
         let cue = Note {
@@ -391,15 +394,13 @@ fn render_guide(notes: &[Note], profile: &Profile, len: usize, sample_rate: f32)
             dur_s: end - start,
             ..notes[0]
         };
-        let amps = harmonics(Voice::Pulse, &cue, profile.key_cents);
-        add_note(&mut out, &cue, &amps, 1.0, sample_rate, |_, _| cue.midi + profile.key_cents / 100.0);
+        let amps = harmonics(Voice::Pulse, &cue, key);
+        add_note(&mut out, &cue, &amps, 1.0, sample_rate, |_, _| cue.midi + key / 100.0);
     }
     if profile.guide == GuideMode::Full {
         for note in notes {
-            let amps = harmonics(Voice::Pulse, note, profile.key_cents);
-            add_note(&mut out, note, &amps, 1.0, sample_rate, |_, _| {
-                note.midi + profile.key_cents / 100.0
-            });
+            let amps = harmonics(Voice::Pulse, note, key);
+            add_note(&mut out, note, &amps, 1.0, sample_rate, |_, _| note.midi + key / 100.0);
         }
     }
     out
@@ -669,5 +670,23 @@ mod tests {
         let mid = &take.samples[(2.3 * SR) as usize..(2.8 * SR) as usize];
         let rms = (mid.iter().map(|x| x * x).sum::<f32>() / mid.len() as f32).sqrt();
         assert!((rms / NOTE_RMS - 0.1).abs() < 0.03, "bleed at {:.3} of the singer", rms / NOTE_RMS);
+    }
+
+    #[test]
+    fn the_guide_plays_in_its_own_key() {
+        let notes = [Note::new(60.0, 2.0, 1.0)];
+        let profile = Profile {
+            guide: GuideMode::Full,
+            key_cents: -300.0,
+            guide_key_cents: Some(400.0),
+            ..Profile::default()
+        };
+        let played = render_take(&notes, &profile, SR, 1).guide.expect("guide");
+        let (cue, _) = cue_span(&notes).expect("a cue");
+        for t in [cue + 0.1, 2.3] {
+            let at = &played[(t * SR) as usize..(t * SR) as usize + 2048];
+            let midi = crate::pitch::detect(at, SR, 1e-4, 0.8).midi.expect("voiced");
+            assert!((midi - 64.0).abs() < 0.1, "{midi} at {t} s");
+        }
     }
 }
