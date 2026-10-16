@@ -99,7 +99,9 @@ app.get("/take/:id", async (c) => {
   res.headers.set("Cache-Control", "private, no-cache");
   res.headers.set("Referrer-Policy", "no-referrer");
   res.headers.set("X-Robots-Tag", "noindex");
+  res.headers.set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
   return res;
 });
+app.get("/take/:id/", (c) => c.redirect(`/take/${encodeURIComponent(c.req.param("id"))}`, 301));
 
 export default app;

@@ -86,6 +86,43 @@ export interface TakeRecord {
 const finite = (x: unknown, lo: number, hi: number): x is number => typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi;
 const text = (x: unknown, max: number): x is string => typeof x === "string" && x.length > 0 && x.length <= max;
 const strings = (x: unknown): x is string[] => Array.isArray(x) && x.every((s) => typeof s === "string");
+const index = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 10_000;
+const centsOrNull = (x: unknown) => x === null || finite(x, -1e5, 1e5);
+
+/** Whether `bands` are the ribbon's bands as the page draws them (ribbon.ts `Band`). */
+function isRibbon(bands: unknown): bands is unknown[] {
+  return (
+    Array.isArray(bands) &&
+    bands.every((b: Record<string, unknown> | null) => {
+      if (typeof b !== "object" || b === null) return false;
+      const trace = b.trace;
+      return (
+        index(b.index) &&
+        finite(b.from_s, -1e4, 1e4) &&
+        finite(b.to_s, -1e4, 1e4) &&
+        centsOrNull(b.cents) &&
+        Array.isArray(trace) &&
+        trace.every((p: unknown) => Array.isArray(p) && p.length === 2 && finite(p[0], -1e4, 1e4) && finite(p[1], -1e5, 1e5))
+      );
+    })
+  );
+}
+
+/** Whether `marks` are the judge's marks as the page draws them (marks.ts `Mark`). */
+function isMarks(marks: unknown): marks is unknown[] {
+  return (
+    Array.isArray(marks) &&
+    marks.every(
+      (m: Record<string, unknown> | null) =>
+        typeof m === "object" &&
+        m !== null &&
+        (m.kind === "note" || m.kind === "verse" || m.kind === "verse-missing") &&
+        index(m.first) &&
+        index(m.last) &&
+        centsOrNull(m.cents),
+    )
+  );
+}
 
 /** The record in `raw`, if it is one; only the fields named are kept. */
 export function parseRecord(raw: string): TakeRecord | null {
@@ -100,7 +137,8 @@ export function parseRecord(raw: string): TakeRecord | null {
   const verdict = j?.verdict as Record<string, unknown> | null | undefined;
   if (!text(r.slug, 200) || !text(r.title, 300) || !text(r.gabc, 200_000)) return null;
   if (!finite(r.pulse, 0.05, 5) || !finite(r.offset, -60, 900) || !finite(r.seconds, 0.1, 900)) return null;
-  if (!j || !verdict || !Array.isArray(verdict.marks) || !Array.isArray(j.ribbon) || !strings(j.told) || !strings(j.summary)) return null;
+  if (!j || !verdict || !isMarks(verdict.marks) || !centsOrNull(verdict.key_cents ?? null) || !isRibbon(j.ribbon)) return null;
+  if (!strings(j.told) || !strings(j.summary)) return null;
   return {
     slug: r.slug,
     title: r.title,
@@ -157,8 +195,10 @@ takes.post("/", async (c) => {
       try {
         await c.env.TAKES.put(audioKey(id), audio, { httpMetadata: { contentType: "audio/wav" } });
         await c.env.TAKES.put(recordKey(id), JSON.stringify(record), { httpMetadata: { contentType: "application/json" } });
-        await c.env.DB.prepare("INSERT INTO takes (id, user_id, chant_slug, title, public, seconds, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, who.id, record.slug, library?.title ?? record.title, library ? 1 : 0, record.seconds, audio.size)
+        await c.env.DB.prepare(
+          "INSERT INTO takes (id, user_id, chant_slug, title, public, seconds, bytes, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+          .bind(id, who.id, record.slug, library?.title ?? record.title, library ? 1 : 0, record.seconds, audio.size, record.judged.ribbon.length)
           .run();
       } catch (error) {
         await c.env.TAKES.delete([audioKey(id), recordKey(id)]).catch(() => {});
@@ -172,9 +212,9 @@ takes.post("/", async (c) => {
 /** The take's row, when `id` names one. */
 async function row(c: Context<{ Bindings: Env }>, id: string) {
   if (!ID.test(id)) return null;
-  return c.env.DB.prepare("SELECT id, user_id, title, public, bytes, created_at FROM takes WHERE id = ?")
+  return c.env.DB.prepare("SELECT id, user_id, title, public, bytes, notes, created_at FROM takes WHERE id = ?")
     .bind(id)
-    .first<{ id: string; user_id: string; title: string; public: number; bytes: number; created_at: string }>();
+    .first<{ id: string; user_id: string; title: string; public: number; bytes: number; notes: number | null; created_at: string }>();
 }
 
 // A take's record, to whoever holds its id; `mine` says whether the caller sent it.
@@ -191,14 +231,14 @@ takes.get("/:id", async (c) => {
   // take; a private chant (booklet-derived) is shown only to a known caller.
   const open = who !== null || found.public === 1;
   const { results: comments } = await c.env.DB.prepare(
-    "SELECT id, note, body, by_singer, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
+    "SELECT id, note, body, by_singer, author_id, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
   )
     .bind(id)
-    .all<{ id: number; note: number; body: string; by_singer: number; created_at: string }>();
+    .all<CommentRow>();
   return c.json({
     id,
     ...record,
-    comments: comments.map(({ by_singer, ...comment }) => ({ ...comment, by: by_singer ? "singer" : "reader" })),
+    comments: comments.map(asComment),
     slug: open ? record.slug : null,
     title: open ? found.title : null,
     gabc: open ? record.gabc : null,
@@ -207,9 +247,28 @@ takes.get("/:id", async (c) => {
   });
 });
 
-/** The longest comment, in characters, and the most a take may gather. */
+/** The longest comment, in characters; the most comments a take gathers from writers the
+ * Worker does not know (the singer and those signed in are never refused); the largest request
+ * body a comment is read from. */
 export const MAX_COMMENT = 2000;
 export const MAX_COMMENTS = 300;
+const MAX_COMMENT_BODY = 16 * 1024;
+
+interface CommentRow {
+  id: number;
+  note: number;
+  body: string;
+  by_singer: number;
+  author_id: string | null;
+  created_at: string;
+}
+
+/** A comment as the page reads it: who wrote it as the Worker knew them (the singer, someone
+ * signed in, or a reader it did not know), never their id. */
+const asComment = ({ by_singer, author_id, ...comment }: CommentRow) => ({
+  ...comment,
+  by: by_singer ? "singer" : author_id ? "known" : "reader",
+});
 
 // A comment on one note of a take, from whoever holds its link. The Worker, not the page, says
 // whether the singer wrote it.
@@ -219,24 +278,43 @@ takes.post("/:id/comments", async (c) => {
   const id = c.req.param("id");
   const found = await row(c, id);
   if (!found) return c.json({ error: "not found" }, 404);
-  const sent = (await c.req.json().catch(() => null)) as { note?: unknown; body?: unknown } | null;
+  const raw = await bounded(c.req.raw, MAX_COMMENT_BODY);
+  if (!raw) return c.json({ error: "too large" }, 413);
+  const sent = await raw
+    .text()
+    .then((text) => JSON.parse(text) as { note?: unknown; body?: unknown } | null)
+    .catch(() => null);
   const note = sent?.note;
   const body = typeof sent?.body === "string" ? sent.body.trim() : "";
-  if (typeof note !== "number" || !Number.isInteger(note) || note < 0 || note > 10_000 || !body || body.length > MAX_COMMENT)
+  if (!index(note) || (found.notes !== null && note >= found.notes) || !body || body.length > MAX_COMMENT)
     return c.json({ error: "bad request" }, 400);
   const who = await identity(c.req.raw.headers, c.env);
   const bySinger = who?.id === found.user_id ? 1 : 0;
-  // At most MAX_COMMENTS a take, counted in the same statement that adds one.
+  // A writer the Worker does not know may add one while the take holds fewer than
+  // MAX_COMMENTS of theirs, counted in the same statement that adds it.
   const added = await c.env.DB.prepare(
     `INSERT INTO take_comments (take_id, note, body, by_singer, author_id)
-     SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT count(*) FROM take_comments WHERE take_id = ?1) < ?6
-     RETURNING id, note, body, by_singer, created_at`,
+     SELECT ?1, ?2, ?3, ?4, ?5
+     WHERE ?5 IS NOT NULL OR (SELECT count(*) FROM take_comments WHERE take_id = ?1 AND author_id IS NULL) < ?6
+     RETURNING id, note, body, by_singer, author_id, created_at`,
   )
     .bind(id, note, body, bySinger, who?.id ?? null, MAX_COMMENTS)
-    .first<{ id: number; note: number; body: string; by_singer: number; created_at: string }>();
+    .first<CommentRow>();
   if (!added) return c.json({ error: "this take has as many comments as it may hold" }, 429);
-  const { by_singer, ...comment } = added;
-  return c.json({ ...comment, by: by_singer ? "singer" : "reader" }, 201);
+  return c.json(asComment(added), 201);
+});
+
+// The singer removes a comment from their take.
+takes.delete("/:id/comments/:comment", async (c) => {
+  c.header("Cache-Control", "no-store");
+  const caller = await writer(c);
+  if ("refuse" in caller) return c.json({ error: caller.refuse === 403 ? "forbidden" : "unauthorized" }, caller.refuse);
+  const id = c.req.param("id");
+  const found = await row(c, id);
+  if (!found) return c.json({ error: "not found" }, 404);
+  if (found.user_id !== caller.who.id) return c.json({ error: "forbidden" }, 403);
+  const gone = await c.env.DB.prepare("DELETE FROM take_comments WHERE take_id = ? AND id = ?").bind(id, Number(c.req.param("comment"))).run();
+  return gone.meta.changes ? c.body(null, 204) : c.json({ error: "not found" }, 404);
 });
 
 /** The one byte range `header` asks of `size` bytes: null for the whole (no header, a

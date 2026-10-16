@@ -19,7 +19,8 @@ interface Comment {
   /** The note's index in the score's timeline. */
   note: number;
   body: string;
-  by: "singer" | "reader";
+  /** The singer, someone signed in, or a reader the site did not know. */
+  by: "singer" | "known" | "reader";
   created_at: string;
 }
 
@@ -91,6 +92,9 @@ function show(take: Take): void {
   const cursor = score && new Cursor(score);
   const notes = (): readonly TimelineNote[] => score?.timeline.notes ?? [];
   let times: Timed[] = score ? timed(notes(), take.pulse) : [];
+  /** Where note `i` was due in the take, in seconds from its start: by the score when shown,
+   * else by the judged band. */
+  const startOf = (i: number): number | undefined => (score ? times[i]?.start : judged.ribbon.find((b) => b.index === i)?.from_s);
   /** The note chosen to comment on, and the mark whose words are shown. */
   let chosen: number | null = null;
   let open: number | null = null;
@@ -110,6 +114,9 @@ function show(take: Take): void {
       );
     });
     times = timed(notes(), take.pulse);
+    // The score was laid out afresh: the cursor stands again where the take is.
+    cursor?.hide();
+    follow();
     why.textContent = open === null ? "" : (judged.told[open] ?? "");
   }
 
@@ -131,9 +138,9 @@ function show(take: Take): void {
     const words = notes()[i]?.syllableText.trim();
     noteWords.textContent = words ? `“${words}”` : "";
     draw();
-    const at = times[i];
-    if (seek && at) {
-      const to = Math.max(0, take.offset + at.start - 0.2);
+    const at = startOf(i);
+    if (seek && at !== undefined) {
+      const to = Math.max(0, take.offset + at - 0.2);
       if (audio.readyState >= 1) audio.currentTime = to;
       else audio.addEventListener("loadedmetadata", () => (audio.currentTime = to), { once: true });
     }
@@ -177,18 +184,32 @@ function show(take: Take): void {
     score.host.addEventListener("click", (e) => tap(e.target, false));
     score.host.addEventListener("keydown", (e) => {
       if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) e.preventDefault();
+      // The arrows move the chosen note along the bands, one tab stop among them.
+      const band = (e.target as Element | null)?.closest<SVGGElement>("[data-band]");
+      const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!band || !step) return;
+      e.preventDefault();
+      const to = Math.min(Math.max(Number(band.dataset.band) + step, 0), notes().length - 1);
+      choose(to, false);
+      score.host.querySelector<SVGElement>(`[data-band="${to}"]`)?.focus();
     });
   }
 
   // The cursor follows the take as it plays: each note where it was due in the take.
+  // Before the first note and after the last it is hidden; in a pause it stands at the bar.
   let frame = 0;
   function follow(): void {
     if (!score || !cursor) return;
     const t = audio.currentTime - take.offset;
+    const first = times[0];
     const last = times.at(-1);
-    if (!last || t < 0 || t >= last.start + last.duration) return cursor.hide();
+    if (!first || !last || t < first.start || t >= last.start + last.duration) return cursor.hide();
     const i = Math.max(noteAt(times, t), 0);
-    const note = score.timeline.notes[i]!;
+    const at = times[i]!;
+    const { timeline } = score;
+    const bar = t >= at.start + at.duration ? timeline.pauses.find((p) => p.beforeNote === i + 1 && p.bar)?.bar : undefined;
+    if (bar) return cursor.show(bar.cx, score.line(bar.line), null);
+    const note = timeline.notes[i]!;
     cursor.show(note.cx, score.line(note.line), note.id);
   }
   const tick = () => {
@@ -204,7 +225,7 @@ function show(take: Take): void {
 
   // The comments, in the order of the notes.
   const list = byId<HTMLOListElement>("comments");
-  const who = (c: Comment) => (c.by === "singer" ? (take.mine ? "You" : "The singer") : "Director");
+  const who = (c: Comment) => (c.by === "singer" ? (take.mine ? "You" : "The singer") : "A reader");
   function drawComments(): void {
     const sorted = [...comments].sort((a, b) => a.note - b.note || a.id - b.id);
     list.replaceChildren(
@@ -220,6 +241,16 @@ function show(take: Take): void {
         note.addEventListener("click", () => choose(c.note));
         const when = new Date(c.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
         head.append(note, ` · ${who(c)} · ${when}`);
+        // The singer may take any comment off their take.
+        if (take.mine) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "remove";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", `Remove the comment on note ${c.note + 1}`);
+          remove.addEventListener("click", () => void removeComment(c, remove));
+          head.append(" ", remove);
+        }
         const body = document.createElement("p");
         body.className = "comment-body";
         body.textContent = c.body;
@@ -232,6 +263,21 @@ function show(take: Take): void {
       li.className = "none";
       li.textContent = "No comments yet.";
       list.append(li);
+    }
+  }
+
+  async function removeComment(c: Comment, button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    try {
+      const res = await fetch(`/api/takes/${take.id}/comments/${c.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) throw new Error(`the site answered ${res.status}`);
+      comments.splice(comments.indexOf(c), 1);
+      say("");
+      drawComments();
+      draw();
+    } catch (error) {
+      button.disabled = false;
+      say(`The comment could not be removed: ${error instanceof Error ? error.message : String(error)}`, true);
     }
   }
 

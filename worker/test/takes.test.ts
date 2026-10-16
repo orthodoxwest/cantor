@@ -165,8 +165,17 @@ describe("takes", () => {
     expect((await send({ audio: null })).status).toBe(400);
     expect((await send({ take: null })).status).toBe(400);
     expect((await send({ take: "{" })).status).toBe(400);
-    for (const over of [{ slug: "" }, { pulse: "fast" }, { seconds: Infinity }, { gabc: 3 }, { judged: { ribbon: [] } }, { judged: null }])
+    for (const over of [{ slug: "" }, { pulse: "fast" }, { seconds: Infinity }, { gabc: 3 }, { judged: { ribbon: [] } }, { judged: null }, ])
       expect((await send({ take: { ...record(), ...over } })).status).toBe(400);
+    const judged = record().judged;
+    for (const over of [
+      { ribbon: [{ ...judged.ribbon[0]!, cents: "sharp" }] },
+      { ribbon: [{ ...judged.ribbon[0]!, index: -1 }] },
+      { ribbon: [{ ...judged.ribbon[0]!, trace: [[1, "x"]] }] },
+      { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, kind: "<script>" }] } },
+      { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, first: 0.5 }] } },
+    ])
+      expect((await send({ take: { ...record(), judged: { ...judged, ...over } } })).status).toBe(400);
     expect((await send({ audio: new Uint8Array(MAX_AUDIO + 1) })).status).toBe(413);
   });
 
@@ -203,17 +212,17 @@ describe("comments", () => {
 
   it("takes a comment on a note from whoever holds the link, and says when the singer wrote it", async () => {
     const { id } = await (await send()).json<{ id: string }>();
-    const reader = await comment(id, { note: 3, body: "  Lighter here.  " });
+    const reader = await comment(id, { note: 0, body: "  Lighter here.  " });
     expect(reader.status).toBe(201);
-    expect(await reader.json()).toMatchObject({ note: 3, body: "Lighter here.", by: "reader" });
+    expect(await reader.json()).toMatchObject({ note: 0, body: "Lighter here.", by: "reader" });
     // The page cannot claim to be the singer; the Worker knows the singer.
-    expect(await (await comment(id, { note: 3, body: "Thank you.", by: "singer" }, { "X-Dev-User": "someone" })).json()).toMatchObject({ by: "reader" });
-    expect(await (await comment(id, { note: 3, body: "Will do." }, { "X-Dev-User": "singer" })).json()).toMatchObject({ by: "singer" });
+    expect(await (await comment(id, { note: 0, body: "Thank you.", by: "singer" }, { "X-Dev-User": "someone" })).json()).toMatchObject({ by: "known" });
+    expect(await (await comment(id, { note: 0, body: "Will do." }, { "X-Dev-User": "singer" })).json()).toMatchObject({ by: "singer" });
     const take = await (await get(`/api/takes/${id}`)).json<{ comments: Array<{ note: number; body: string; by: string }> }>();
     expect(take.comments.map((c) => [c.note, c.body, c.by])).toEqual([
-      [3, "Lighter here.", "reader"],
-      [3, "Thank you.", "reader"],
-      [3, "Will do.", "singer"],
+      [0, "Lighter here.", "reader"],
+      [0, "Thank you.", "known"],
+      [0, "Will do.", "singer"],
     ]);
     const row = await env.DB.prepare("SELECT author_id FROM take_comments WHERE body = 'Will do.'").first();
     expect(row).toEqual({ author_id: "singer" });
@@ -223,8 +232,9 @@ describe("comments", () => {
     const { id } = await (await send()).json<{ id: string }>();
     expect((await comment(id, { note: 0, body: "x" }, { Origin: "https://evil.example" })).status).toBe(403);
     expect((await comment("A".repeat(32), { note: 0, body: "x" })).status).toBe(404);
-    for (const bad of [{ note: -1, body: "x" }, { note: 1.5, body: "x" }, { note: "1", body: "x" }, { note: 0, body: "   " }, { note: 0, body: "x".repeat(2001) }, "{"])
+    for (const bad of [{ note: -1, body: "x" }, { note: 1.5, body: "x" }, { note: "1", body: "x" }, { note: 0, body: "   " }, { note: 1, body: "x" }, { note: 0, body: "x".repeat(2001) }, "{", "null"])
       expect((await comment(id, bad)).status).toBe(400);
+    expect((await comment(id, JSON.stringify({ note: 0, body: "x".repeat(20_000) }))).status).toBe(413);
     expect((await (await get(`/api/takes/${id}`)).json<{ comments: unknown[] }>()).comments).toEqual([]);
   });
 
@@ -236,6 +246,22 @@ describe("comments", () => {
       .bind(id)
       .run();
     expect((await comment(id, { note: 0, body: "one more" })).status).toBe(429);
+    // The singer and those signed in are never refused.
+    expect((await comment(id, { note: 0, body: "Mine." }, { "X-Dev-User": "singer" })).status).toBe(201);
+    expect((await comment(id, { note: 0, body: "Known." }, { "X-Dev-User": "someone" })).status).toBe(201);
+  });
+
+  it("lets the singer, and no one else, remove a comment", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    const { id: cid } = await (await comment(id, { note: 0, body: "Spam." })).json<{ id: number }>();
+    const remove = (headers: Record<string, string>) =>
+      app.request(`/api/takes/${id}/comments/${cid}`, { method: "DELETE", headers: { Origin: ORIGIN, ...headers } }, env);
+    expect((await remove({})).status).toBe(401);
+    expect((await remove({ "X-Dev-User": "someone" })).status).toBe(403);
+    expect((await remove({ "X-Dev-User": "singer", Origin: "https://evil.example" })).status).toBe(403);
+    expect((await remove({ "X-Dev-User": "singer" })).status).toBe(204);
+    expect((await remove({ "X-Dev-User": "singer" })).status).toBe(404);
+    expect((await (await get(`/api/takes/${id}`)).json<{ comments: unknown[] }>()).comments).toEqual([]);
   });
 });
 
@@ -255,5 +281,9 @@ describe("a take's page", () => {
     expect(res.headers.get("Cache-Control")).toBe("private, no-cache");
     expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+    const slash = await app.request(`/take/${"A".repeat(32)}/`, {}, { ...env, ASSETS } as unknown as Env);
+    expect(slash.status).toBe(301);
+    expect(slash.headers.get("Location")).toBe(`/take/${"A".repeat(32)}`);
   });
 });

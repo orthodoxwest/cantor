@@ -89,9 +89,16 @@ test("a take's link opens it on its score, to play and to comment on note by not
   await page.getByRole("button", { name: "Post" }).click();
   await expect(page.locator("#comments li")).toHaveCount(2);
   expect(posted).toEqual([{ note: 2, body: "A little flat on the turn." }]);
-  await expect(page.locator("#comments li").nth(1)).toHaveText(/^Note 3 · Director · .*A little flat on the turn\.$/s);
+  await expect(page.locator("#comments li").nth(1)).toHaveText(/^Note 3 · A reader · .*A little flat on the turn\.$/s);
   await expect(page.locator("#body")).toHaveValue("");
   await expect(page.locator(".pin")).toHaveCount(2);
+
+  // The arrows move the chosen note along the score; only the chosen band is a tab stop.
+  await page.getByRole("button", { name: "Comment on note 3", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("button", { name: "Comment on note 4", exact: true })).toBeFocused();
+  await expect(page.locator("#note")).toHaveValue("4");
+  await expect(page.locator('[data-band][tabindex="0"]')).toHaveCount(1);
 
   // The take plays, and the cursor follows it on the score.
   await page.locator("#audio").evaluate((a: HTMLAudioElement) => void a.play());
@@ -110,8 +117,26 @@ test("a take of a chant the reader may not see is heard without its score", asyn
   await expect(page.locator("#audio")).toHaveAttribute("src", `/api/takes/${ID}/audio`);
 });
 
+test("the singer may remove a comment from their take", async ({ page }) => {
+  const sent = await sentTake(page);
+  await serve(page, sent, { mine: true });
+  const removed: string[] = [];
+  await page.route(`**/api/takes/${ID}/comments/*`, (route) => {
+    removed.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#kicker")).toHaveText(/^Your take · /);
+  await expect(page.locator("#comments li").first()).toHaveText(/^Note 2 · You · .*Remove.*Is this one sharp\?$/s);
+  await page.getByRole("button", { name: "Remove the comment on note 2" }).click();
+  await expect(page.locator("#comments li")).toHaveText("No comments yet.");
+  expect(removed).toEqual([`DELETE /api/takes/${ID}/comments/1`]);
+  await expect(page.locator(".pin")).toHaveCount(0);
+});
+
 test("a link that names no take says so", async ({ page }) => {
+  await page.route(`**/api/takes/${"C".repeat(32)}`, (route) => route.fulfill({ status: 404, json: { error: "not found" } }));
   await page.goto(`/take/${"C".repeat(32)}`);
-  await expect(page.locator("#status")).toHaveText(/^There is no take at this link|^The take could not be loaded/);
+  await expect(page.locator("#status")).toHaveText("There is no take at this link. It may have been copied short.");
   await expect(page.locator("#take")).toBeHidden();
 });

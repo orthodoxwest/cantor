@@ -94,10 +94,12 @@ export function drawRibbon(
     const heard = band.cents !== null;
     const cents = heard ? band.cents!.toFixed(1) : "";
     const label = choose ? choose(band.index) : heard ? `Measure from note ${band.index + 1}` : null;
+    // Choosing among every note, only the chosen band is a tab stop; the arrows move along.
+    const tab = choose && baseIndex !== null && band.index !== baseIndex ? "-1" : "0";
     const attrs =
       label === null
         ? `data-band="${band.index}" data-cents=""`
-        : `data-band="${band.index}" data-cents="${cents}" tabindex="0" role="button" aria-label="${label}" aria-pressed="${band.index === baseIndex}"`;
+        : `data-band="${band.index}" data-cents="${cents}" tabindex="${tab}" role="button" aria-label="${label}" aria-pressed="${band.index === baseIndex}"`;
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);

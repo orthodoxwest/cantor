@@ -13,3 +13,7 @@ CREATE TABLE take_comments (
 );
 
 CREATE INDEX take_comments_by_take ON take_comments(take_id, id);
+
+-- How many notes a take was judged on, so a comment names one of them (null for a take sent
+-- before this was kept).
+ALTER TABLE takes ADD COLUMN notes INTEGER;
