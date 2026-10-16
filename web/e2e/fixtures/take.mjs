@@ -1,6 +1,5 @@
 // Writes a synthetic take for the fake microphone with `cantor take`, and what `cantor eval`
-// heard of it with the NSDF tracker alone, as the page listens: student-notes' first take, its
-// faults planted, with silence either side.
+// heard of it: student-notes' first take, its faults planted, with silence either side.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -13,7 +12,7 @@ export function makeTake() {
   const root = fileURLToPath(new URL("../../..", import.meta.url));
   const json = execFileSync(
     "cargo",
-    ["run", "-q", "-p", "cantor-cli", "--", "take", "student-notes", "0", "--nsdf-only", "--pad", String(PAD_S), "-o", TAKE_WAV],
+    ["run", "-q", "-p", "cantor-cli", "--", "take", "student-notes", "0", "--pad", String(PAD_S), "-o", TAKE_WAV],
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
   );
   writeFileSync(TAKE_JSON, json);

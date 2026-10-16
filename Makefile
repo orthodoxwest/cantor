@@ -27,11 +27,12 @@ wasm:
 e2e:
 	npm run e2e
 
-# The listening gates; TAKES=../cantor-content/evals/takes adds the real takes, ORACLE=1 the
-# oracle's labels (after `make oracle`).
+# The listening gates, and SwiftF0's port held to tract; TAKES=../cantor-content/evals/takes adds
+# the real takes, ORACLE=1 the oracle's labels (after `make oracle`).
 eval:
 	cargo run -q -p cantor-cli -- eval $(if $(TAKES),--takes $(TAKES)) $(if $(ORACLE),--oracle vendor/crepe/full.onnx)
 	cargo run -q -p cantor-cli -- eval --nsdf-only $(if $(TAKES),--takes $(TAKES))
+	cargo run -q -p cantor-cli -- swift-parity $(if $(TAKES),--takes $(TAKES))
 
 # The oracle's model, built from torchcrepe's published weights; needs numpy and onnx.
 oracle:

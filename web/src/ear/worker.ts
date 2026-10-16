@@ -40,12 +40,12 @@ export type ToEar =
 export type Block = { t: number; samples: Float32Array } | { end: true };
 
 /** What the ear sends back: frames as they are tracked; then the take heard (its length and
- * rate, frame count, first sound in seconds from its start, and the milliseconds spent
- * tracking a frame and finishing the take); then, when asked, the take judged. Each answer,
- * or the error in its place, carries the `id` of the request it answers. */
+ * rate, frame count, first sound in seconds from its start, the share of its length spent
+ * hearing it as it came, and the milliseconds spent finishing it); then, when asked, the take
+ * judged. Each answer, or the error in its place, carries the `id` of the request it answers. */
 export type FromEar =
   | { type: "frames"; frames: Frame[] }
-  | { type: "heard"; id: number; seconds: number; sampleRate: number; frames: number; onset: number | null; msPerFrame: number; stopMs: number }
+  | { type: "heard"; id: number; seconds: number; sampleRate: number; frames: number; onset: number | null; busy: number; stopMs: number }
   | { type: "judged"; id: number; json: string }
   | { type: "error"; id: number; message: string };
 
@@ -60,7 +60,6 @@ let sampleRate = 0;
 /** The context time of the take's first sample. */
 let start: number | undefined;
 let pushed = 0;
-let tracked = 0;
 let trackMs = 0;
 
 /** ear.wasm, loaded once; a load that fails is tried again on the next request. */
@@ -99,7 +98,6 @@ function push(ear: Exports, samples: Float32Array): void {
   const began = performance.now();
   const n = check(ear, ear.ear_push(samples.length));
   trackMs += performance.now() - began;
-  tracked += n;
   pushed += samples.length;
   if (n === 0) return;
   const t0 = start ?? 0;
@@ -136,7 +134,7 @@ function onBlock(ear: Exports, id: number, block: Block): void {
     sampleRate,
     frames,
     onset: onset < 0 ? null : onset,
-    msPerFrame: tracked ? trackMs / tracked : 0,
+    busy: pushed ? trackMs / 1000 / (pushed / sampleRate) : 0,
     stopMs,
   });
 }
@@ -166,7 +164,7 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       hearing = take;
       sampleRate = message.sampleRate;
       start = undefined;
-      pushed = tracked = trackMs = 0;
+      pushed = trackMs = 0;
       take.audio.onmessage = (b: MessageEvent<Block>) => {
         if (hearing !== take) return;
         try {
