@@ -167,6 +167,8 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   // While it is sung the page shows the cursor and the note heard, and nothing else: no words,
   // no ribbon, no marks.
   await expect(page.locator("#status")).toHaveText("", { timeout: 5000 });
+  await expect(page.locator(".mode")).toBeHidden();
+  await expect(page.locator("#chant")).toBeDisabled();
   await expect(page.locator("#readout")).toHaveText(/^[A-G]♯?\d$/, { timeout: 5000 });
   await expect(page.locator("#result")).toBeHidden();
   await expect(page.locator(".mark-ring, .band-trace")).toHaveCount(0);
@@ -174,6 +176,8 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   // The take is judged when the chant is over, with nothing pressed.
   await expect(page.locator("#key")).toHaveText(/^Your key: /, { timeout: (seconds + 30) * 1000 });
   await expect(take).toHaveText("Sing a take");
+  await expect(page.locator(".mode")).toBeVisible();
+  await expect(page.locator("#chant")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
   // The first note was due when the cursor began, a moment after listening did; the take was
