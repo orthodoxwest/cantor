@@ -35,7 +35,7 @@
       "seed": 133,
       "key_cents": -900,
       "guide_key_cents": -400,
-      "bleed_db": -3,
+      "bleed_db": -5,
       "bleed_delay_s": 0.1
     },
     {
@@ -63,7 +63,7 @@
       "seed": 136,
       "key_cents": -1000,
       "guide_key_cents": -1700,
-      "bleed_db": -3,
+      "bleed_db": -5,
       "bleed_delay_s": 0.15,
       "reverb_rt60_s": 0.8,
       "reverb_wet": 0.3

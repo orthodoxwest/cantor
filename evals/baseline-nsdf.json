@@ -115,11 +115,11 @@
   },
   "research-guide-key": {
     "takes": 6,
-    "heard_fraction": 0.622549,
-    "worst_take_heard": 0.14705883,
-    "heard_all": 0.57028115,
-    "masked_fraction": 0.014705882,
-    "tracking_cents": 9.38001,
+    "heard_fraction": 0.75,
+    "worst_take_heard": 0.4117647,
+    "heard_all": 0.64257026,
+    "masked_fraction": 0.0,
+    "tracking_cents": 9.283435,
     "gross_error_rate": 0.0,
     "marks": 0,
     "false_marks": 0,
@@ -128,8 +128,8 @@
     "false_in_tune": 0,
     "key_error_cents": 5.3603516,
     "summary_errors": 0,
-    "unjudged": 3,
-    "in_tune": 238,
+    "unjudged": 2,
+    "in_tune": 272,
     "agreement": null
   },
   "research-hard": {

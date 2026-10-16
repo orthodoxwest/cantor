@@ -23,6 +23,12 @@
 //!   50 cents, and drift named where it was planted.
 //! - `silent`: the guide alone, singer silent. No take judged, no note heard, nothing in tune.
 //! - `wrong`: a wrong singer over a right guide is marked, as for `student`.
+//!
+//! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
+//! -12 dB or quieter an expert is still told nothing wrong; louder, notes go unheard (with the
+//! NSDF tracker alone, most of them by -6 dB). At -3 dB the guide's pitch can be read as a
+//! note and marked, so no suite plays it that loud: masking frames at the guide's pitch would
+//! stop it, but would mask a singer in unison with a loud guide too, which is the app's case.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

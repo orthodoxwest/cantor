@@ -671,4 +671,19 @@ mod tests {
         let rms = (mid.iter().map(|x| x * x).sum::<f32>() / mid.len() as f32).sqrt();
         assert!((rms / NOTE_RMS - 0.1).abs() < 0.03, "bleed at {:.3} of the singer", rms / NOTE_RMS);
     }
+
+    #[test]
+    fn the_guide_plays_in_its_own_key() {
+        let notes = [Note::new(60.0, 2.0, 1.0)];
+        let profile = Profile {
+            guide: GuideMode::Full,
+            key_cents: -300.0,
+            guide_key_cents: Some(400.0),
+            ..Profile::default()
+        };
+        let played = render_take(&notes, &profile, SR, 1).guide.expect("guide");
+        let note = &played[(2.3 * SR) as usize..(2.3 * SR) as usize + 2048];
+        let midi = crate::pitch::detect(note, SR, 1e-4, 0.8).midi.expect("voiced");
+        assert!((midi - 64.0).abs() < 0.1, "{midi}");
+    }
 }

@@ -11,10 +11,7 @@
 //! could put there (its loudest level over the last [`BLEED_WINDOW_S`], which covers the
 //! speaker's latency and the room's tail) is masked: its pitch is dropped whatever it is, so
 //! a singer in unison with the guide and a singer off it are treated alike, and the guide
-//! alone is never heard as the singer. A frame at the pitch the guide was playing, octaves
-//! aside, is masked up to [`PITCH_MASK_MARGIN`] times the bleed: a guide in another key than
-//! the singer's, loud at the microphone, can pull a frame to its own pitch while the singer's
-//! voice makes it louder than the bleed alone. A masked note is neither right nor wrong. When the
+//! alone is never heard as the singer. A masked note is neither right nor wrong. When the
 //! bleed cannot be measured (no cue, or a cue too short), every voiced frame while the guide
 //! sounds is masked: without a measurement nothing heard then can be told from the guide.
 //!
@@ -27,9 +24,6 @@ use crate::pitch::{self, Frame};
 /// A voiced frame must be this many times louder (in amplitude) than the guide's bleed to
 /// count as the singer.
 pub const MASK_MARGIN: f32 = 2.0;
-/// A voiced frame at the pitch the guide was playing must be this many times louder than the
-/// bleed to count as the singer.
-pub const PITCH_MASK_MARGIN: f32 = 3.0;
 /// How far back the guide's level is looked for: latency plus the start of a room's tail.
 pub const BLEED_WINDOW_S: f32 = 0.5;
 /// How far below the take's loud frames (its 95th percentile of frame RMS) a frame may be
@@ -128,7 +122,7 @@ pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, othe
     }
     if let Some(guide) = guide {
         let leak = leak(samples, guide, sample_rate);
-        mask(&mut frames, guide.samples, sample_rate, leak, frame, hop);
+        mask(&mut frames, guide.samples, leak, frame, hop);
     }
     frames
 }
@@ -165,22 +159,23 @@ pub fn leak(samples: &[f32], guide: Guide, sample_rate: f32) -> Option<f32> {
 }
 
 /// Masks the voiced frames no louder than [`MASK_MARGIN`] times the bleed `leak` times the
-/// guide's loudest frame over the last [`BLEED_WINDOW_S`], or [`PITCH_MASK_MARGIN`] times its
-/// loudest frame at the voiced pitch; with no leak, every voiced frame the guide could reach.
-fn mask(frames: &mut [Frame], guide: &[f32], sample_rate: f32, leak: Option<f32>, frame: usize, hop: usize) {
-    let played = pitch::track_with(guide, sample_rate, frame, hop, ABSOLUTE_FLOOR);
-    let level = |j: usize| played.get(j).map_or(0.0, |g| g.rms);
+/// guide's loudest frame over the last [`BLEED_WINDOW_S`]; with no leak, every voiced frame
+/// the guide could reach.
+fn mask(frames: &mut [Frame], guide: &[f32], leak: Option<f32>, frame: usize, hop: usize) {
+    let levels: Vec<f32> = (0..frames.len())
+        .map(|j| {
+            let start = j * hop;
+            guide.get(start..start + frame).map_or(0.0, rms)
+        })
+        .collect();
     let window = ((BLEED_WINDOW_S / pitch::DEFAULT_HOP_S).ceil() as usize).max(1);
     for (j, f) in frames.iter_mut().enumerate() {
-        let Some(midi) = f.midi else { continue };
-        let back = j.saturating_sub(window)..=j;
-        let loudest = back.clone().map(level).fold(0.0f32, f32::max);
-        let at_pitch = back
-            .filter(|&k| played.get(k).and_then(|g| g.midi).is_some_and(|g| agree(g, midi)))
-            .map(level)
-            .fold(0.0f32, f32::max);
+        if f.midi.is_none() {
+            continue;
+        }
+        let loudest = levels[j.saturating_sub(window)..=j].iter().fold(0.0f32, |m, x| m.max(*x));
         let covered = match leak {
-            Some(leak) => f.rms < MASK_MARGIN * leak * loudest || f.rms < PITCH_MASK_MARGIN * leak * at_pitch,
+            Some(leak) => f.rms < MASK_MARGIN * leak * loudest,
             None => loudest > 0.0,
         };
         if covered {
@@ -202,7 +197,7 @@ fn rms(x: &[f32]) -> f32 {
 mod tests {
     use super::*;
     use crate::listen_with;
-    use crate::synth::{GuideMode, Note, Profile, Voice, render_take};
+    use crate::synth::{GuideMode, Note, Profile, render_take};
 
     const SR: f32 = 16_000.0;
 
@@ -379,38 +374,5 @@ mod tests {
         );
         let masked = frames.iter().filter(|f| f.t > 2.1 && f.t < 4.9 && f.masked).count();
         assert_eq!(masked, 0);
-    }
-
-    #[test]
-    fn a_loud_guide_in_another_key_is_not_heard_as_the_singer() {
-        // A fourth above at -7 dB: without the guide's pitch, most frames read the guide.
-        let notes = notes();
-        let profile = Profile {
-            guide: GuideMode::Full,
-            guide_key_cents: Some(500.0),
-            bleed_db: -7.0,
-            bleed_delay_s: 0.08,
-            voice: Voice::Vowel,
-            scoop_cents: 120.0,
-            scoop_s: 0.08,
-            vibrato_cents: 30.0,
-            vibrato_hz: 5.5,
-            ..Profile::default()
-        };
-        let take = render_take(&notes, &profile, SR, 1);
-        let guide = take.guide.as_deref().expect("guide");
-        let frames = listen(
-            &take.samples,
-            SR,
-            Some(Guide {
-                samples: guide,
-                alone: (0.2, 1.6),
-            }),
-        );
-        let in_notes = |f: &&Frame| notes.iter().any(|n| f.t > n.start_s + 0.1 && f.t < n.start_s + n.dur_s);
-        let heard: Vec<&Frame> = frames.iter().filter(in_notes).filter(|f| f.midi.is_some()).collect();
-        let at = |f: &Frame, cents: f32| notes.iter().any(|n| agree(f.midi.unwrap_or(0.0), n.midi + cents / 100.0));
-        assert!(!heard.is_empty());
-        assert!(heard.iter().all(|f| !at(f, 500.0) || at(f, 0.0)), "the guide was heard");
     }
 }
