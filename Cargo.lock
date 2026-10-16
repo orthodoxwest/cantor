@@ -86,6 +86,7 @@ name = "cantor-cli"
 version = "0.0.1"
 dependencies = [
  "cantor-core",
+ "cantor-crepe",
  "cantor-swift",
  "claxon",
  "hound",
@@ -99,6 +100,15 @@ version = "0.0.1"
 dependencies = [
  "neuma",
  "serde",
+]
+
+[[package]]
+name = "cantor-crepe"
+version = "0.0.1"
+dependencies = [
+ "cantor-core",
+ "cantor-swift",
+ "tract-onnx",
 ]
 
 [[package]]
