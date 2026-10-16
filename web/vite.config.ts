@@ -48,6 +48,8 @@ const cleanUrls = (): Plugin => {
     const [path, query] = (req.url ?? "").split(/(?=\?)/);
     const page = path?.replace(/^\/|\/$/g, "");
     if (page && PAGES.includes(page)) req.url = `/${page}.html${query ?? ""}`;
+    // A take's page, as the Worker serves /take/ID.
+    else if (page && /^take\/[^/]+$/.test(page)) req.url = `/take.html${query ?? ""}`;
     next();
   };
   return {
@@ -69,6 +71,7 @@ export default defineConfig({
         main: here("index.html"),
         library: here("library.html"),
         sing: here("sing.html"),
+        take: here("take.html"),
         worklet: here("src/worklet/processor.ts"),
       },
       output: {

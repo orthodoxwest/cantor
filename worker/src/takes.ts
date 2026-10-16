@@ -80,12 +80,65 @@ export interface TakeRecord {
   /** The take's length in seconds. */
   seconds: number;
   /** The ear's `Judged`, as the core serialized it. */
-  judged: { verdict: { marks: unknown[] }; ribbon: unknown[]; told: string[]; summary: string[] };
+  judged: { verdict: { key_cents: number | null; marks: Mark[] }; ribbon: Band[]; told: string[]; summary: string[] };
+}
+
+/** One note of the ribbon (web ribbon.ts `Band`); its times are in seconds of the take. */
+interface Band {
+  index: number;
+  from_s: number;
+  to_s: number;
+  cents: number | null;
+  trace: Array<[number, number]>;
+}
+
+/** One of the judge's marks (web marks.ts `Mark`). */
+interface Mark {
+  kind: "note" | "verse" | "verse-missing";
+  first: number;
+  last: number;
+  cents: number | null;
 }
 
 const finite = (x: unknown, lo: number, hi: number): x is number => typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi;
 const text = (x: unknown, max: number): x is string => typeof x === "string" && x.length > 0 && x.length <= max;
 const strings = (x: unknown): x is string[] => Array.isArray(x) && x.every((s) => typeof s === "string");
+const index = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 10_000;
+const centsOrNull = (x: unknown) => x === null || finite(x, -1e5, 1e5);
+
+/** The ribbon's bands as the page draws them (ribbon.ts `Band`), one a note in order, rebuilt
+ * from the fields checked; null if any is not one. */
+function ribbonOf(bands: unknown): Band[] | null {
+  if (!Array.isArray(bands) || bands.length > 10_000) return null;
+  const out: Band[] = [];
+  for (const [i, b] of (bands as Array<Record<string, unknown> | null>).entries()) {
+    if (typeof b !== "object" || b === null || b.index !== i) return null;
+    const { from_s, to_s, cents, trace } = b;
+    if (!finite(from_s, -1e4, 1e4) || !finite(to_s, -1e4, 1e4) || !centsOrNull(cents) || !Array.isArray(trace)) return null;
+    const points: Array<[number, number]> = [];
+    for (const p of trace as unknown[]) {
+      if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], -1e4, 1e4) || !finite(p[1], -1e5, 1e5)) return null;
+      points.push([p[0], p[1]]);
+    }
+    out.push({ index: i, from_s, to_s, cents: cents as number | null, trace: points });
+  }
+  return out;
+}
+
+/** The judge's marks as the page draws them (marks.ts `Mark`), each over notes of the take,
+ * rebuilt from the fields checked; null if any is not one. */
+function marksOf(marks: unknown, notes: number): Mark[] | null {
+  if (!Array.isArray(marks) || marks.length > notes + 1000) return null;
+  const out: Mark[] = [];
+  for (const m of marks as Array<Record<string, unknown> | null>) {
+    if (typeof m !== "object" || m === null) return null;
+    const { kind, first, last, cents } = m;
+    if (kind !== "note" && kind !== "verse" && kind !== "verse-missing") return null;
+    if (!index(first) || !index(last) || first > last || last >= notes || !centsOrNull(cents)) return null;
+    out.push({ kind, first, last, cents: cents as number | null });
+  }
+  return out;
+}
 
 /** The record in `raw`, if it is one; only the fields named are kept. */
 export function parseRecord(raw: string): TakeRecord | null {
@@ -100,7 +153,10 @@ export function parseRecord(raw: string): TakeRecord | null {
   const verdict = j?.verdict as Record<string, unknown> | null | undefined;
   if (!text(r.slug, 200) || !text(r.title, 300) || !text(r.gabc, 200_000)) return null;
   if (!finite(r.pulse, 0.05, 5) || !finite(r.offset, -60, 900) || !finite(r.seconds, 0.1, 900)) return null;
-  if (!j || !verdict || !Array.isArray(verdict.marks) || !Array.isArray(j.ribbon) || !strings(j.told) || !strings(j.summary)) return null;
+  const ribbon = ribbonOf(j?.ribbon);
+  const marks = ribbon && marksOf(verdict?.marks, ribbon.length);
+  if (!j || !verdict || !ribbon || !marks || !("key_cents" in verdict) || !centsOrNull(verdict.key_cents)) return null;
+  if (!strings(j.told) || !strings(j.summary)) return null;
   return {
     slug: r.slug,
     title: r.title,
@@ -110,7 +166,7 @@ export function parseRecord(raw: string): TakeRecord | null {
     seconds: r.seconds,
     // The judge's verdict and what the page draws of it, and no more: the notes it was judged
     // against are the score's, which a reader not signed in may not be given.
-    judged: { verdict: verdict as TakeRecord["judged"]["verdict"], ribbon: j.ribbon, told: j.told, summary: j.summary },
+    judged: { verdict: { key_cents: verdict.key_cents as number | null, marks }, ribbon, told: j.told, summary: j.summary },
   };
 }
 
@@ -157,8 +213,10 @@ takes.post("/", async (c) => {
       try {
         await c.env.TAKES.put(audioKey(id), audio, { httpMetadata: { contentType: "audio/wav" } });
         await c.env.TAKES.put(recordKey(id), JSON.stringify(record), { httpMetadata: { contentType: "application/json" } });
-        await c.env.DB.prepare("INSERT INTO takes (id, user_id, chant_slug, title, public, seconds, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, who.id, record.slug, library?.title ?? record.title, library ? 1 : 0, record.seconds, audio.size)
+        await c.env.DB.prepare(
+          "INSERT INTO takes (id, user_id, chant_slug, title, public, seconds, bytes, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+          .bind(id, who.id, record.slug, library?.title ?? record.title, library ? 1 : 0, record.seconds, audio.size, record.judged.ribbon.length)
           .run();
       } catch (error) {
         await c.env.TAKES.delete([audioKey(id), recordKey(id)]).catch(() => {});
@@ -172,9 +230,9 @@ takes.post("/", async (c) => {
 /** The take's row, when `id` names one. */
 async function row(c: Context<{ Bindings: Env }>, id: string) {
   if (!ID.test(id)) return null;
-  return c.env.DB.prepare("SELECT id, user_id, title, public, bytes, created_at FROM takes WHERE id = ?")
+  return c.env.DB.prepare("SELECT id, user_id, title, public, bytes, notes, created_at FROM takes WHERE id = ?")
     .bind(id)
-    .first<{ id: string; user_id: string; title: string; public: number; bytes: number; created_at: string }>();
+    .first<{ id: string; user_id: string; title: string; public: number; bytes: number; notes: number | null; created_at: string }>();
 }
 
 // A take's record, to whoever holds its id; `mine` says whether the caller sent it.
@@ -190,15 +248,93 @@ takes.get("/:id", async (c) => {
   // A reader not signed in sees which chant was sung, and its score, only for a public chant's
   // take; a private chant (booklet-derived) is shown only to a known caller.
   const open = who !== null || found.public === 1;
+  const { results: comments } = await c.env.DB.prepare(
+    "SELECT id, note, body, by_singer, author_id, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
+  )
+    .bind(id)
+    .all<CommentRow>();
   return c.json({
     id,
     ...record,
+    comments: comments.map(asComment),
     slug: open ? record.slug : null,
     title: open ? found.title : null,
     gabc: open ? record.gabc : null,
     created_at: found.created_at,
     mine: who?.id === found.user_id,
   });
+});
+
+/** The longest comment, in characters; the most comments a take gathers from writers the
+ * Worker does not know (the singer and those signed in are never refused); the largest request
+ * body a comment is read from. */
+export const MAX_COMMENT = 2000;
+export const MAX_COMMENTS = 300;
+const MAX_COMMENT_BODY = 16 * 1024;
+
+interface CommentRow {
+  id: number;
+  note: number;
+  body: string;
+  by_singer: number;
+  author_id: string | null;
+  created_at: string;
+}
+
+/** A comment as the page reads it: who wrote it as the Worker knew them (the singer, someone
+ * signed in, or a reader it did not know), never their id. */
+const asComment = ({ by_singer, author_id, ...comment }: CommentRow) => ({
+  ...comment,
+  by: by_singer ? "singer" : author_id ? "known" : "reader",
+});
+
+// A comment on one note of a take, from whoever holds its link. The Worker, not the page, says
+// whether the singer wrote it.
+takes.post("/:id/comments", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const found = await row(c, id);
+  if (!found) return c.json({ error: "not found" }, 404);
+  const raw = await bounded(c.req.raw, MAX_COMMENT_BODY);
+  if (!raw) return c.json({ error: "too large" }, 413);
+  const sent = await raw
+    .text()
+    .then((text) => JSON.parse(text) as { note?: unknown; body?: unknown } | null)
+    .catch(() => null);
+  const note = sent?.note;
+  const body = typeof sent?.body === "string" ? sent.body.trim() : "";
+  if (!index(note) || (found.notes !== null && note >= found.notes) || !body || body.length > MAX_COMMENT)
+    return c.json({ error: "bad request" }, 400);
+  const who = await identity(c.req.raw.headers, c.env);
+  const bySinger = who?.id === found.user_id ? 1 : 0;
+  // A writer the Worker does not know may add one while the take holds fewer than
+  // MAX_COMMENTS of theirs, counted in the same statement that adds it.
+  const added = await c.env.DB.prepare(
+    `INSERT INTO take_comments (take_id, note, body, by_singer, author_id)
+     SELECT ?1, ?2, ?3, ?4, ?5
+     WHERE ?5 IS NOT NULL OR (SELECT count(*) FROM take_comments WHERE take_id = ?1 AND author_id IS NULL) < ?6
+     RETURNING id, note, body, by_singer, author_id, created_at`,
+  )
+    .bind(id, note, body, bySinger, who?.id ?? null, MAX_COMMENTS)
+    .first<CommentRow>();
+  if (!added) return c.json({ error: "this take has as many comments as it may hold" }, 429);
+  return c.json(asComment(added), 201);
+});
+
+// The singer removes a comment from their take.
+takes.delete("/:id/comments/:comment", async (c) => {
+  c.header("Cache-Control", "no-store");
+  const caller = await writer(c);
+  if ("refuse" in caller) return c.json({ error: caller.refuse === 403 ? "forbidden" : "unauthorized" }, caller.refuse);
+  const id = c.req.param("id");
+  const found = await row(c, id);
+  if (!found) return c.json({ error: "not found" }, 404);
+  if (found.user_id !== caller.who.id) return c.json({ error: "forbidden" }, 403);
+  const comment = c.req.param("comment");
+  if (!/^[1-9][0-9]{0,14}$/.test(comment)) return c.json({ error: "not found" }, 404);
+  const gone = await c.env.DB.prepare("DELETE FROM take_comments WHERE take_id = ? AND id = ?").bind(id, Number(comment)).run();
+  return gone.meta.changes ? c.body(null, 204) : c.json({ error: "not found" }, 404);
 });
 
 /** The one byte range `header` asks of `size` bytes: null for the whole (no header, a

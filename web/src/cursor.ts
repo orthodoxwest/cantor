@@ -33,6 +33,11 @@ export class Cursor {
     this.top = null;
   }
 
+  /** The score was drawn afresh: its ink carries no mark, so the next show marks its note. */
+  relaid(): void {
+    this.marked = null;
+  }
+
   /** On a new line, brings the bar to the middle of the window if it is not already in clear
    * view, so the cursor can lead a whole chant on a phone. */
   private keepInView(): void {
