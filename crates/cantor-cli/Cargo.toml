@@ -1,0 +1,19 @@
+[package]
+name = "cantor-cli"
+description = "The cantor command: score, align, synthesize and evaluate takes offline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cantor"
+path = "src/main.rs"
+
+[dependencies]
+cantor-core.workspace = true
+
+[lints]
+workspace = true

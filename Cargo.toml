@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/cantor-core", "crates/cantor-cli", "crates/cantor-wasm"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/orthodoxwest/cantor"
+publish = false
+
+[workspace.dependencies]
+cantor-core = { path = "crates/cantor-core" }
+# neuma is pinned by revision; scripts/neuma.sh builds the matching browser module.
+neuma = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
+neuma-tones = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.wasm]
+inherits = "release"
+opt-level = 2
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
