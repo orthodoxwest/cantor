@@ -5,8 +5,7 @@
   "scripts": {
     "check": "npm run --workspaces --if-present check",
     "test": "npm run --workspaces --if-present test",
-    "e2e": "npm run --workspace web --if-present e2e",
-    "e2e:full": "npm run --workspace worker --if-present e2e"
+    "e2e": "npm run --workspace web --if-present e2e"
   },
   "engines": { "node": ">=22" }
 }

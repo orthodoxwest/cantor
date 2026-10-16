@@ -20,11 +20,12 @@ jobs:
         with:
           persist-credentials: false
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         with:
           filters: |
             rust:
               - 'Cargo.*'
+              - 'rustfmt.toml'
               - 'crates/**'
               - 'evals/**'
               - '.github/workflows/ci.yml'
@@ -33,7 +34,7 @@ jobs:
               - 'content/**'
               - 'package*.json'
               - 'scripts/**'
-              - 'crates/cantor-wasm/**'
+              - 'Cargo.*'
               - '.github/workflows/ci.yml'
             worker:
               - 'worker/**'
@@ -77,13 +78,13 @@ jobs:
           workspaces: |
             . -> target
             vendor/neuma-src -> vendor/neuma-src/target
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - id: neuma-rev
         run: echo "rev=$(sed -n 's/^neuma = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: vendor/neuma
           key: neuma-module-${{ steps.neuma-rev.outputs.rev }}
@@ -95,7 +96,7 @@ jobs:
       - run: npm test
       - run: npm run e2e
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright
           path: |
@@ -111,7 +112,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm

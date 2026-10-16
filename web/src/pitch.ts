@@ -19,9 +19,7 @@ export function detectPitch(buf: Float32Array, sampleRate: number, minRms = 0.00
   const none = { midi: null, clarity: 0, rms };
   if (rms < minRms) return none;
 
-  const minTau = Math.max(2, Math.floor(sampleRate / 1100));
   const maxTau = Math.min(n >> 1, Math.floor(sampleRate / 62));
-  // Lags below minTau are computed too, so the lobe at lag 0 can be told from the first real one.
   const nsdf = new Float32Array(maxTau + 1);
   for (let tau = 1; tau <= maxTau; tau++) {
     let acf = 0;
@@ -51,7 +49,7 @@ export function detectPitch(buf: Float32Array, sampleRate: number, minRms = 0.00
       }
       tau++;
     }
-    if (bestTau >= minTau) {
+    if (bestTau > 0) {
       peaks.push([bestTau, best]);
       if (best > maxVal) maxVal = best;
     }

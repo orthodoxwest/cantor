@@ -1,4 +1,4 @@
-.PHONY: setup neuma check test e2e e2e-full eval wasm
+.PHONY: setup neuma check test e2e eval wasm content
 
 # Everything a fresh clone needs: the neuma browser module, Rust's wasm target, npm packages, Playwright's browser.
 setup: neuma
@@ -9,8 +9,8 @@ setup: neuma
 neuma:
 	sh scripts/neuma.sh
 
-# What to run before pushing. CI runs exactly this plus e2e-full.
-check: test wasm e2e
+# What to run before pushing; CI runs the same.
+check: test wasm eval content e2e
 
 test:
 	cargo fmt --all --check
@@ -25,8 +25,8 @@ wasm:
 e2e:
 	npm run e2e
 
-e2e-full:
-	npm run e2e:full
-
 eval:
 	cargo run -q -p cantor-cli -- eval
+
+content:
+	node content/build.mjs

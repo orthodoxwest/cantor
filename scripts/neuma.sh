@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/.."
 REV=$(sed -n 's/^neuma = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)
 [ -n "$REV" ] || { echo "neuma revision not found in Cargo.toml" >&2; exit 1; }
-if [ "$(cat vendor/neuma/REV 2>/dev/null)" = "$REV" ]; then exit 0; fi
+if [ "$(cat vendor/neuma/REV 2>/dev/null)" = "$REV" ] && [ -f vendor/neuma/neuma.wasm ] && [ -f vendor/neuma/neuma.mjs ]; then exit 0; fi
 SRC=vendor/neuma-src
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet --filter=blob:none https://github.com/orthodoxwest/neuma "$SRC"

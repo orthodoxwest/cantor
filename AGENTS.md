@@ -13,7 +13,7 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 - `vendor/neuma/`: neuma's browser module, built by `scripts/neuma.sh` at the revision `Cargo.toml` pins. Ignored by git.
 
 ## Commands
-- `make setup` once per clone; `make check` before every push (CI runs the same plus `make e2e-full`).
+- `make setup` once per clone; `make check` before every push; CI runs the same.
 - `make eval` prints the scorecard against `evals/baseline.json`; `cantor eval --write-baseline` updates it in a deliberate commit.
 - Outputs land in `out/`.
 

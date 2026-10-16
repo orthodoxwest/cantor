@@ -5,7 +5,7 @@ import { detectPitch } from "../pitch";
 const RING = 2048;
 const HOP = 256;
 
-/** What the worklet posts: time in seconds of the context's clock, then the detector's result. */
+/** What the worklet posts: the frame's centre in seconds of the context's clock, then the detector's result. */
 export interface Frame {
   t: number;
   midi: number | null;
@@ -18,8 +18,17 @@ class PitchProcessor extends AudioWorkletProcessor {
   private frame = new Float32Array(RING);
   private write = 0;
   private sinceHop = 0;
+  private stopped = false;
+
+  constructor() {
+    super();
+    this.port.onmessage = () => {
+      this.stopped = true;
+    };
+  }
 
   override process(inputs: Float32Array[][]): boolean {
+    if (this.stopped) return false;
     const input = inputs[0]?.[0];
     if (!input) return true;
     for (let i = 0; i < input.length; i++) {
@@ -32,7 +41,9 @@ class PitchProcessor extends AudioWorkletProcessor {
       // Oldest sample first.
       this.frame.set(this.ring.subarray(this.write), 0);
       this.frame.set(this.ring.subarray(0, this.write), RING - this.write);
-      const frame: Frame = { t: currentTime, ...detectPitch(this.frame, sampleRate) };
+      // The frame's centre: currentTime is the start of this quantum, the ring ends with it.
+      const t = currentTime + (input.length - RING / 2) / sampleRate;
+      const frame: Frame = { t, ...detectPitch(this.frame, sampleRate) };
       this.port.postMessage(frame);
     }
     return true;

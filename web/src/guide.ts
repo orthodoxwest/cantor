@@ -32,8 +32,9 @@ export class Guide {
 
   async play(): Promise<void> {
     if (this.playing) return;
-    const ctx = await audioContext();
     this.playing = true;
+    const ctx = await audioContext();
+    if (!this.playing) return;
     this.visited.length = 0;
     const master = ctx.createGain();
     master.gain.value = LEVEL;
