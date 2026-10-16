@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
-use cantor_core::{Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
+use cantor_core::{Cadence, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -61,6 +61,9 @@ const CLEAR_CENTS: f32 = 100.0;
 const VERSE_DESERVED: f32 = 0.8;
 /// A note heard in tune that was planted this far off is a false "in tune".
 const OFF_CENTS: f32 = 100.0;
+/// A cadence called off pitch is wrong when every note of it was planted within this...
+const CADENCE_CLEAR_CENTS: f32 = 50.0;
+/// ...and one called on pitch is wrong when a note of it was planted at least [`FLAGRANT_CENTS`] off.
 /// A planted drift at least this large must be named, and one at most `STEADY_DRIFT` must not.
 const UNSTEADY_DRIFT: f32 = 90.0;
 const STEADY_DRIFT: f32 = 40.0;
@@ -171,6 +174,21 @@ fn summary_wrong(v: &Verdict, planted_drift: f32) -> bool {
     (planted_drift.abs() >= UNSTEADY_DRIFT && v.steady) || (planted_drift.abs() <= STEADY_DRIFT && !v.steady)
 }
 
+/// Whether a cadence's pitch disagrees with what was planted: called off when every note of it
+/// that counts was planted within [`CADENCE_CLEAR_CENTS`], or on when one was planted at least
+/// [`FLAGRANT_CENTS`] off. In between it may be either.
+fn cadence_wrong(c: &Cadence, notes: &[Note], planted: &[Planted]) -> bool {
+    let counted: Vec<f32> = (c.first..=c.last)
+        .filter(|&i| !planted[i].silent && notes[i].dur_s >= cantor_core::judge::HEARD_MIN_S)
+        .map(|i| fold(planted[i].cents).abs())
+        .collect();
+    match c.on_pitch() {
+        Some(false) => !counted.is_empty() && counted.iter().all(|&p| p < CADENCE_CLEAR_CENTS),
+        Some(true) => counted.iter().any(|&p| p >= FLAGRANT_CENTS),
+        None => false,
+    }
+}
+
 /// How the oracle's per-note pitch compares with the scorer's. It is never gated: it says
 /// where to look.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -262,6 +280,8 @@ struct Metrics {
     key_error_cents: f32,
     /// Takes whose steadiness disagrees with the drift planted.
     summary_errors: u32,
+    /// Cadences called off pitch that were planted on it, or on pitch that were planted off.
+    cadence_errors: u32,
     /// Takes given an outcome instead of a judgement.
     unjudged: u32,
     /// Notes heard in tune, over all takes.
@@ -333,6 +353,7 @@ impl Metrics {
             }
             if v.outcome == Outcome::Heard {
                 m.summary_errors += u32::from(summary_wrong(v, take.planted_drift));
+                m.cadence_errors += v.cadences.iter().filter(|c| cadence_wrong(c, &take.notes, &take.planted)).count() as u32;
                 if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
                     m.key_error_cents = m.key_error_cents.max(fold(k - t).abs());
                 }
@@ -378,6 +399,7 @@ impl Metrics {
                 );
                 need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
                 need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
+                need(self.cadence_errors == 0, format!("{} cadences told wrong", self.cadence_errors));
             }
             Gate::Student | Gate::Wrong => {
                 need(self.recall >= RECALL_FLOOR, format!("recall {:.3} < {RECALL_FLOOR}", self.recall));
@@ -389,6 +411,7 @@ impl Metrics {
                 );
                 need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
                 need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
+                need(self.cadence_errors == 0, format!("{} cadences told wrong", self.cadence_errors));
             }
             Gate::Silent => {
                 need(
@@ -453,6 +476,12 @@ impl Metrics {
             self.summary_errors as f32,
             base.summary_errors as f32,
             self.summary_errors > base.summary_errors,
+        );
+        check(
+            "cadence_errors",
+            self.cadence_errors as f32,
+            base.cadence_errors as f32,
+            self.cadence_errors > base.cadence_errors,
         );
         check(
             "key_error_cents",
@@ -1055,6 +1084,7 @@ mod tests {
                 assert!(heard <= 0.02, "{at}: heard {heard} apart");
                 assert!(key <= 10.0, "{at}: key {key} cents apart");
                 assert_eq!(marks(&got.verdict), marks(&want.verdict), "{at}");
+                assert_eq!(got.summary, want.summary, "{at}");
                 // Note by note, the ribbon the page draws is the eval's.
                 assert_eq!(got.ribbon.len(), want.ribbon.len(), "{at}");
                 let (mut apart, mut both) = (0, 0);

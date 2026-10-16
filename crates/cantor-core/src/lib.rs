@@ -23,7 +23,7 @@ pub mod timeline;
 pub mod voice;
 
 pub use diction::{Language, Lyric, Sung, Vowel};
-pub use judge::{Mark, MarkKind, Outcome, Verdict, judge};
+pub use judge::{Cadence, Mark, MarkKind, Outcome, Verdict, judge};
 pub use listen::{Guide, Listening, Track, listen, listen_with};
 pub use pitch::{Frame, track};
 pub use ribbon::{Band, ribbon};

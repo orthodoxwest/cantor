@@ -1,14 +1,11 @@
 //! What a take says to the singer, in words: the explanation the page shows when a marked
 //! note is tapped and `cantor explain` gives each mark, and the two sentences the page shows
 //! after a take. It tells what was heard against the singer's own key and nothing else; the
-//! judge decides which notes are marked and whether the tone held.
+//! judge decides which notes are marked, whether the tone held and which cadences were on pitch.
 
-use crate::judge::{Mark, MarkKind, Outcome, Verdict};
+use crate::judge::{Mark, MarkKind, Outcome, Verdict, recited};
 use crate::score::fold;
 use crate::synth::Note;
-
-/// The notes that end a phrase with no recitation, taken as its cadence.
-const CADENCE_NOTES: usize = 2;
 
 /// The words for `mark`.
 pub fn tell(mark: &Mark) -> String {
@@ -34,17 +31,14 @@ pub fn told(verdict: &Verdict) -> Vec<String> {
 }
 
 /// What the singer is told of the take as a whole, in two sentences: whether the reciting
-/// tone held steady (the judge's drift), and whether the cadences were sung on pitch (the
-/// judge's marks on them). Nothing of timing or breath. None for a take not heard.
+/// tone (the pitch, in a chant not recited) held steady, from the judge's drift, and whether
+/// the cadences were on pitch, from the judge's cadences. Nothing of timing or breath. None for
+/// a take not heard; one sentence when no cadence was heard.
 pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
     }
-    let tone = if notes.iter().any(|n| n.recitation) {
-        "Your reciting tone"
-    } else {
-        "Your pitch"
-    };
+    let tone = if recited(notes) { "Your reciting tone" } else { "Your pitch" };
     let drift = verdict.drift_cents;
     let mut out = vec![if verdict.steady {
         format!("{tone} held steady.")
@@ -55,53 +49,29 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
             steps(drift.abs()).unwrap_or("a little")
         )
     }];
-    // A cadence in a verse not heard is neither on pitch nor off.
-    let touches = |c: &(usize, usize), missing: bool| {
-        verdict
-            .marks
-            .iter()
-            .any(|m| (m.kind == MarkKind::VerseMissing) == missing && (c.0..=c.1).any(|i| m.covers(i)))
-    };
-    let cadences = cadences(notes);
-    let heard: Vec<_> = cadences.iter().filter(|c| !touches(c, true)).collect();
-    let off = heard.iter().filter(|c| touches(c, false)).count();
-    let all_heard = heard.len() == cadences.len();
-    out.extend(match (heard.len(), off) {
+    let heard: Vec<bool> = verdict.cadences.iter().filter_map(|c| c.on_pitch()).collect();
+    let off = heard.iter().filter(|on| !**on).count();
+    let n = heard.len();
+    // Cadences not heard are neither on pitch nor off.
+    let which = if n == verdict.cadences.len() { "" } else { " heard" };
+    let sentence = match (n, off) {
         (0, _) => None,
-        (1, 0) => Some("The cadence was on pitch.".to_string()),
-        (1, _) => Some("The cadence went off pitch; the mark shows where.".to_string()),
-        (_, 0) if all_heard => Some("Your cadences were on pitch.".to_string()),
-        (_, 0) => Some("Every cadence heard was on pitch.".to_string()),
-        (n, off) if off == n => Some("Every cadence went off pitch; the marks show where.".to_string()),
-        (n, off) => Some(format!(
-            "{} of {} cadences went off pitch; the marks show where.",
-            capitalise(&number(off)),
-            number(n)
-        )),
-    });
-    out
-}
-
-/// Each phrase's cadence, as the notes `first..=last`: the notes after its last recited note,
-/// or the last [`CADENCE_NOTES`] of a phrase with none recited. A phrase that ends recited has
-/// none.
-pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let mut first = 0;
-    while first < notes.len() {
-        let last = (first..notes.len())
-            .take_while(|&i| notes[i].phrase == notes[first].phrase)
-            .last()
-            .unwrap_or(first);
-        let from = match (first..=last).rev().find(|&i| notes[i].recitation) {
-            Some(r) => r + 1,
-            None => (last + 1).saturating_sub(CADENCE_NOTES).max(first),
-        };
-        if from <= last {
-            out.push((from, last));
+        (1, 0) if which.is_empty() => Some("The cadence was on pitch.".to_string()),
+        (1, _) if which.is_empty() => Some("The cadence went off pitch.".to_string()),
+        (1, 0) => Some("The one cadence heard was on pitch.".to_string()),
+        (1, _) => Some("The one cadence heard went off pitch.".to_string()),
+        (_, 0) => Some(format!("Every cadence{which} was on pitch.")),
+        _ if off == n => Some(format!("Every cadence{which} went off pitch.")),
+        _ => {
+            let (off, n) = if n <= 12 {
+                (capitalise(NUMBERS[off]), NUMBERS[n].to_string())
+            } else {
+                (off.to_string(), n.to_string())
+            };
+            Some(format!("{off} of the {n} cadences{which} went off pitch."))
         }
-        first = last + 1;
-    }
+    };
+    out.extend(sentence);
     out
 }
 
@@ -139,13 +109,10 @@ fn steps(cents: f32) -> Option<&'static str> {
     })
 }
 
-/// `n` in words, to twelve.
-fn number(n: usize) -> String {
-    const WORDS: [&str; 13] = [
-        "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
-    ];
-    WORDS.get(n).map_or_else(|| n.to_string(), |w| w.to_string())
-}
+/// Numbers in words, to twelve.
+const NUMBERS: [&str; 13] = [
+    "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+];
 
 fn capitalise(word: &str) -> String {
     let mut chars = word.chars();
@@ -155,6 +122,7 @@ fn capitalise(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::judge::Cadence;
 
     fn mark(kind: MarkKind, cents: Option<f32>) -> Mark {
         Mark {
@@ -206,121 +174,100 @@ mod tests {
             marks: vec![mark(MarkKind::Note, Some(200.0)), mark(MarkKind::VerseMissing, None)],
             relative: vec![None; 6],
             in_tune: 0,
+            cadences: Vec::new(),
         };
         let words = told(&verdict);
         assert_eq!(words.len(), 2);
         assert_eq!(words[1], "Nothing was heard through this verse.");
     }
 
-    /// Notes by phrase, verse and whether recited: `r` recited, `s` sung.
-    fn chant(phrases: &[(u32, u32, &str)]) -> Vec<Note> {
-        phrases
-            .iter()
-            .flat_map(|&(phrase, verse, shape)| {
-                shape.chars().map(move |c| Note {
-                    phrase,
-                    verse,
-                    recitation: c == 'r',
-                    ..Note::new(60.0, 0.0, 0.5)
-                })
-            })
-            .collect()
-    }
-
-    fn heard(drift_cents: f32, marks: Vec<Mark>) -> Verdict {
+    fn heard(drift_cents: f32, cadences: &[Option<f32>]) -> Verdict {
         Verdict {
             outcome: crate::Outcome::Heard,
             key_cents: Some(0.0),
             drift_cents,
             steady: drift_cents.abs() < crate::judge::DRIFT_CENTS,
-            marks,
+            marks: Vec::new(),
             relative: Vec::new(),
             in_tune: 0,
+            cadences: cadences
+                .iter()
+                .enumerate()
+                .map(|(i, &cents)| Cadence { first: i, last: i, cents })
+                .collect(),
         }
     }
 
-    fn span(kind: MarkKind, first: usize, last: usize) -> Mark {
-        Mark {
-            kind,
-            first,
-            last,
-            cents: (kind != MarkKind::VerseMissing).then_some(200.0),
-        }
-    }
-
-    #[test]
-    fn a_cadence_is_what_follows_the_recitation() {
-        // Intonation, recitation, mediant; recitation, termination; a phrase with no recitation;
-        // a phrase that ends recited.
-        let notes = chant(&[(0, 0, "ssrrrss"), (1, 0, "rrsss"), (2, 1, "ssss"), (3, 1, "srr")]);
-        assert_eq!(cadences(&notes), [(5, 6), (9, 11), (14, 15)]);
-        assert_eq!(cadences(&chant(&[(0, 0, "s")])), [(0, 0)]);
-        assert!(cadences(&[]).is_empty());
+    /// A psalm verse: intonation, recitation and mediant; recitation and termination.
+    fn psalm() -> Vec<Note> {
+        crate::notes_from_gabc(
+            "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then(j.) *(:) praise(j) him(j) all(j) ye(j) na(h)tions.(g.) (::)",
+            0.5,
+        )
     }
 
     #[test]
     fn a_clean_take_is_told_it_held() {
-        let notes = chant(&[(0, 0, "srrss"), (1, 0, "rrss")]);
         assert_eq!(
-            summary(&notes, &heard(20.0, Vec::new())),
-            ["Your reciting tone held steady.", "Your cadences were on pitch."]
+            summary(&psalm(), &heard(20.0, &[Some(30.0), Some(-60.0)])),
+            ["Your reciting tone held steady.", "Every cadence was on pitch."]
         );
-        // Without recitation it is the pitch that holds.
-        let notes = chant(&[(0, 0, "ssss"), (1, 0, "sss")]);
-        assert_eq!(summary(&notes, &heard(-10.0, Vec::new()))[0], "Your pitch held steady.");
+        // A chant not recited holds its pitch.
+        let hymn = crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5);
+        assert_eq!(summary(&hymn, &heard(-10.0, &[None]))[0], "Your pitch held steady.");
     }
 
     #[test]
     fn a_drifting_tone_is_told_which_way_and_how_far() {
-        let notes = chant(&[(0, 0, "srrss")]);
         assert_eq!(
-            summary(&notes, &heard(-130.0, Vec::new()))[0],
+            summary(&psalm(), &heard(-130.0, &[]))[0],
             "Your reciting tone sank about a semitone over the take (-130 cents)."
         );
         assert_eq!(
-            summary(&notes, &heard(200.0, Vec::new()))[0],
+            summary(&psalm(), &heard(200.0, &[]))[0],
             "Your reciting tone rose a whole tone over the take (+200 cents)."
         );
     }
 
     #[test]
-    fn only_marks_on_cadences_put_them_off_pitch() {
-        let notes = chant(&[(0, 0, "srrss"), (1, 0, "rrss"), (2, 1, "rrss")]);
-        // A recited note marked is no cadence's.
-        let recited = span(MarkKind::Note, 1, 1);
-        assert_eq!(summary(&notes, &heard(0.0, vec![recited]))[1], "Your cadences were on pitch.");
-        let marks = vec![recited, span(MarkKind::Note, 8, 8)];
+    fn cadences_off_pitch_are_counted() {
+        let notes = psalm();
+        let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences))[1].clone();
         assert_eq!(
-            summary(&notes, &heard(0.0, marks))[1],
-            "One of three cadences went off pitch; the marks show where."
+            told(&[Some(20.0), Some(-120.0), Some(10.0)]),
+            "One of the three cadences went off pitch."
         );
-        // A verse off together puts its cadences off.
-        let marks = vec![span(MarkKind::Verse, 0, 8), span(MarkKind::Note, 12, 12)];
-        assert_eq!(
-            summary(&notes, &heard(0.0, marks))[1],
-            "Every cadence went off pitch; the marks show where."
-        );
+        assert_eq!(told(&[Some(120.0), Some(-300.0)]), "Every cadence went off pitch.");
+        assert_eq!(told(&[Some(20.0)]), "The cadence was on pitch.");
+        assert_eq!(told(&[Some(-101.0)]), "The cadence went off pitch.");
+        let many: Vec<Option<f32>> = (0..14).map(|i| Some(if i < 2 { 150.0 } else { 0.0 })).collect();
+        assert_eq!(told(&many), "2 of the 14 cadences went off pitch.");
     }
 
     #[test]
-    fn a_verse_not_heard_is_left_out_of_the_cadences() {
-        let notes = chant(&[(0, 0, "srrss"), (1, 1, "rrss"), (2, 1, "rrss")]);
-        let missing = span(MarkKind::VerseMissing, 5, 12);
-        assert_eq!(summary(&notes, &heard(0.0, vec![missing]))[1], "The cadence was on pitch.");
-        let notes = chant(&[(0, 0, "srrss"), (1, 0, "rrss"), (2, 1, "rrss")]);
-        let missing = span(MarkKind::VerseMissing, 9, 12);
-        assert_eq!(summary(&notes, &heard(0.0, vec![missing]))[1], "Every cadence heard was on pitch.");
-        let all = span(MarkKind::VerseMissing, 0, 12);
-        assert_eq!(summary(&notes, &heard(0.0, vec![all])).len(), 1);
+    fn cadences_not_heard_are_left_out() {
+        let notes = psalm();
+        let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences)).get(1).cloned();
+        assert_eq!(told(&[Some(20.0), None, Some(10.0)]).unwrap(), "Every cadence heard was on pitch.");
+        assert_eq!(
+            told(&[Some(200.0), None, Some(-150.0)]).unwrap(),
+            "Every cadence heard went off pitch."
+        );
+        assert_eq!(
+            told(&[Some(200.0), None, Some(15.0)]).unwrap(),
+            "One of the two cadences heard went off pitch."
+        );
+        assert_eq!(told(&[None, Some(15.0)]).unwrap(), "The one cadence heard was on pitch.");
+        assert_eq!(told(&[None, None]), None);
+        assert_eq!(told(&[]), None);
     }
 
     #[test]
     fn a_take_not_heard_is_told_nothing() {
-        let notes = chant(&[(0, 0, "srrss")]);
         let verdict = Verdict {
             outcome: crate::Outcome::NotHeard,
-            ..heard(0.0, Vec::new())
+            ..heard(0.0, &[Some(0.0)])
         };
-        assert!(summary(&notes, &verdict).is_empty());
+        assert!(summary(&psalm(), &verdict).is_empty());
     }
 }

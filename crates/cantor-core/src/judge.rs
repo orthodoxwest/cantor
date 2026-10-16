@@ -44,6 +44,12 @@ const VERSE_SILENT: f32 = 0.8;
 const DRIFT_OUTLIER_CENTS: f32 = IN_TUNE_CENTS;
 /// Pairs of notes closer in time than this are left out of the drift's slope.
 const DRIFT_MIN_DT_S: f32 = 0.5;
+/// A cadence is off pitch when one of its notes is this far from the key and the drift.
+pub const CADENCE_CENTS: f32 = 100.0;
+/// A chant is recited, and has a reciting tone, when at least this share of its notes are.
+const RECITED_SHARE: f32 = 1.0 / 3.0;
+/// The notes ending a phrase that are its cadence where no reciting tone shows where it starts.
+const CADENCE_NOTES: usize = 2;
 
 /// What became of the take as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +91,24 @@ impl Mark {
     }
 }
 
+/// A phrase's cadence, over the notes `first..=last`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Cadence {
+    pub first: usize,
+    pub last: usize,
+    /// Its note furthest from the key and the drift, in cents, of the notes heard and at least
+    /// [`HEARD_MIN_S`] long; none when no such note was heard.
+    pub cents: Option<f32>,
+}
+
+impl Cadence {
+    /// Whether it was sung on pitch: every note heard within [`CADENCE_CENTS`]. None when
+    /// none was heard.
+    pub fn on_pitch(&self) -> Option<bool> {
+        self.cents.map(|c| c.abs() < CADENCE_CENTS)
+    }
+}
+
 /// What the singer is told about a take.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Verdict {
@@ -102,6 +126,9 @@ pub struct Verdict {
     pub relative: Vec<Option<f32>>,
     /// How many notes were heard in tune and not under a mark.
     pub in_tune: usize,
+    /// Each phrase's cadence, when heard.
+    #[serde(default)]
+    pub cadences: Vec<Cadence>,
 }
 
 impl Verdict {
@@ -121,6 +148,7 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         marks: Vec::new(),
         relative: vec![None; notes.len()],
         in_tune: 0,
+        cadences: Vec::new(),
     };
     let results = &report.notes;
     if results.len() != notes.len() || results.iter().enumerate().any(|(i, r)| r.index != i) {
@@ -175,6 +203,17 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         .enumerate()
         .filter(|(i, r)| r.is_some_and(|c| c.abs() < IN_TUNE_CENTS) && !marks.iter().any(|m| m.covers(*i)))
         .count();
+    let cadences = cadences(notes)
+        .into_iter()
+        .map(|(first, last)| Cadence {
+            first,
+            last,
+            cents: (first..=last)
+                .filter(|&i| notes[i].dur_s >= HEARD_MIN_S)
+                .filter_map(|i| relative[i])
+                .max_by(|a, b| a.abs().total_cmp(&b.abs())),
+        })
+        .collect();
     Verdict {
         outcome: Outcome::Heard,
         key_cents: Some(key),
@@ -183,7 +222,57 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         marks,
         relative,
         in_tune,
+        cadences,
     }
+}
+
+/// Whether the chant is recited: at least [`RECITED_SHARE`] of its notes are recitation.
+pub fn recited(notes: &[Note]) -> bool {
+    !notes.is_empty() && notes.iter().filter(|n| n.recitation).count() as f32 >= RECITED_SHARE * notes.len() as f32
+}
+
+/// Each phrase's cadence, as the notes `first..=last`. In a recited chant it runs from after
+/// the last two notes in a row on the reciting tone (the pitch most recited notes are on)
+/// before the phrase's last note off the tone, to its end: a psalm tone's mediant or
+/// termination. A phrase that never leaves the tone has none, and one that never holds it
+/// two notes running has its last [`CADENCE_NOTES`] and its last note off the tone. In a chant
+/// not recited it is each phrase's last [`CADENCE_NOTES`].
+pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
+    let pitch = |n: &Note| (n.midi * 100.0).round() as i32;
+    let tenor = recited(notes)
+        .then(|| {
+            let mut count = std::collections::BTreeMap::new();
+            for n in notes.iter().filter(|n| n.recitation) {
+                *count.entry(pitch(n)).or_insert(0usize) += 1;
+            }
+            count.into_iter().max_by_key(|&(p, c)| (c, std::cmp::Reverse(p))).map(|(p, _)| p)
+        })
+        .flatten();
+    let mut out = Vec::new();
+    let mut first = 0;
+    while first < notes.len() {
+        let mut last = first;
+        while last + 1 < notes.len() && notes[last + 1].phrase == notes[first].phrase {
+            last += 1;
+        }
+        let ends = (last + 1).saturating_sub(CADENCE_NOTES).max(first);
+        let from = match tenor {
+            // The cadence reaches back from the phrase's last note off the tone to the last
+            // two on it before that; a phrase that never leaves the tone has none.
+            Some(t) => (first..=last).rev().find(|&i| pitch(&notes[i]) != t).map(|off| {
+                (first + 1..off)
+                    .rev()
+                    .find(|&i| pitch(&notes[i]) == t && pitch(&notes[i - 1]) == t)
+                    .map_or(ends.min(off), |i| i + 1)
+            }),
+            None => Some(ends),
+        };
+        if let Some(from) = from {
+            out.push((from, last));
+        }
+        first = last + 1;
+    }
+    out
 }
 
 fn mid(n: &Note) -> f32 {
@@ -541,5 +630,49 @@ mod tests {
         let v = judge(&notes(), &report(&c));
         assert!(v.marks.is_empty(), "{v:?}");
         assert!((v.drift_cents + 432.0).abs() < 1.0, "{}", v.drift_cents);
+    }
+
+    const PSALM: &str = "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then:(j.) *(:) praise(j) him(j) all(i) ye(j) na(h)tions.(g.) (::) \
+        Glo(j)ry(j) be(j) to(j) the(j) Fa(j)ther,(j) and(j) to(k) the(j) Son:(j.) *(:) world(j) with(j) end(j) a(j)men.(j) (::)";
+
+    #[test]
+    fn a_psalm_tones_cadence_follows_its_recitation() {
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        assert!(recited(&notes));
+        // "hea-then"; "all ye na-tions"; "to the Son" (its last two notes on the tone); and
+        // nothing for a phrase that never leaves the tone.
+        assert_eq!(cadences(&notes), [(6, 7), (10, 13), (22, 24)]);
+    }
+
+    #[test]
+    fn a_chant_not_recited_ends_each_phrase_in_two_notes() {
+        let notes = crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5);
+        assert!(!recited(&notes));
+        assert_eq!(cadences(&notes), [(3, 4), (6, 7)]);
+    }
+
+    #[test]
+    fn a_cadence_is_judged_in_the_first_phrase_too() {
+        // The first mediant a minor third flat: no mark, as the first phrase never has one, but
+        // its cadence is off pitch; a termination 80 cents flat is still on it.
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        let cents: Vec<Option<f32>> = (0..notes.len())
+            .map(|i| {
+                Some(match i {
+                    6 | 7 => -300.0,
+                    12 | 13 => -80.0,
+                    _ => 0.0,
+                })
+            })
+            .collect();
+        let v = judge(&notes, &report(&cents));
+        assert!(v.marks.is_empty(), "{:?}", v.marks);
+        let on: Vec<Option<bool>> = v.cadences.iter().map(Cadence::on_pitch).collect();
+        assert_eq!(on, [Some(false), Some(true), Some(true)]);
+        // A cadence not heard is neither.
+        let mut cents = cents;
+        cents[22..=24].fill(None);
+        let v = judge(&notes, &report(&cents));
+        assert_eq!(v.cadences[2].on_pitch(), None);
     }
 }
