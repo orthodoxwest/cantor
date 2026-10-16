@@ -166,6 +166,7 @@ async function open(listed: LibraryChant): Promise<void> {
   const c = await fetchChant(listed.slug).catch(() => null);
   if (opening !== opens) return;
   if (!c) {
+    close();
     els.count.textContent = "That piece could not be opened.";
     return;
   }
@@ -267,9 +268,8 @@ els.results.addEventListener("click", (e) => {
   history.pushState({ fromList: true }, "", a.getAttribute("href"));
   route();
 });
-window.addEventListener("popstate", route);
-
 if (loaded) {
+  window.addEventListener("popstate", route);
   drawKinds();
   drawResults();
   route();

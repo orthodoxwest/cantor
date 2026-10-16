@@ -20,21 +20,21 @@ describe("api", () => {
     expect(rows[0]).not.toHaveProperty("gabc");
     expect(rows[0]).toMatchObject({ title: "Faithful Cross", name: "Crux fidelis", kind: "hymn", words: "Faithful Cross" });
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+    expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
   });
 
   it("lists the private chants only to a known caller", async () => {
     const res = await get("/api/chants", { "X-Dev-User": "student" });
-    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["meinrad-test", "crux-fidelis", "ubi-caritas"]);
+    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "ubi-caritas"]);
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("finds a private chant for a known caller and for nobody else", async () => {
-    expect((await get("/api/chants/meinrad-test")).status).toBe(404);
-    const res = await get("/api/chants/meinrad-test", { "X-Dev-User": "student" });
+    expect((await get("/api/chants/private-test")).status).toBe(404);
+    const res = await get("/api/chants/private-test", { "X-Dev-User": "student" });
     expect(res.status).toBe(200);
     const row = await res.json<{ slug: string; gabc: string }>();
     expect(row.gabc).toContain("BOok");
-    expect(row).not.toHaveProperty("private");
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
@@ -151,6 +151,11 @@ describe("api", () => {
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": "not.a!.token" }, prod)).status).toBe(401);
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token({ ...good(), nbf: now() + 60 }) }, prod)).status).toBe(401);
       expect((await get("/api/pointing/116", { "X-Dev-User": "student" }, prod)).status).toBe(401);
+      // Nor does a bad token or a dev header reveal a private chant.
+      for (const headers of [{ "X-Dev-User": "student" }, { "Cf-Access-Jwt-Assertion": rejected[0]! }] as Record<string, string>[]) {
+        expect((await (await get("/api/chants", headers, prod)).json<{ slug: string }[]>()).map((r) => r.slug)).not.toContain("private-test");
+        expect((await get("/api/chants/private-test", headers, prod)).status).toBe(404);
+      }
       // Without the team and audience configured, nobody is signed in.
       const unset = { ...env, ENV: "prod", ACCESS_TEAM: "", ACCESS_AUD: "" };
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token(good()) }, unset)).status).toBe(401);

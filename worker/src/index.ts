@@ -24,11 +24,8 @@ const CHANT = "slug, title, name, mode, kind, book, source, url, words";
 // like the pointings). A list that depends on the caller is never cached for others.
 app.get("/api/chants", async (c) => {
   const known = (await identity(c.req.raw.headers, c.env)) !== null;
-  const { results } = await c.env.DB.prepare(
-    `SELECT ${CHANT} FROM chants WHERE private = 0 OR ?1 ORDER BY title COLLATE NOCASE, slug`,
-  )
-    .bind(known ? 1 : 0)
-    .all<ChantRow>();
+  const from = known ? `chants UNION ALL SELECT ${CHANT} FROM private_chants` : "chants";
+  const { results } = await c.env.DB.prepare(`SELECT ${CHANT} FROM ${from} ORDER BY title COLLATE NOCASE, slug`).all<ChantRow>();
   c.header("Cache-Control", known ? "private, no-store" : "public, max-age=300");
   c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
   return c.json(results);
@@ -36,15 +33,19 @@ app.get("/api/chants", async (c) => {
 
 // One chant with its GABC; a private one is not found by a stranger.
 app.get("/api/chants/:slug", async (c) => {
-  const row = await c.env.DB.prepare(`SELECT ${CHANT}, private, gabc FROM chants WHERE slug = ?`)
-    .bind(c.req.param("slug"))
-    .first<ChantRow & { private: number; gabc: string }>();
-  if (!row) return c.json({ error: "not found" }, 404);
-  const isPrivate = row.private !== 0;
-  if (isPrivate && !(await identity(c.req.raw.headers, c.env))) return c.json({ error: "not found" }, 404);
-  c.header("Cache-Control", isPrivate ? "private, no-store" : "public, max-age=300");
-  const { private: _, ...chant } = row;
-  return c.json(chant);
+  const find = (table: string) =>
+    c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM ${table} WHERE slug = ?`)
+      .bind(c.req.param("slug"))
+      .first<ChantRow & { gabc: string }>();
+  const row = await find("chants");
+  if (row) {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(row);
+  }
+  const hidden = (await identity(c.req.raw.headers, c.env)) ? await find("private_chants") : null;
+  if (!hidden) return c.json({ error: "not found" }, 404);
+  c.header("Cache-Control", "private, no-store");
+  return c.json(hidden);
 });
 
 interface PointingRow {

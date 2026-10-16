@@ -11,8 +11,8 @@ const q = (v) => (v == null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
 const COLUMNS = ["slug", "title", "name", "mode", "kind", "book", "source", "url", "words", "gabc"];
 const sql = library.map(
   (c) =>
-    `INSERT INTO chants (${COLUMNS.join(", ")}, private) VALUES (${COLUMNS.map((k) => q(c[k])).join(", ")}, 0)\n` +
-    `  ON CONFLICT(slug) DO UPDATE SET ${COLUMNS.slice(1).map((k) => `${k} = excluded.${k}`).join(", ")}, private = 0;`,
+    `INSERT INTO chants (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map((k) => q(c[k])).join(", ")})\n` +
+    `  ON CONFLICT(slug) DO UPDATE SET ${COLUMNS.slice(1).map((k) => `${k} = excluded.${k}`).join(", ")};`,
 );
 const out = path.join(root, "out/seed.sql");
 mkdirSync(path.dirname(out), { recursive: true });

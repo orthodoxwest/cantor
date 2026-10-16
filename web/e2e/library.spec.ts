@@ -67,7 +67,7 @@ test("the library draws a page of results at a time", async ({ page }) => {
 });
 
 test("a piece the visitor may not see is not in their library", async ({ page }) => {
-  await page.goto("/library#meinrad-not-here");
+  await page.goto("/library#not-here");
   await expect(page.locator("#count")).toHaveText("That piece is not in the library.");
   await expect(page.locator("#piece")).toBeHidden();
 });

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Connect, Plugin } from "vite";
 import { defineConfig } from "vitest/config";
@@ -11,6 +11,13 @@ const PAGES = ["library", "sing"];
 // Without the Worker, dev and preview answer the library's two routes from the public chants
 // content/build.mjs writes; private rows only ever come from the Worker.
 const LIBRARY = here("../content/dist/library.json");
+type Row = Record<string, unknown> & { slug: string; gabc: string };
+let cached: { mtime: number; rows: Row[] } | null = null;
+const rows = (): Row[] => {
+  const mtime = statSync(LIBRARY).mtimeMs;
+  if (cached?.mtime !== mtime) cached = { mtime, rows: JSON.parse(readFileSync(LIBRARY, "utf8")) };
+  return cached.rows;
+};
 const chantsApi: Connect.NextHandleFunction = (req, res, next) => {
   const m = /^\/api\/chants(?:\/([^/?]+))?(?:\?|$)/.exec(req.url ?? "");
   if (!m) return next();
@@ -19,15 +26,20 @@ const chantsApi: Connect.NextHandleFunction = (req, res, next) => {
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(body));
   };
-  let rows: Array<Record<string, unknown> & { slug: string; title: string; gabc: string }>;
+  let all: Row[];
   try {
-    rows = JSON.parse(readFileSync(LIBRARY, "utf8"));
+    all = rows();
   } catch {
     return send(503, { error: "run node content/build.mjs first" });
   }
-  if (m[1] === undefined)
-    return send(200, rows.map(({ gabc: _, ...row }) => row).sort((a, b) => a.title.localeCompare(b.title, "en", { sensitivity: "base" })));
-  const row = rows.find((r) => r.slug === decodeURIComponent(m[1]!));
+  if (m[1] === undefined) return send(200, all.map(({ gabc: _, ...row }) => row));
+  let slug: string;
+  try {
+    slug = decodeURIComponent(m[1]);
+  } catch {
+    return send(404, { error: "not found" });
+  }
+  const row = all.find((r) => r.slug === slug);
   return row ? send(200, row) : send(404, { error: "not found" });
 };
 

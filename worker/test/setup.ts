@@ -5,13 +5,12 @@ import { env } from "cloudflare:workers";
 
 await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
-const insert = env.DB.prepare(
-  "INSERT OR IGNORE INTO chants (slug, title, name, mode, kind, source, words, private, gabc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-);
+const insert = (table: string) =>
+  env.DB.prepare(`INSERT OR IGNORE INTO ${table} (slug, title, name, mode, kind, source, words, gabc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
 await env.DB.batch([
-  insert.bind("ubi-caritas", "Where charity and love are", "Ubi caritas", "6", "antiphon", "test", "Where charity", 0, "name:Ubi caritas;\n%%\n(c4) WHere(f) cha(gh)ri(hg)ty(h) (::)"),
-  insert.bind("crux-fidelis", "Faithful Cross", "Crux fidelis", "1", "hymn", "test", "Faithful Cross", 0, "name:Crux fidelis;\n%%\n(c4) FAith(d)ful(e) Cross,(gh) (::)"),
-  insert.bind("meinrad-test", "Booklet antiphon", "Test", "ii", "antiphon", "booklet", "Booklet", 1, "name:Test;\n%%\n(c4) BOok(f) (::)"),
+  insert("chants").bind("ubi-caritas", "Where charity and love are", "Ubi caritas", "6", "antiphon", "test", "Where charity", "name:Ubi caritas;\n%%\n(c4) WHere(f) cha(gh)ri(hg)ty(h) (::)"),
+  insert("chants").bind("crux-fidelis", "Faithful Cross", "Crux fidelis", "1", "hymn", "test", "Faithful Cross", "name:Crux fidelis;\n%%\n(c4) FAith(d)ful(e) Cross,(gh) (::)"),
+  insert("private_chants").bind("private-test", "Booklet antiphon", "Test", "ii", "antiphon", "booklet", "Booklet", "name:Test;\n%%\n(c4) BOok(f) (::)"),
 ]);
 
 const pointing = env.DB.prepare(
