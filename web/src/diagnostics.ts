@@ -32,10 +32,13 @@ const TAIL_S = 1.0;
 
 type Row = [string, string];
 let rows: Row[] = [];
-const listener = new Listener(
-  () => {},
-  (error) => (failure = error),
-);
+const newListener = () =>
+  new Listener(
+    () => {},
+    (error) => (failure = error),
+  );
+/** Replaced when its ear does not finish, since the next take would wait on it. */
+let listener = newListener();
 let failure: Error | undefined;
 
 function setStatus(text: string, error = false): void {
@@ -81,7 +84,13 @@ async function check(): Promise<void> {
   // Chromium's user agent freezes the system's version; it says it when asked.
   const data = (navigator as Navigator & { userAgentData?: { getHighEntropyValues(hints: string[]): Promise<{ platform?: string; platformVersion?: string }> } }).userAgentData;
   const platform = await data?.getHighEntropyValues(["platformVersion"]).catch(() => undefined);
-  if (platform?.platformVersion) rows.push(["System version", `${platform.platform ?? ""} ${platform.platformVersion}`.trim()]);
+  // Windows gives its own numbering: 13 and later is Windows 11.
+  const version = platform?.platformVersion;
+  if (version)
+    rows.push([
+      "System version",
+      platform?.platform === "Windows" ? (parseInt(version) >= 13 ? "Windows 11" : "Windows 10 or earlier") : `${platform?.platform ?? ""} ${version}`.trim(),
+    ]);
   show();
   setStatus("Opening the microphone…");
   let stream: MediaStream | undefined;
@@ -120,7 +129,7 @@ async function measure(stream: MediaStream): Promise<void> {
   const track = stream.getAudioTracks()[0];
   const settings = (track?.getSettings() ?? {}) as MediaTrackSettings & { latency?: number };
   const can = (track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
-  // After the microphone, as on a phone the practice page's first take does.
+  // After the microphone: a phone may set its audio up differently once it is capturing.
   const ctx = await context();
   rows.push(
     ["Microphone rate", hz(settings.sampleRate)],
@@ -178,26 +187,34 @@ async function measure(stream: MediaStream): Promise<void> {
     gain.disconnect();
     listener.stop();
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const heard = await Promise.race([
     listener.heard?.catch((error: Error) => {
       failure ??= error;
       return undefined;
     }),
-    wait(10).then(() => {
-      failure ??= new Error("the ear did not finish");
-      return undefined;
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => {
+        failure ??= new Error("the ear did not finish");
+        listener = newListener();
+        resolve(undefined);
+      }, 10_000);
     }),
   ]);
+  clearTimeout(timer);
 
   const frames = listener.frames;
   const times = echoes(frames, beeps, BEEP_MIDI, EVERY_S - BEEP_S);
   const found = times.filter((t): t is number => t !== null);
-  const trip = found.length ? found.reduce((a, b) => a + b) / found.length : null;
+  // The mean of those near the median, so a stray frame at the beep's pitch does not move it.
+  const middle = median(found);
+  const near = found.filter((t) => middle !== null && Math.abs(t - middle) <= 0.06);
+  const trip = near.length ? near.reduce((a, b) => a + b) / near.length : null;
   rows.push([
     "Round trip",
     trip === null
       ? "beeps not heard (headphones in, the volume low, the room too loud, or the speaker cancelled)"
-      : `${ms(trip)} (${found.length} of ${BEEPS} beeps heard)`,
+      : `${ms(trip)} (${found.length} of ${BEEPS} beeps heard${near.length < found.length ? `, ${found.length - near.length} set aside as stray` : ""})`,
   ]);
   const room = frames.filter((f) => f.t < first);
   rows.push(["Room level", level(median(room.map((f) => f.rms)))]);
@@ -220,7 +237,7 @@ byId<HTMLButtonElement>("copy").addEventListener("click", async () => {
 });
 
 sendButton.addEventListener("click", async () => {
-  sendButton.disabled = true;
+  sendButton.disabled = checkButton.disabled = true;
   sent.textContent = "Sending…";
   try {
     const res = await fetch("/api/diagnostics", {
@@ -234,6 +251,6 @@ sendButton.addEventListener("click", async () => {
   } catch (error) {
     sent.textContent = `Not sent: ${(error as Error).message}`;
   } finally {
-    sendButton.disabled = false;
+    sendButton.disabled = checkButton.disabled = false;
   }
 });

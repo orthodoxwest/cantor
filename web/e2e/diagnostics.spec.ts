@@ -12,6 +12,8 @@ test("a check fills the table, which copies and sends", async ({ page }) => {
   });
   await page.goto("/diagnostics");
   await page.getByRole("button", { name: "Check" }).click();
+  // Nothing to copy or send while the check runs.
+  await expect(page.locator("#table th").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeHidden();
   await expect(page.locator("#status")).toHaveText("Done. Copy the table, or send it.", { timeout: 20_000 });
 
