@@ -44,6 +44,24 @@ test("listen hears A4 from the microphone", async ({ page }) => {
   await expect(page.locator("#readout")).toHaveText(/^A4 /);
 });
 
+test("a take started at once after another is heard on its own", async ({ page }) => {
+  await open(page);
+  const listen = page.getByRole("button", { name: "Listen" });
+  await listen.click();
+  await page.waitForTimeout(3000);
+  await listen.click();
+  await listen.click();
+  await expect(listen).toHaveAttribute("aria-pressed", "true");
+  await page.waitForTimeout(1000);
+  await listen.click();
+  const heard = await page.evaluate(() => window.__cantor.heard());
+  expect(heard).toBeDefined();
+  // The second take alone, about a second: not the first (three) nor both (four).
+  expect(heard!.seconds).toBeGreaterThan(0.5);
+  expect(heard!.seconds).toBeLessThan(2.5);
+  await expect(page.locator("#status")).toHaveText(/^Heard /);
+});
+
 for (const [voice, query] of [
   ["neutral", ""],
   ["recorded", "&voice=/test-voice.cvox"],

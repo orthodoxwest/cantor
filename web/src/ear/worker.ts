@@ -30,13 +30,10 @@ export interface Frame {
 /** Numbers per frame in ear.wasm's frame buffer. */
 const FRAME_FIELDS = 4;
 
-/** What the page sends. */
+/** What the page sends, each request numbered by `id`. */
 export type ToEar =
-  | { type: "start"; sampleRate: number; audio: MessagePort }
-  | { type: "judge"; gabc: string; pulse: number; offset: number };
-
-/** What the page waits on: a take heard, or judged. */
-export type Pending = "heard" | "judged";
+  | { type: "start"; id: number; sampleRate: number; audio: MessagePort }
+  | { type: "judge"; id: number; gabc: string; pulse: number; offset: number };
 
 /** What the worklet sends: a block of the take with the context time of its first sample, or
  * the take's end. */
@@ -44,21 +41,21 @@ export type Block = { t: number; samples: Float32Array } | { end: true };
 
 /** What the ear sends back: frames as they are tracked; then the take heard (its length and
  * rate, frame count, first sound in seconds from its start, and the milliseconds spent
- * tracking a frame and finishing the take); then, when asked, the take judged. An error
- * answers what the page waits on, if anything. */
+ * tracking a frame and finishing the take); then, when asked, the take judged. Each answer,
+ * or the error in its place, carries the `id` of the request it answers. */
 export type FromEar =
   | { type: "frames"; frames: Frame[] }
-  | { type: "heard"; seconds: number; sampleRate: number; frames: number; onset: number | null; msPerFrame: number; stopMs: number }
-  | { type: "judged"; json: string }
-  | { type: "error"; for: Pending | null; message: string };
+  | { type: "heard"; id: number; seconds: number; sampleRate: number; frames: number; onset: number | null; msPerFrame: number; stopMs: number }
+  | { type: "judged"; id: number; json: string }
+  | { type: "error"; id: number; message: string };
 
 /** The longest gap in the audio filled with silence, in seconds; a longer one ends the take. */
 const MAX_GAP_S = 10;
 
 const WASM_URL = `${import.meta.env.BASE_URL}ear.wasm`;
 let loading: Promise<Exports> | undefined;
-/** The port the take being heard arrives on; blocks from an earlier take's are dropped. */
-let audio: MessagePort | undefined;
+/** The take being heard: its request and the port it arrives on. */
+let hearing: { id: number; audio: MessagePort } | undefined;
 let sampleRate = 0;
 /** The context time of the take's first sample. */
 let start: number | undefined;
@@ -66,8 +63,15 @@ let pushed = 0;
 let tracked = 0;
 let trackMs = 0;
 
-const load = (): Promise<Exports> =>
-  (loading ??= WebAssembly.instantiateStreaming(fetch(WASM_URL), {}).then((r) => r.instance.exports as unknown as Exports));
+/** ear.wasm, loaded once; a load that fails is tried again on the next request. */
+function load(): Promise<Exports> {
+  if (loading) return loading;
+  const loaded = WebAssembly.instantiateStreaming(fetch(WASM_URL), {}).then((r) => r.instance.exports as unknown as Exports);
+  loaded.catch(() => {
+    if (loading === loaded) loading = undefined;
+  });
+  return (loading = loaded);
+}
 
 // The worker's own scope, which lib.dom types as a window.
 const scope = self as unknown as {
@@ -109,7 +113,7 @@ function push(ear: Exports, samples: Float32Array): void {
   post({ type: "frames", frames });
 }
 
-function onBlock(ear: Exports, block: Block): void {
+function onBlock(ear: Exports, id: number, block: Block): void {
   if ("samples" in block) {
     start ??= block.t;
     // A stretch the worklet never heard (a dropped quantum) is silence, so later frames keep
@@ -120,14 +124,14 @@ function onBlock(ear: Exports, block: Block): void {
     push(ear, block.samples);
     return;
   }
-  audio?.close();
-  audio = undefined;
+  endTake();
   const began = performance.now();
   const frames = check(ear, ear.ear_stop());
   const stopMs = performance.now() - began;
   const onset = ear.ear_onset();
   post({
     type: "heard",
+    id,
     seconds: pushed / sampleRate,
     sampleRate,
     frames,
@@ -137,34 +141,39 @@ function onBlock(ear: Exports, block: Block): void {
   });
 }
 
-/** Reports `error` as the answer to what the page waits on. A trap leaves the instance
- * unusable (a panic aborts mid-borrow), so the next take loads a fresh one. */
-function failed(waiting: Pending | null, error: unknown): void {
+/** Stops hearing the take being heard. */
+function endTake(): void {
+  hearing?.audio.close();
+  hearing = undefined;
+}
+
+/** Reports `error` as the answer to request `id`. A trap leaves the instance unusable (a
+ * panic aborts mid-borrow), so the next request loads a fresh one. */
+function failed(id: number, error: unknown): void {
   if (error instanceof WebAssembly.RuntimeError) loading = undefined;
-  post({ type: "error", for: waiting, message: String(error instanceof Error ? error.message : error) });
+  post({ type: "error", id, message: String(error instanceof Error ? error.message : error) });
 }
 
 scope.onmessage = async (e: MessageEvent<ToEar>) => {
   const message = e.data;
-  const waiting = message.type === "start" ? "heard" : "judged";
   try {
     const ear = await load();
     if (message.type === "start") {
-      audio?.close();
-      audio = message.audio;
+      if (hearing) failed(hearing.id, new Error("another take started before this one ended"));
+      endTake();
+      check(ear, ear.ear_start(message.sampleRate));
+      const take = { id: message.id, audio: message.audio };
+      hearing = take;
       sampleRate = message.sampleRate;
       start = undefined;
       pushed = tracked = trackMs = 0;
-      check(ear, ear.ear_start(sampleRate));
-      const port = message.audio;
-      port.onmessage = (b: MessageEvent<Block>) => {
-        if (port !== audio) return;
+      take.audio.onmessage = (b: MessageEvent<Block>) => {
+        if (hearing !== take) return;
         try {
-          onBlock(ear, b.data);
+          onBlock(ear, take.id, b.data);
         } catch (error) {
-          audio?.close();
-          audio = undefined;
-          failed("heard", error);
+          endTake();
+          failed(take.id, error);
         }
       };
     } else {
@@ -172,9 +181,10 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       const at = ear.ear_bytes(gabc.length);
       new Uint8Array(ear.memory.buffer, at, gabc.length).set(gabc);
       const len = check(ear, ear.ear_judge(gabc.length, message.pulse, message.offset));
-      post({ type: "judged", json: output(ear, len) });
+      post({ type: "judged", id: message.id, json: output(ear, len) });
     }
   } catch (error) {
-    failed(waiting, error);
+    if (message.type === "start") message.audio.close();
+    failed(message.id, error);
   }
 };

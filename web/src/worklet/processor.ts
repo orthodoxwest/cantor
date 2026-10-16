@@ -39,6 +39,9 @@ class CaptureProcessor extends AudioWorkletProcessor {
     if (this.stopped) return false;
     const input = inputs[0]?.[0];
     if (!input || !this.ear) return true;
+    // After a quantum the worklet never heard, the block so far goes on its own, so every
+    // block's samples are contiguous from its time.
+    if (this.filled > 0 && Math.abs(currentTime - (this.t + this.filled / sampleRate)) > 0.5 / sampleRate) this.send();
     for (let i = 0; i < input.length; i++) {
       if (this.filled === 0) this.t = currentTime + i / sampleRate;
       this.block[this.filled++] = input[i]!;

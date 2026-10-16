@@ -2,66 +2,65 @@
 // the ear tracks it as it comes, its frames return here for the live trace, and it hears the
 // whole take when it stops.
 import { audioContext } from "./audio";
-import type { Frame, FromEar, Pending, ToEar } from "./ear/worker";
+import type { Frame, FromEar, ToEar } from "./ear/worker";
 
 export type { Frame };
 
 /** What the ear heard of a take. */
 export type Heard = Extract<FromEar, { type: "heard" }>;
 
-/** The ear's worker; one serves every take. */
+type Answer = Extract<FromEar, { id: number }>;
+
+/** The ear's worker; one serves every take until it fails. */
 class Ear {
   private worker = new Worker(new URL("./ear/worker.ts", import.meta.url), { type: "module" });
-  /** What waits on the worker: at most one take heard and one judging. */
-  private waiting: { [K in Pending]?: { resolve: (m: Extract<FromEar, { type: K }>) => void; reject: (e: Error) => void } } = {};
+  private next = 0;
+  /** The requests not yet answered, by id. */
+  private waiting = new Map<number, { resolve: (m: Answer) => void; reject: (e: Error) => void }>();
+  /** Why the worker failed, after which it answers nothing. */
+  failed: Error | undefined;
 
   constructor(onFrames: (frames: Frame[]) => void) {
     this.worker.onmessage = (e: MessageEvent<FromEar>) => {
       const m = e.data;
       if (m.type === "frames") return onFrames(m.frames);
-      if (m.type === "error") {
-        if (m.for) this.settle(m.for)?.reject(new Error(m.message));
-        else console.error("ear:", m.message);
-        return;
-      }
-      if (m.type === "heard") this.settle("heard")?.resolve(m);
-      else this.settle("judged")?.resolve(m);
+      const waiter = this.waiting.get(m.id);
+      this.waiting.delete(m.id);
+      if (m.type === "error") waiter?.reject(new Error(m.message));
+      else waiter?.resolve(m);
     };
-    // The worker failed to load or run: nothing it was asked will be answered.
     this.worker.onerror = (e) => {
-      for (const kind of ["heard", "judged"] as const) this.settle(kind)?.reject(new Error(e.message || "the ear failed"));
+      e.preventDefault();
+      this.failed = new Error(e.message || "the ear failed");
+      for (const waiter of this.waiting.values()) waiter.reject(this.failed);
+      this.waiting.clear();
     };
   }
 
-  private settle<K extends Pending>(kind: K) {
-    const waiter = this.waiting[kind];
-    delete this.waiting[kind];
-    return waiter;
-  }
-
-  private wait<K extends Pending>(kind: K): Promise<Extract<FromEar, { type: K }>> {
-    this.settle(kind)?.reject(new Error(`superseded by another ${kind === "heard" ? "take" : "judging"}`));
+  /** Sends `request`, numbered, and resolves with its answer. */
+  private ask<T extends Answer["type"]>(request: DistributiveOmit<ToEar, "id">, transfer: Transferable[] = []): Promise<Extract<Answer, { type: T }>> {
+    if (this.failed) return Promise.reject(this.failed);
+    const id = ++this.next;
     return new Promise((resolve, reject) => {
-      (this.waiting as Record<K, unknown>)[kind] = { resolve, reject };
+      this.waiting.set(id, { resolve: resolve as (m: Answer) => void, reject });
+      this.worker.postMessage({ ...request, id } as ToEar, transfer);
     });
   }
 
   /** Starts a take at `sampleRate` heard through `audio`; resolves when the take has ended
    * and been heard. */
   start(sampleRate: number, audio: MessagePort): Promise<Heard> {
-    const heard = this.wait("heard");
-    this.worker.postMessage({ type: "start", sampleRate, audio } satisfies ToEar, [audio]);
-    return heard;
+    return this.ask<"heard">({ type: "start", sampleRate, audio }, [audio]);
   }
 
   /** The last take scored and judged against `gabc`'s notes, `pulse` seconds a pulse, the
    * first starting `offset` seconds into the take, as JSON. */
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
-    const judged = this.wait("judged");
-    this.worker.postMessage({ type: "judge", gabc, pulse, offset } satisfies ToEar);
-    return (await judged).json;
+    return (await this.ask<"judged">({ type: "judge", gabc, pulse, offset })).json;
   }
 }
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 // The worklet is served as a module in dev and bundled as its own entry in the build.
 const WORKLET_URL = import.meta.env.DEV ? "/src/worklet/processor.ts" : "/worklet.js";
@@ -77,7 +76,12 @@ export class Listener {
   /** The ear's hearing of the take being sung, or of the last one. */
   heard: Promise<Heard> | undefined;
 
-  constructor(private readonly onFrame: (frame: Frame) => void) {}
+  /** `onFrame` hears each frame as it is tracked; `onFailed` hears why a take failed while it
+   * was being sung, after which listening has stopped. */
+  constructor(
+    private readonly onFrame: (frame: Frame) => void,
+    private readonly onFailed: (error: Error) => void,
+  ) {}
 
   /** The last take judged once it has been heard; see `Ear.judge`. */
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
@@ -89,7 +93,10 @@ export class Listener {
   async start(): Promise<void> {
     if (this.listening) return;
     this.listening = true;
+    // The last take is heard before the next starts, so the ear hears one take at a time.
+    const last = this.heard;
     this.heard = undefined;
+    await last?.catch(() => undefined);
     const ctx = await audioContext();
     this.module ??= ctx.audioWorklet.addModule(WORKLET_URL);
     await this.module;
@@ -110,13 +117,20 @@ export class Listener {
     const source = ctx.createMediaStreamSource(this.stream);
     const node = new AudioWorkletNode(ctx, "capture");
     const channel = new MessageChannel();
+    if (this.ear?.failed) this.ear = undefined;
     this.ear ??= new Ear((frames) => {
       for (const frame of frames) {
         this.frames.push(frame);
         this.onFrame(frame);
       }
     });
-    this.heard = this.ear.start(ctx.sampleRate, channel.port2);
+    const heard = this.ear.start(ctx.sampleRate, channel.port2);
+    this.heard = heard;
+    heard.catch((error: Error) => {
+      if (this.heard !== heard || !this.listening) return;
+      this.stop();
+      this.onFailed(error);
+    });
     node.port.postMessage({ ear: channel.port1 }, [channel.port1]);
     // The node is pulled only when it reaches the destination; it outputs silence.
     source.connect(node).connect(ctx.destination);
