@@ -1,0 +1,10 @@
+target/
+node_modules/
+dist/
+vendor/
+out/
+.wrangler/
+test-results/
+playwright-report/
+*.local
+.DS_Store
