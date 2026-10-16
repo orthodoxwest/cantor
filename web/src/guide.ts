@@ -1,17 +1,18 @@
-// Plays the timeline as a guide voice (one oscillator per note, a soft envelope) and moves
-// the cursor with it. One pulse is PULSE seconds; pauses keep their weight.
+// Sings the timeline with the guide voice (see singer.ts) and moves the cursor with it. One
+// pulse is PULSE seconds; pauses keep their weight.
 import { noteAtTime } from "neuma";
 import { audioContext } from "./audio";
 import type { Cursor } from "./cursor";
-import { DO, midiToFreq } from "./notes";
+import { DO } from "./notes";
 import type { Score } from "./score";
+import { fromTimeline, octaveShift, sing, type Singing, type VoiceTable } from "./singer";
 
 export const PULSE = 0.5;
-const ATTACK = 0.02;
-const RELEASE = 0.08;
-const LEVEL = 0.25;
 
 export interface GuideOptions {
+  /** The voice table to sing with, and the chant's GABC, read for its language. */
+  table: VoiceTable;
+  gabc: string;
   /** Seconds, for the cursor; defaults to the audio context's clock. */
   clock?: () => number;
   onStop?: () => void;
@@ -21,58 +22,67 @@ export class Guide {
   playing = false;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
-  private nodes: AudioNode[] = [];
+  private singing: Singing | null = null;
   private frame = 0;
+  /** Counts plays, so a play stopped while it was starting does not go on. */
+  private plays = 0;
 
   constructor(
     private readonly score: Score,
     private readonly cursor: Cursor,
-    private readonly options: GuideOptions = {},
+    private readonly options: GuideOptions,
   ) {}
+
+  /** The chunks scheduled in the latest play, as [from, length, RMS]. */
+  get chunks(): Array<[number, number, number]> {
+    return this.singing?.chunks ?? [];
+  }
 
   async play(): Promise<void> {
     if (this.playing) return;
     this.playing = true;
-    const ctx = await audioContext();
-    if (!this.playing) return;
-    this.visited.length = 0;
-    const master = ctx.createGain();
-    master.gain.value = LEVEL;
-    master.connect(ctx.destination);
-    this.nodes = [master];
-    const t0 = ctx.currentTime + 0.05;
-    for (const note of this.score.timeline.notes) {
-      const start = t0 + note.start * PULSE;
-      const end = start + note.duration * PULSE;
-      const osc = ctx.createOscillator();
-      osc.type = "triangle";
-      osc.frequency.value = midiToFreq(DO + note.semitones);
-      const env = ctx.createGain();
-      env.gain.setValueAtTime(0, start);
-      env.gain.linearRampToValueAtTime(1, start + ATTACK);
-      env.gain.setValueAtTime(1, Math.max(start + ATTACK, end - RELEASE));
-      env.gain.linearRampToValueAtTime(0, end);
-      osc.connect(env).connect(master);
-      osc.start(start);
-      osc.stop(end);
-      this.nodes.push(osc, env);
+    const play = ++this.plays;
+    let ctx: AudioContext;
+    let singing: Singing;
+    try {
+      ctx = await audioContext();
+      if (!this.playing || play !== this.plays) return;
+      const { timeline } = this.score;
+      const { table, gabc } = this.options;
+      // The chant moves by whole octaves to where the voice is at home.
+      const shift = octaveShift(
+        timeline.notes.map((n) => DO + n.semitones),
+        table.centre,
+      );
+      singing = await sing(ctx, fromTimeline(timeline.notes, PULSE, (s) => DO + s + shift), { table, gabc });
+    } catch (error) {
+      console.error("guide:", error);
+      if (play === this.plays) this.halt(false);
+      return;
     }
+    if (!this.playing || play !== this.plays) return singing.stop();
+    this.singing = singing;
+    this.visited.length = 0;
     const clock = this.options.clock ?? (() => ctx.currentTime);
-    const origin = clock() + 0.05;
+    const origin = clock() + (singing.start - ctx.currentTime);
     const tick = () => {
       if (!this.playing) return;
-      if (!this.follow((clock() - origin) / PULSE)) return this.stop();
+      // At the end the voice is left to die away.
+      if (!this.follow((clock() - origin) / PULSE)) return this.halt(true);
       this.frame = requestAnimationFrame(tick);
     };
     tick();
   }
 
   stop(): void {
+    this.halt(false);
+  }
+
+  private halt(letRing: boolean): void {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.frame);
-    for (const node of this.nodes) node.disconnect();
-    this.nodes = [];
+    this.singing?.stop(letRing);
     this.cursor.hide();
     this.options.onStop?.();
   }

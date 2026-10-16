@@ -35,6 +35,7 @@ jobs:
               - 'package*.json'
               - 'scripts/**'
               - 'Cargo.*'
+              - 'crates/**'
               - '.github/workflows/ci.yml'
             worker:
               - 'worker/**'
@@ -91,6 +92,7 @@ jobs:
           path: vendor/neuma
           key: neuma-module-${{ steps.neuma-rev.outputs.rev }}
       - run: sh scripts/neuma.sh
+      - run: sh scripts/cantor-wasm.sh
       - run: node content/build.mjs
       - run: npm ci
       - run: npx --workspace web playwright install --with-deps chromium

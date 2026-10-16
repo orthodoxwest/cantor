@@ -17,8 +17,11 @@
       "migrations_dir": "migrations"
     }
   ],
-  // Production value; .dev.vars and the test config override it with "dev".
-  "vars": { "ENV": "prod" },
+  // Production value; .dev.vars and the test config override it with "dev". Outside dev, only a
+  // Cloudflare Access token for this team and application names a caller: set ACCESS_TEAM
+  // ("https://<team>.cloudflareaccess.com") and ACCESS_AUD (the application's audience tag)
+  // here (neither is secret); while either is empty, nobody is signed in.
+  "vars": { "ENV": "prod", "ACCESS_TEAM": "", "ACCESS_AUD": "" },
   // Takes will live in R2 once it is enabled on the account:
   // "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }]
   "workers_dev": true

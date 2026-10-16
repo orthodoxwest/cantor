@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod diction;
 pub mod judge;
 pub mod listen;
 pub mod pitch;
@@ -15,13 +16,16 @@ pub mod room;
 pub mod score;
 pub mod synth;
 pub mod timeline;
+pub mod voice;
 
+pub use diction::{Language, Lyric, Sung, Vowel};
 pub use judge::{Mark, MarkKind, Outcome, Verdict, judge};
 pub use listen::{Guide, Track, listen, listen_with};
 pub use pitch::{Frame, track};
 pub use score::{NoteResult, Report, score};
 pub use synth::{Note, Planted, Profile, Take, render, render_take};
-pub use timeline::notes_from_gabc;
+pub use timeline::{notes_from_gabc, part_from_gabc};
+pub use voice::{Voice, VoiceError, sing};
 
 /// Frequency in hertz to a MIDI-style note number (69 is A4 at 440 Hz; 0.01 is a cent).
 pub fn hz_to_midi(hz: f32) -> f32 {

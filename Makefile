@@ -1,8 +1,10 @@
 .PHONY: setup neuma check test e2e eval wasm content
 
-# Everything a fresh clone needs: the neuma browser module, Rust's wasm target, npm packages, Playwright's browser.
+# Everything a fresh clone needs: the neuma browser module, Rust's wasm target and cantor.wasm,
+# npm packages, Playwright's browser.
 setup: neuma
 	rustup target add wasm32-unknown-unknown
+	sh scripts/cantor-wasm.sh
 	npm ci
 	npx --workspace web --if-present playwright install chromium
 
@@ -20,7 +22,7 @@ test:
 	npm test
 
 wasm:
-	cargo build -p cantor-wasm --target wasm32-unknown-unknown --profile wasm
+	sh scripts/cantor-wasm.sh
 
 e2e:
 	npm run e2e
