@@ -208,6 +208,28 @@
     min-width: 0;
     font-size: 1rem;
   }
+  /* Outside a take the readout has nothing to say, and in one Start note and Drone are off,
+     so each gives the other its room. */
+  body:not(.taking) #readout,
+  body:not(.taking) .bar .spacer,
+  body.taking #note,
+  body.taking #drone {
+    display: none;
+  }
+}
+@media (max-width: 374.98px) {
+  .bar-in {
+    gap: 0.35rem;
+  }
+  .bar .btn {
+    padding-inline: 0.55rem;
+  }
+}
+@media (max-width: 339.98px) {
+  .bar .btn {
+    padding-inline: 0.4rem;
+    font-size: 0.98rem;
+  }
 }
 #summary {
   font-size: 1.15rem;
