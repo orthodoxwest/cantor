@@ -9,7 +9,8 @@ const PULSE = 0.5;
 async function holdClock(page: Page): Promise<void> {
   const now = Date.now();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now + 1000);
+  // Far enough ahead that it is still to come when the pause reaches the page.
+  await page.clock.pauseAt(now + 60_000);
 }
 
 /** Waits for a play to start, so that the cursor follows the clock from here. */
@@ -188,7 +189,7 @@ test("a phrase tapped plays over and over with the cursor, a bar loops the phras
   expect(await page.evaluate(() => window.__cantor.visited)).toEqual(ids.slice(2, 11));
   await expect(page.locator("#score .cursor")).toBeHidden();
   await expect(play).toHaveAttribute("aria-pressed", "true");
-  // After a breath it goes round again, the cursor back at the phrase's first note.
+  // After a breath (two pulses: 1 s) it goes round again, the cursor back at the phrase's first note.
   await page.clock.runFor(1000 + 300);
   await following(page);
   await page.clock.runFor(300);
