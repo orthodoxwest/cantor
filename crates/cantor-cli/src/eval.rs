@@ -38,7 +38,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cantor_core::score::fold;
-use cantor_core::synth::cue_span;
+use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -810,6 +810,58 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
         report,
         oracle,
     })
+}
+
+/// A suite's take as `cantor take` gives it: the chant and timing to judge it by, and what
+/// `cantor eval` heard, so another ear can be checked against the eval.
+#[derive(Serialize)]
+pub struct TakeFile {
+    pub gabc: String,
+    pub pulse_s: f32,
+    /// When the first note starts, and when the take first sounds, in seconds.
+    pub lead_in_s: f32,
+    pub onset_s: Option<f32>,
+    pub report: cantor_core::Report,
+    pub verdict: Verdict,
+}
+
+/// Take `index` of `suite`, as `ear` hears it in `cantor eval`, and its samples at `rate`.
+/// Takes with a guide are refused: the guide's bleed is measured from samples the app plays,
+/// which a file alone does not carry.
+pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Result<(Vec<f32>, TakeFile), String> {
+    let suites = load_suites(&root.join("evals/suites"))?;
+    let found = suites
+        .iter()
+        .find(|s| s.name == suite)
+        .ok_or_else(|| format!("no suite named {suite}"))?;
+    let spec = found
+        .takes
+        .get(index)
+        .ok_or_else(|| format!("{suite} has {} takes", found.takes.len()))?;
+    if spec.profile.guide != GuideMode::None {
+        return Err(format!("{suite} {index} plays a guide"));
+    }
+    let judged = run_take(root, ear, None, spec, format!("{suite}-{index}"))?;
+    let path = root.join(&spec.gabc);
+    let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let take = render_take(&judged.notes, &spec.profile, SAMPLE_RATE, spec.seed);
+    let samples = if rate == SAMPLE_RATE {
+        take.samples
+    } else {
+        cantor_swift::resample(&take.samples, SAMPLE_RATE, rate)
+    };
+    let onset_s = samples.iter().position(|x| x.abs() >= 1e-3).map(|i| i as f32 / rate);
+    Ok((
+        samples,
+        TakeFile {
+            gabc,
+            pulse_s: spec.pulse_s,
+            lead_in_s: spec.lead_in_s,
+            onset_s,
+            report: judged.report,
+            verdict: judged.verdict,
+        },
+    ))
 }
 
 fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {

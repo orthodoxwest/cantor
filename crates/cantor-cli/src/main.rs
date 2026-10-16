@@ -1,6 +1,7 @@
 //! The `cantor` command: offline work on takes. `pitch` tracks a WAV or FLAC file, `synth`
 //! renders a chant with planted faults, `sing` renders it with the guide voice, `diction`
-//! lists the vowels it would sing, `eval` runs the listening gates and the baseline.
+//! lists the vowels it would sing, `eval` runs the listening gates and the baseline, `take`
+//! writes one of their takes with what the eval heard.
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +28,7 @@ const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor diction CHANT.gabc
        cantor eval [--takes DIR] [--write-baseline] [--nsdf-only] [--oracle MODEL.onnx]
        cantor explain SUITE [--takes DIR] [--nsdf-only] [--oracle MODEL.onnx]
+       cantor take SUITE INDEX [--rate HZ] [--pad SECONDS] [--nsdf-only] -o OUT.wav
        cantor version
 
 Listening uses the NSDF tracker with SwiftF0's opinion beside it; --nsdf-only drops SwiftF0.
@@ -53,6 +55,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("diction") => diction_cmd(rest)?,
         Some("eval") => return eval_cmd(rest),
         Some("explain") => return explain_cmd(rest),
+        Some("take") => take_cmd(rest)?,
         Some("-h" | "--help") => println!("{USAGE}"),
         Some(other) => return Err(format!("unknown command: {other}\n{USAGE}")),
     }
@@ -233,6 +236,42 @@ fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
     let root = repo_root();
     let oracle = load_oracle(&root, model.as_deref())?;
     eval::run(&root, &Ear::new(nsdf_only)?, oracle.as_ref(), takes.as_deref(), false, Some(&suite))
+}
+
+/// Writes a suite's take as a 16-bit WAV file at `--rate` (48 kHz unless given), with
+/// `--pad` seconds of silence before and after, and prints the chant, its timing in the file
+/// and what the eval heard as JSON, for checking another ear.
+fn take_cmd(args: &[String]) -> Result<(), String> {
+    let (nsdf_only, args) = nsdf_only(args);
+    let mut positional = Vec::new();
+    let mut rate = 48_000.0f32;
+    let mut pad_s = 0.0f32;
+    let mut out = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value"));
+        match arg.as_str() {
+            "--rate" => rate = value()?.parse().map_err(|e| format!("--rate: {e}"))?,
+            "--pad" => pad_s = value()?.parse().map_err(|e| format!("--pad: {e}"))?,
+            "-o" | "--out" => out = Some(PathBuf::from(value()?)),
+            _ if !arg.starts_with('-') => positional.push(arg.clone()),
+            _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
+        }
+    }
+    let ([suite, index], Some(out)) = (&positional[..], out) else {
+        return Err(USAGE.into());
+    };
+    let index = index.parse().map_err(|e| format!("{index}: {e}"))?;
+    let (mut samples, mut file) = eval::take(&repo_root(), &Ear::new(nsdf_only)?, suite, index, rate)?;
+    let pad = vec![0.0; (pad_s * rate).round() as usize];
+    samples.splice(0..0, pad.iter().copied());
+    samples.extend(&pad);
+    let shift = pad.len() as f32 / rate;
+    file.lead_in_s += shift;
+    file.onset_s = file.onset_s.map(|t| t + shift);
+    wav::write_mono_16(&out, &samples, rate)?;
+    println!("{}", serde_json::to_string(&file).map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 /// The oracle, when a model was given, caching its labels under `out/oracle/`.

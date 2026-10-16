@@ -29,6 +29,10 @@ listenButton.addEventListener("click", async () => {
   if (listener.listening) {
     listener.stop();
     listenButton.setAttribute("aria-pressed", "false");
+    listener.heard?.then(
+      (h) => (status.textContent = `Heard ${h.seconds.toFixed(1)} s with both ears.`),
+      (error: unknown) => (status.textContent = `The second ear failed: ${error instanceof Error ? error.message : String(error)}`),
+    );
     return;
   }
   listenButton.setAttribute("aria-pressed", "true");
@@ -81,5 +85,7 @@ if (test) {
       return guide?.chunks ?? [];
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
+    heard: () => listener.heard,
+    judge: (gabc: string, pulse: number, offset: number) => listener.judge(gabc, pulse, offset),
   };
 }

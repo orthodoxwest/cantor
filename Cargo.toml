@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cantor-core", "crates/cantor-cli", "crates/cantor-crepe", "crates/cantor-swift", "crates/cantor-wasm"]
+members = ["crates/cantor-core", "crates/cantor-cli", "crates/cantor-crepe", "crates/cantor-ear", "crates/cantor-swift", "crates/cantor-wasm"]
 
 [workspace.package]
 version = "0.0.1"

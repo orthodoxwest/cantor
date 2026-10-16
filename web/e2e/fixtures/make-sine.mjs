@@ -25,5 +25,8 @@ export function makeSine(path = WAV_PATH, f = 440, seconds = 3, sampleRate = 480
   writeFileSync(path, buf);
 }
 
-/** Playwright's globalSetup. */
-export default () => makeSine();
+/** Playwright's globalSetup: the sine, and the synthetic take (see take.mjs). */
+export default async () => {
+  makeSine();
+  (await import("./take.mjs")).makeTake();
+};

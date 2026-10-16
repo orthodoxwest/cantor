@@ -1,18 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Timeline } from "neuma";
 
-declare global {
-  interface Window {
-    __cantor: {
-      frames: Array<{ midi: number | null }>;
-      timeline: Timeline;
-      visited: number[];
-      chunks: Array<[number, number, number]>;
-      voice: "neutral" | "recorded" | "none";
-    };
-  }
-}
-
 const PULSE = 0.5;
 
 /** Opens the practice page and waits until it has its voice (or has given up on one). */

@@ -1,0 +1,22 @@
+[package]
+name = "cantor-ear"
+description = "The browser's ear: the core's NSDF tracker with SwiftF0 beside it, a C ABI run in a worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cantor-core.workspace = true
+cantor-swift.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# No workspace lint table: the C ABI needs `no_mangle` exports, which `forbid(unsafe_code)` rejects.
+[lints.rust]
+unsafe_code = "deny"
