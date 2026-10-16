@@ -75,6 +75,25 @@
     "in_tune": 523,
     "agreement": 0.9980798
   },
+  "expert-guide-key": {
+    "takes": 6,
+    "heard_fraction": 1.0,
+    "worst_take_heard": 1.0,
+    "heard_all": 1.0,
+    "masked_fraction": 0.0,
+    "tracking_cents": 7.4429407,
+    "gross_error_rate": 0.0,
+    "marks": 0,
+    "false_marks": 0,
+    "faults": 0,
+    "recall": 1.0,
+    "false_in_tune": 0,
+    "key_error_cents": 11.445923,
+    "summary_errors": 0,
+    "unjudged": 0,
+    "in_tune": 498,
+    "agreement": 0.99855536
+  },
   "expert-rooms": {
     "takes": 6,
     "heard_fraction": 1.0,
@@ -93,6 +112,25 @@
     "unjudged": 0,
     "in_tune": 523,
     "agreement": 0.97777444
+  },
+  "research-guide-key": {
+    "takes": 6,
+    "heard_fraction": 0.98039216,
+    "worst_take_heard": 0.88235295,
+    "heard_all": 0.93373495,
+    "masked_fraction": 0.009803922,
+    "tracking_cents": 9.393927,
+    "gross_error_rate": 0.0,
+    "marks": 0,
+    "false_marks": 0,
+    "faults": 0,
+    "recall": 1.0,
+    "false_in_tune": 0,
+    "key_error_cents": 7.6259766,
+    "summary_errors": 0,
+    "unjudged": 0,
+    "in_tune": 465,
+    "agreement": 0.99310994
   },
   "research-hard": {
     "takes": 12,
