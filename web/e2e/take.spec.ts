@@ -146,6 +146,44 @@ test("a take of a chant the reader may not see is heard without its score", asyn
   await expect.poll(() => page.locator("#audio").evaluate((a: HTMLAudioElement) => a.currentTime)).toBeCloseTo(Math.max(0, band.from_s - 0.2), 1);
 });
 
+test("one signed in puts their name to their comment", async ({ page }) => {
+  const sent = await sentTake(page);
+  await serve(page, sent, { comments: [] });
+  const named: unknown[] = [];
+  await page.route("**/api/me", (route) => {
+    if (route.request().method() === "PUT") {
+      named.push(route.request().postDataJSON());
+      return route.fulfill({ json: { id: "director", email: null, name: "Fr. Director" } });
+    }
+    return route.fulfill({ json: { id: "director", email: null, name: null } });
+  });
+  await page.route(`**/api/takes/${ID}/comments`, (route) =>
+    route.fulfill({ status: 201, json: { id: 3, ...route.request().postDataJSON(), by: "known", name: "Fr. Director", created_at: "2026-10-16T19:05:00.000Z" } }),
+  );
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#sign-line")).toBeHidden();
+  await page.getByLabel("Your name").fill("  Fr.   Director ");
+  await page.locator("#body").fill("Breathe before the turn.");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("#comments li").first()).toHaveText(/^Note \d+ · Fr\. Director · .*Breathe before the turn\.$/s);
+  expect(named).toEqual([{ name: "Fr. Director" }]);
+  // The name is kept, so the next comment does not give it again.
+  await page.locator("#body").fill("And here.");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("#comments li")).toHaveCount(2);
+  expect(named).toHaveLength(1);
+});
+
+test("one not signed in is offered to sign in and come back", async ({ page }) => {
+  const sent = await sentTake(page);
+  await serve(page, sent);
+  await page.route("**/api/me", (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }));
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#name-line")).toBeHidden();
+  await expect(page.locator("#sign-line")).toHaveText("Sign in to put your name to your comments.");
+  await expect(page.locator("#sign-link")).toHaveAttribute("href", `/signin?next=${encodeURIComponent(`/take/${ID}`)}`);
+});
+
 test("the singer may remove a comment from their take", async ({ page }) => {
   const sent = await sentTake(page);
   await serve(page, sent, { mine: true });

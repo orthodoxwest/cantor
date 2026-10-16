@@ -93,6 +93,30 @@
   background: var(--surface);
   color: inherit;
 }
+.name-pick {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.name-pick[hidden] {
+  display: none;
+}
+.name-pick input {
+  flex: 1;
+  max-width: 20rem;
+  min-width: 0;
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: inherit;
+}
+.sign-line {
+  margin: -1.25rem 0 2rem;
+  color: var(--muted);
+}
 .comment-form .btn {
   grid-column: 1 / -1;
   justify-self: start;

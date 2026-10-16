@@ -249,7 +249,9 @@ takes.get("/:id", async (c) => {
   // take; a private chant (booklet-derived) is shown only to a known caller.
   const open = who !== null || found.public === 1;
   const { results: comments } = await c.env.DB.prepare(
-    "SELECT id, note, body, by_singer, author_id, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
+    `SELECT c.id, c.note, c.body, c.by_singer, c.author_id, p.name, c.created_at
+     FROM take_comments c LEFT JOIN people p ON p.user_id = c.author_id
+     WHERE c.take_id = ? ORDER BY c.id`,
   )
     .bind(id)
     .all<CommentRow>();
@@ -278,14 +280,17 @@ interface CommentRow {
   body: string;
   by_singer: number;
   author_id: string | null;
+  /** The name its writer gave, when signed in. */
+  name: string | null;
   created_at: string;
 }
 
 /** A comment as the page reads it: who wrote it as the Worker knew them (the singer, someone
- * signed in, or a reader it did not know), never their id. */
-const asComment = ({ by_singer, author_id, ...comment }: CommentRow) => ({
+ * signed in with the name they gave, or a reader it did not know), never their id or email. */
+const asComment = ({ by_singer, author_id, name, ...comment }: CommentRow) => ({
   ...comment,
   by: by_singer ? "singer" : author_id ? "known" : "reader",
+  name: !by_singer && author_id ? name : null,
 });
 
 // A comment on one note of a take, from whoever holds its link. The Worker, not the page, says
@@ -314,7 +319,7 @@ takes.post("/:id/comments", async (c) => {
     `INSERT INTO take_comments (take_id, note, body, by_singer, author_id)
      SELECT ?1, ?2, ?3, ?4, ?5
      WHERE ?5 IS NOT NULL OR (SELECT count(*) FROM take_comments WHERE take_id = ?1 AND author_id IS NULL) < ?6
-     RETURNING id, note, body, by_singer, author_id, created_at`,
+     RETURNING id, note, body, by_singer, author_id, (SELECT name FROM people WHERE user_id = ?5) AS name, created_at`,
   )
     .bind(id, note, body, bySinger, who?.id ?? null, MAX_COMMENTS)
     .first<CommentRow>();

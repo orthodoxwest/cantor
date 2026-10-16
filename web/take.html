@@ -61,8 +61,10 @@
             <span id="note-words" class="note-words"></span>
             <label class="sr" for="body">Comment</label>
             <textarea id="body" rows="3" maxlength="2000" required placeholder="A comment on this note"></textarea>
+            <label class="name-pick" id="name-line" hidden>Your name <input id="name" type="text" maxlength="60" autocomplete="name" placeholder="As the singer will see it" /></label>
             <button class="btn primary" type="submit">Post</button>
           </form>
+          <p id="sign-line" class="sign-line" hidden><a id="sign-link" href="/signin">Sign in</a> to put your name to your comments.</p>
         </section>
       </section>
     </main>

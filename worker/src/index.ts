@@ -78,7 +78,36 @@ app.get("/api/pointing/:psalm", async (c) => {
 app.get("/api/me", async (c) => {
   const user = await identity(c.req.raw.headers, c.env);
   c.header("Cache-Control", "private, no-store");
-  return user ? c.json(user) : c.json({ error: "unauthorized" }, 401);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const named = await c.env.DB.prepare("SELECT name FROM people WHERE user_id = ?").bind(user.id).first<{ name: string }>();
+  return c.json({ ...user, name: named?.name ?? null });
+});
+
+/** The longest name a person may give. */
+export const MAX_NAME = 60;
+
+// The name a signed-in person gives, shown beside their comments; empty forgets it.
+app.put("/api/me", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.json({ error: "forbidden" }, 403);
+  const user = await identity(c.req.raw.headers, c.env);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  if (Number(c.req.header("Content-Length") ?? 0) > 4096) return c.json({ error: "too large" }, 413);
+  const sent = await c.req
+    .text()
+    .then((text) => (text.length > 4096 ? null : (JSON.parse(text) as { name?: unknown } | null)))
+    .catch(() => null);
+  const name = typeof sent?.name === "string" ? sent.name.replace(/\s+/g, " ").trim() : null;
+  // A name is shown as text, but no control characters even so.
+  if (name === null || name.length > MAX_NAME || /[\p{Cc}\p{Cf}]/u.test(name)) return c.json({ error: "bad request" }, 400);
+  if (!name) await c.env.DB.prepare("DELETE FROM people WHERE user_id = ?").bind(user.id).run();
+  else
+    await c.env.DB.prepare(
+      "INSERT INTO people (user_id, name) VALUES (?1, ?2) ON CONFLICT (user_id) DO UPDATE SET name = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+      .bind(user.id, name)
+      .run();
+  return c.json({ ...user, name: name || null });
 });
 
 // Signing in: Access covers this path, so reaching it means the visitor has signed in; it sends
