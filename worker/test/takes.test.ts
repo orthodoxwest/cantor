@@ -4,6 +4,8 @@ import app from "../src/index";
 import { MAX_AUDIO } from "../src/takes";
 
 const ORIGIN = "http://localhost";
+/** The public chant's score, as the library holds it (test/setup.ts). */
+const UBI = "name:Ubi caritas;\n%%\n(c4) WHere(f) cha(gh)ri(hg)ty(h) (::)";
 
 /** A WAV header and `n` bytes of silence. */
 function wav(n = 4800): Uint8Array {
@@ -19,7 +21,7 @@ function wav(n = 4800): Uint8Array {
 const record = () => ({
   slug: "ubi-caritas",
   title: "Where charity and love are",
-  gabc: "(c4) WHere(f) (::)",
+  gabc: UBI,
   pulse: 0.5,
   offset: 1.2,
   seconds: 9.5,
@@ -53,15 +55,15 @@ describe("takes", () => {
     const { id, url } = await res.json<{ id: string; url: string }>();
     expect(id).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(url).toBe(`/take/${id}`);
-    const row = await env.DB.prepare("SELECT user_id, chant_slug, title, seconds FROM takes WHERE id = ?").bind(id).first();
-    expect(row).toEqual({ user_id: "singer", chant_slug: "ubi-caritas", title: "Where charity and love are", seconds: 9.5 });
+    const row = await env.DB.prepare("SELECT user_id, chant_slug, title, seconds, bytes FROM takes WHERE id = ?").bind(id).first();
+    expect(row).toEqual({ user_id: "singer", chant_slug: "ubi-caritas", title: "Where charity and love are", seconds: 9.5, bytes: wav().length });
 
     // A reader with no account.
     const take = await get(`/api/takes/${id}`);
     expect(take.status).toBe(200);
     expect(take.headers.get("Cache-Control")).toBe("private, no-store");
     const body = await take.json<Record<string, unknown>>();
-    expect(body).toMatchObject({ id, slug: "ubi-caritas", gabc: "(c4) WHere(f) (::)", pulse: 0.5, offset: 1.2, mine: false });
+    expect(body).toMatchObject({ id, slug: "ubi-caritas", gabc: UBI, pulse: 0.5, offset: 1.2, mine: false });
     expect((body.judged as { summary: string[] }).summary).toHaveLength(2);
     expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "singer" })).json<{ mine: boolean }>()).mine).toBe(true);
     expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "someone" })).json<{ mine: boolean }>()).mine).toBe(false);
@@ -94,13 +96,17 @@ describe("takes", () => {
       expect(await ranged(whole)).toEqual({ status: 200, range: null, length: size });
   });
 
-  it("keeps a private chant's score from a reader who is not signed in", async () => {
+  it("shows a reader not signed in the score only of a public chant", async () => {
     const { id } = await (await send({ take: { ...record(), slug: "private-test", gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
     expect((await (await get(`/api/takes/${id}`)).json<{ gabc: string | null }>()).gabc).toBeNull();
     expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "director" })).json<{ gabc: string }>()).gabc).toBe("(c4) BOok(f) (::)");
     // A public chant's score goes to anyone with the link.
     const { id: open } = await (await send()).json<{ id: string }>();
-    expect((await (await get(`/api/takes/${open}`)).json<{ gabc: string }>()).gabc).toBe("(c4) WHere(f) (::)");
+    expect(await (await get(`/api/takes/${open}`)).json()).toMatchObject({ gabc: UBI, title: "Where charity and love are" });
+    // Nor does a score the library does not hold, whatever slug it is sent under.
+    const { id: other } = await (await send({ take: { ...record(), gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
+    expect(await (await get(`/api/takes/${other}`)).json()).toMatchObject({ gabc: null, title: null });
+    expect(await (await get(`/api/takes/${id}`)).json()).toMatchObject({ title: null });
   });
 
   it("stops reading a body longer than any take, its length declared or not", async () => {

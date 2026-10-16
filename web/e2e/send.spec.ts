@@ -72,24 +72,28 @@ test("a take that cannot be sent says why and may be sent again", async ({ page 
   await expect(page.locator("#sent")).toHaveText("");
 });
 
-test("a send under way stops when another take is shown", async ({ page }) => {
+test("while a take is sent nothing else plays, and its link is given even if the take is cleared", async ({ page }) => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
   let reached = false;
   await page.route("**/api/takes", async (route) => {
     reached = true;
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    await route.fulfill({ status: 201, json: { id: ID, url: `/take/${ID}` } }).catch(() => {});
+    await held;
+    await route.fulfill({ status: 201, json: { id: ID, url: `/take/${ID}` } });
   });
   await judgedTake(page);
-  // The clipboard is the browser's, shared with the tests before.
-  await page.evaluate(() => navigator.clipboard.writeText("before"));
   await page.getByRole("button", { name: "Send to a director" }).click();
   await expect.poll(() => reached).toBe(true);
+  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sing a take" })).toBeDisabled();
+  await expect(page.locator("#chant")).toBeDisabled();
+  // The page's own listening (the tests' hook) clears the take while it is sent.
   await page.evaluate(() => void window.__cantor.listen());
   await expect(page.locator("#result")).toBeHidden();
-  await page.waitForTimeout(3500);
-  await expect(page.locator("#sent")).toHaveText("");
-  await expect(page.locator("#status")).not.toHaveText(/could not be sent/);
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("before");
+  release();
+  await expect(page.locator("#status")).toHaveText(new RegExp(`this take: http://localhost:4173/take/${ID}$`));
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Sing a take" })).toBeEnabled();
   await page.evaluate(() => void window.__cantor.listen());
 });
 

@@ -109,8 +109,8 @@ interface ToSend {
   judged: Judged;
 }
 let toSend: ToSend | null = null;
-/** Stops the send under way, when the take it sends is no longer shown. */
-let sending: AbortController | null = null;
+/** Whether a take is being sent; until it is, nothing else plays or listens. */
+let sending = false;
 
 /** Offers to send the take just shown. */
 function offerSend(take: ToSend): void {
@@ -120,33 +120,44 @@ function offerSend(take: ToSend): void {
   });
 }
 
+/** Holds Play, a take and the chant while a take is sent, or lets them go. */
+function holdForSending(on: boolean): void {
+  sending = on;
+  playButton.disabled = on || !guide;
+  takeButton.disabled = on || !guide;
+  picker.disabled = on;
+}
+
 sendButton.addEventListener("click", () => {
   const take = toSend;
-  if (!take) return;
+  if (!take || sending) return;
   sendButton.disabled = true;
   sentText.textContent = "Sending…";
-  const abort = (sending = new AbortController());
+  holdForSending(true);
   const link = listener.audio().then(({ wav, seconds }) => {
-    if (abort.signal.aborted) throw new Error("another take was shown");
     const { gabc, pulse, offset, judged } = take;
-    return sendTake(wav, { slug: piece.slug, title: piece.title, gabc, pulse, offset, seconds, judged }, abort.signal);
+    return sendTake(wav, { slug: piece.slug, title: piece.title, gabc, pulse, offset, seconds, judged });
   });
   const copied = copyWhenReady(link);
   link.then(
     async (url) => {
       const done = await copied;
-      if (toSend !== take) return;
-      toSend = sending = null;
+      holdForSending(false);
+      const told = done ? "Link copied. Anyone with it can hear this take: " : "Send this link; anyone with it can hear this take: ";
+      // A take no longer shown still gets its link, in the status line.
+      if (toSend !== take) return setStatus(`${told}${url}`, true);
+      toSend = null;
       sendButton.hidden = true;
       const a = document.createElement("a");
       a.href = a.textContent = url;
-      sentText.replaceChildren(done ? "Link copied. Anyone with it can hear this take: " : "Send this link; anyone with it can hear this take: ", a);
+      sentText.replaceChildren(told, a);
     },
     (error: unknown) => {
-      if (toSend !== take) return;
-      sending = null;
-      sendButton.disabled = false;
-      sentText.textContent = "";
+      holdForSending(false);
+      if (toSend === take) {
+        sendButton.disabled = false;
+        sentText.textContent = "";
+      }
       setStatus(`The take could not be sent: ${error instanceof Error ? error.message : String(error)}`);
     },
   );
@@ -157,9 +168,7 @@ function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
-  // A take no longer shown is not sent: its link would go nowhere the singer could see.
-  sending?.abort();
-  toSend = sending = null;
+  toSend = null;
   sendLine.hidden = true;
   sendButton.hidden = sendButton.disabled = false;
   sentText.textContent = "";

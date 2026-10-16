@@ -12,6 +12,8 @@ CREATE TABLE takes (
   chant_slug TEXT NOT NULL,
   title TEXT NOT NULL,
   seconds REAL NOT NULL,
+  -- The audio's length in bytes, for ranges.
+  bytes INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
