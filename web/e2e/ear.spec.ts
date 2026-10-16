@@ -130,6 +130,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(cadences(got).filter((c, i) => c !== "near" && cadences(want)[i] !== "near")).toEqual(
     cadences(want).filter((c, i) => c !== "near" && cadences(got)[i] !== "near"),
   );
+  expect(got.summary[0]).toEqual(want.summary[0]);
   if (!borderline(want) && !borderline(got)) expect(got.summary).toEqual(want.summary);
   await expect(page.locator("#summary")).toHaveText(got.summary.join(" "));
   type Marked = { first: number; last: number };
@@ -208,7 +209,12 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
-  if (!borderline(want)) await expect(page.locator("#summary")).toHaveText(want.summary.join(" "));
+  // The take's own sentences: its tone as the eval's, its cadences as the eval's but for one
+  // too near the line to call.
+  const told = (await page.locator("#summary").textContent()) ?? "";
+  expect(told.startsWith(`${want.summary[0]} `)).toBe(true);
+  if (!borderline(want)) expect(told).toEqual(want.summary.join(" "));
+  else expect(told).toMatch(/cadences? (clearly heard )?(was|were|went)/);
   // The next take clears this one's view, and Stop ends it.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).not.toHaveText("");

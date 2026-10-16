@@ -50,6 +50,9 @@ pub const CADENCE_CENTS: f32 = 100.0;
 const RECITED_SHARE: f32 = 1.0 / 3.0;
 /// The notes ending a phrase that are its cadence where no reciting tone shows where it starts.
 const CADENCE_NOTES: usize = 2;
+/// The most notes a cadence found without a recitation before it reaches back over: a psalm
+/// tone's longest, accent to final.
+const CADENCE_MAX_NOTES: usize = 5;
 
 /// What became of the take as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,14 +235,17 @@ pub fn recited(notes: &[Note]) -> bool {
     !notes.is_empty() && notes.iter().filter(|n| n.recitation).count() as f32 >= RECITED_SHARE * notes.len() as f32
 }
 
-/// Each phrase's cadence, as the notes `first..=last`. In a recited chant it runs to the
-/// phrase's end from after its last recited note before its last note off the reciting tone
-/// (the pitch most recited notes are on), or, with no recited note there, after the last two
-/// notes in a row on the tone: a psalm tone's mediant or termination, accent and all. A phrase
-/// that never leaves the tone has none; one that neither recites nor holds the tone before
-/// leaving it runs from its first note off the tone after its first note, or has none when it
-/// comes back to the tone for longer at its end. In a chant not recited it is each phrase's
-/// last [`CADENCE_NOTES`].
+/// Each phrase's cadence, as the notes `first..=last`.
+///
+/// In a recited chant the reciting tone is the pitch most recited notes are on, and a cadence
+/// runs to the phrase's end from after the last note recited on the tone before the phrase's
+/// last note off it, or, with none, after the last two notes in a row on the tone: a psalm
+/// tone's mediant or termination, accent and all. A phrase that never leaves the tone has none.
+/// One that neither recites nor holds the tone before leaving it runs from its first note off
+/// the tone after its first note, but at most its last [`CADENCE_MAX_NOTES`] and always its last
+/// note off the tone; it has none when it ends on two or more notes back on the tone.
+///
+/// In a chant not recited a cadence is each phrase's last [`CADENCE_NOTES`].
 pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
     let pitch = |n: &Note| (n.midi * 100.0).round() as i32;
     let tenor = recited(notes)
@@ -264,11 +270,15 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
             // recited note before that, else to the last two on the tone. A phrase that never
             // leaves the tone, or comes back to it for good, has none.
             Some(t) => (first..=last).rev().find(|&i| pitch(&notes[i]) != t).and_then(|off| {
-                let recited = (first..off).rev().find(|&i| notes[i].recitation);
+                // Recited on the tone: a run on the final inside a termination is cadence.
+                let recited = (first..off).rev().find(|&i| notes[i].recitation && pitch(&notes[i]) == t);
                 let held = || (first + 1..off).rev().find(|&i| pitch(&notes[i]) == t && pitch(&notes[i - 1]) == t);
                 match recited.or_else(held) {
                     Some(i) => Some(i + 1),
-                    None => (last - off < CADENCE_NOTES).then(|| (first + 1..=off).find(|&i| pitch(&notes[i]) != t).unwrap_or(off)),
+                    None => (last - off < CADENCE_NOTES).then(|| {
+                        let left = (first + 1..=off).find(|&i| pitch(&notes[i]) != t).unwrap_or(off);
+                        left.max((last + 1).saturating_sub(CADENCE_MAX_NOTES)).min(off)
+                    }),
                 }
             }),
             None => Some(ends),
@@ -675,6 +685,12 @@ mod tests {
             0.5,
         );
         assert_eq!(cadences(&notes), [(4, 8), (10, 14), (27, 28)]);
+        // A run on the final inside a termination is no recitation to start after.
+        let notes = crate::notes_from_gabc(
+            "(c4) Glo(j)ry(j) be(j) to(j) the(j) Fa(j)ther,(j) and(j) to(k) the(j) Son:(j.) *(:) and(j) to(j) the(j) Ho(j)ly(h) Son,(h) and(g) to(g) the(g) Ghost.(g) (::)",
+            0.5,
+        );
+        assert_eq!(cadences(&notes)[1], (15, 20));
     }
 
     #[test]

@@ -12,15 +12,19 @@
 //!
 //! What counts as a fault, and how long a note must be to count, are this file's own
 //! constants, written from the specification, not read from the judge: tuning the judge
-//! cannot shrink what it is tested against.
+//! cannot shrink what it is tested against. Cadences are the exception: where a cadence lies
+//! is the judge's, so how many there are, and how many were planted off, are held to the
+//! baseline.
 //!
 //! The gates. Every suite, gated or not, must have no false marks.
 //! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
 //!   0.3 s or more heard over the suite and 90% in every take; 90% of all notes heard; a
-//!   steady reciting tone; every take judged.
+//!   steady reciting tone; every cadence judged on pitch, and 80% of them judged; every take
+//!   judged.
 //! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
 //!   them caught, nothing planted 100 cents or more off called in tune, the key found within
-//!   50 cents, and drift named where it was planted.
+//!   50 cents, and drift named where it was planted. No cadence told wrong (called off with
+//!   every note planted within 50 cents, or on with one planted 150 off), and 80% judged.
 //! - `silent`: the guide alone, singer silent. No take judged, no note heard, nothing in tune.
 //! - `wrong`: a wrong singer over a right guide is marked, as for `student`.
 //!
@@ -548,6 +552,18 @@ impl Metrics {
         );
         // What is counted is fixed by the suites: a change means the test moved, not the listener.
         check("faults", self.faults as f32, base.faults as f32, self.faults != base.faults);
+        check(
+            "cadences",
+            self.cadences as f32,
+            base.cadences as f32,
+            self.cadences != base.cadences,
+        );
+        check(
+            "cadence_faults",
+            self.cadence_faults as f32,
+            base.cadence_faults as f32,
+            self.cadence_faults != base.cadence_faults,
+        );
         check("takes", self.takes as f32, base.takes as f32, self.takes != base.takes);
         // SwiftF0 going deaf on a suite would otherwise drop its agreement from the gate.
         if let (None, Some(was)) = (self.agreement, base.agreement) {
