@@ -41,7 +41,7 @@ const SINGABLE: std::ops::RangeInclusive<f32> = 12.0..=108.0;
 /// The latest a note may start or the longest it may last, in seconds (an hour): beyond
 /// that a part is not a chant, and is left silent rather than rendered for ever.
 const LONGEST_S: f32 = 3600.0;
-/// Below this RMS a unit is taken as silence rather than amplified.
+/// Below this RMS a unit is silent, and refused rather than amplified.
 const SILENT_RMS: f32 = 1e-3;
 /// The neutral vowel, a schwa: formant centres and bandwidths in hertz.
 const NEUTRAL_FORMANTS: [(f64, f64); 4] = [(500.0, 80.0), (1500.0, 100.0), (2500.0, 140.0), (3500.0, 200.0)];
@@ -154,8 +154,8 @@ impl Voice {
         Voice::new(NEUTRAL_RATE, vec![unit]).expect("the neutral unit is a valid unit")
     }
 
-    /// A voice from units, checked: each needs a finite pitch and at least three marks,
-    /// increasing, at most 25 ms apart and inside its samples.
+    /// A voice from units, checked: each needs a finite pitch, at least three marks,
+    /// increasing, at most 25 ms apart and inside its samples, and some sound between them.
     pub fn new(sample_rate: f32, units: Vec<Unit>) -> Result<Voice, VoiceError> {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return Err(VoiceError::SampleRate);
@@ -186,7 +186,10 @@ impl Voice {
             let (a, b) = (u.marks[0] as usize, u.marks[u.marks.len() - 1] as usize);
             let span = &u.samples[a..=b];
             let rms = (span.iter().map(|x| x * x).sum::<f32>() / span.len() as f32).sqrt();
-            gains.push(if rms > SILENT_RMS { UNIT_RMS / rms } else { 0.0 });
+            if rms <= SILENT_RMS {
+                return Err(VoiceError::Unit(i, "silent"));
+            }
+            gains.push(UNIT_RMS / rms);
         }
         Ok(Voice { sample_rate, units, gains })
     }
@@ -345,7 +348,7 @@ pub fn length(part: &[Sung], sample_rate: f32) -> usize {
 
 /// Whether a note is sung at all: a singable pitch, a length, and a start and length short
 /// of an hour.
-fn singable(s: &Sung) -> bool {
+pub fn singable(s: &Sung) -> bool {
     let n = &s.note;
     SINGABLE.contains(&n.midi) && n.dur_s > 0.0 && n.dur_s <= LONGEST_S && n.start_s.abs() <= LONGEST_S
 }
@@ -546,11 +549,11 @@ impl<'a> Phrase<'a> {
         let hi = (from + out.len()) as f64 / sr_out;
         let mut mix = Vec::with_capacity(4);
         let mut t = self.start;
-        while t < self.end {
+        // The longest grain reaches two analysis periods either side (at most 50 ms), so
+        // marks far outside the window are skipped, and the walk ends past it.
+        while t < self.end && t < hi + 0.05 {
             let period = 1.0 / midi_to_hz(self.midi(t) as f32) as f64;
-            // The longest grain reaches two analysis periods either side; skip marks whose
-            // grains cannot touch the window.
-            if t > lo - 0.05 && t < hi + 0.05 {
+            if t > lo - 0.05 {
                 let a = self.gain(t);
                 if a > 0.0 {
                     self.mix(t, &mut mix);
@@ -733,6 +736,9 @@ mod tests {
             samples: vec![0.0; 10],
         };
         assert!(matches!(Voice::new(SR, vec![unit]), Err(VoiceError::Unit(0, _))));
+        let mut quiet = test_voice().units[0].clone();
+        quiet.samples.iter_mut().for_each(|s| *s *= 1e-3);
+        assert_eq!(Voice::new(SR, vec![quiet]), Err(VoiceError::Unit(0, "silent")));
         let mut empty = bytes[..12].to_vec();
         empty[6..8].copy_from_slice(&0u16.to_le_bytes());
         assert_eq!(Voice::parse(&empty), Err(VoiceError::NoVowels));

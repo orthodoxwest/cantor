@@ -110,7 +110,7 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
     let mut voice_path = None;
     let mut pulse_s = None;
     let mut transpose = 0.0f32;
-    let mut rate = 48_000.0f32;
+    let mut rate = 48_000u32;
     let mut out = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -120,7 +120,7 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
             "--voice" => voice_path = Some(PathBuf::from(value()?)),
             "--tempo" => pulse_s = Some(number(value()?)?),
             "--transpose" => transpose = number(value()?)?,
-            "--rate" => rate = number(value()?)?,
+            "--rate" => rate = value()?.parse().map_err(|e| format!("{arg}: {e}"))?,
             "-o" | "--out" => out = Some(PathBuf::from(value()?)),
             _ if chant.is_none() && !arg.starts_with('-') => chant = Some(PathBuf::from(arg)),
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
@@ -129,9 +129,10 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
     let (Some(chant), Some(pulse_s), Some(out)) = (chant, pulse_s, out) else {
         return Err(USAGE.into());
     };
-    if !rate.is_finite() || rate <= 0.0 {
-        return Err("--rate must be a positive number".into());
+    if !(8_000..=384_000).contains(&rate) {
+        return Err("--rate must be a whole number of hertz from 8000 to 384000".into());
     }
+    let rate = rate as f32;
     let gabc = std::fs::read_to_string(&chant).map_err(|e| format!("{}: {e}", chant.display()))?;
     let voice = match voice_path {
         Some(path) => {
@@ -143,6 +144,10 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
     let mut part = part_from_gabc(&gabc, pulse_s);
     for s in &mut part {
         s.note.midi += transpose;
+    }
+    let silent = part.iter().filter(|s| !voice::singable(s)).count();
+    if silent > 0 {
+        eprintln!("warning: {silent} notes are out of the voice's range or past an hour and are left silent");
     }
     let samples = voice::sing(&voice, &part, rate, 0, voice::length(&part, rate));
     wav::write_mono(&out, &samples, rate)?;

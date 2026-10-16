@@ -40,9 +40,9 @@ listenButton.addEventListener("click", async () => {
   }
 });
 
-// Play waits for the voice; without one the guide stays off and listening still works.
+// Play (disabled in the page) waits for the voice; without one the guide stays off and
+// listening still works.
 const playButton = byId<HTMLButtonElement>("play");
-playButton.disabled = true;
 const failed = (error: unknown) => {
   console.error("guide voice:", error);
   return undefined;
@@ -57,7 +57,8 @@ const guide =
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
   });
-if (guide) {
+if (!guide) playButton.title = "The guide voice could not load.";
+else {
   playButton.disabled = false;
   playButton.addEventListener("click", () => {
     if (guide.playing) return guide.stop();
