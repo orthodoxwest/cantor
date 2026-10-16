@@ -47,6 +47,8 @@ export class Guide {
   readonly visited: number[] = [];
   /** The index of the last note the cursor reached in the latest play, or null before the first. */
   reached: number | null = null;
+  /** Whether the cursor follows a play under way: it has started, and not yet ended. */
+  following = false;
   private singing: Singing | null = null;
   private frame = 0;
   private timer = 0;
@@ -141,6 +143,7 @@ export class Guide {
     };
     // A hidden page draws no frames, and the play still ends on time.
     this.timer = window.setInterval(step, 250);
+    this.following = true;
     tick();
     return { origin, first: begins, ended };
   }
@@ -159,6 +162,7 @@ export class Guide {
   private halt(finished: boolean): void {
     if (!this.playing) return;
     this.playing = false;
+    this.following = false;
     cancelAnimationFrame(this.frame);
     clearInterval(this.timer);
     this.singing?.stop(finished);
