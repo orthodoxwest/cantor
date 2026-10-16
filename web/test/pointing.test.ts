@@ -142,3 +142,32 @@ describe("in-word splits", () => {
     expect(texts.slice(-4)).toEqual(["o", "pe", "rá", "tion"]);
   });
 });
+
+describe("neuma 27867ab", () => {
+  // The pointer scores the stressed syllables a placement passes over and the cadence's shape,
+  // and the syllabifier splits "created" and an in-word dot that would leave a lone consonant
+  // differently. Pinned so a bump that undoes them is noticed.
+  it("accents the stressed syllable rather than the weak one it would pass over", () => {
+    // neuma 0fd4356 pointed this mediant "a place of liber·tý" at 0.50 confidence.
+    const verse = "19 He brought me forth also into a place of liberty * he brought me forth, even because he had a favour unto me.";
+    const { text, unsure } = pointText(verse, "8.G");
+    expect(text).toBe("19 He brought me forth also into a place of · líberty * he brought me forth, even because he had a · favour únto me.");
+    expect(unsure).toEqual([]);
+    const accents = syllables(text, "8.G", 0, "mediant").filter((s) => s.accent).map((s) => s.text);
+    expect(accents).toEqual(["lí"]);
+  });
+
+  it("splits a piece before an in-word dot that would leave a lone consonant as a word", () => {
+    // neuma 0fd4356 split "burnt·offerings" by the whole word, leaving "burn" and "t".
+    const texts = syllables("1 x * in burnt·offérings.", "8.G", 0, "termination").map((s) => s.text);
+    expect(texts).toEqual(["in", "burnt", "of", "fér", "ings."]);
+  });
+
+  it("splits create and its family as cre-a-ted", () => {
+    // neuma 0fd4356 split it "cr-ea-ted".
+    const texts = syllables("1 x * he created the héavens.", "8.G", 0, "termination").map((s) => s.text);
+    expect(texts).toEqual(["he", "cre", "a", "ted", "the", "héa", "vens."]);
+    const one = syllables("1 x * he did créate them.", "8.G", 0, "termination").map((s) => s.text);
+    expect(one).toEqual(["he", "did", "cré", "ate", "them."]);
+  });
+});
