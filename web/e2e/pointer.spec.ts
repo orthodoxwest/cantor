@@ -87,6 +87,97 @@ test("dragging an accent moves it, and the address keeps the edit", async ({ pag
   expect(await text(page)).toBe(edited);
 });
 
+test("a mouse click on a syllable leaves the pointing alone", async ({ page }) => {
+  await open(page);
+  const before = await text(page);
+  const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+  await half.first().click();
+  await half.first().dblclick();
+  expect(await text(page)).toBe(before);
+});
+
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("tapping a syllable moves the nearest accent there", async ({ page }) => {
+    await open(page);
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const all = await half.allTextContents();
+    const at = all.indexOf((await accents(page, 1, "mediant").textContent())!);
+    const target = half.nth(at - 2);
+    const targetText = (await target.textContent())!;
+    await target.tap();
+    await expect
+      .poll(async () => (await accents(page, 1, "mediant").textContent())!.normalize("NFD").replace(/\u0301/g, ""))
+      .toBe(targetText);
+    await page.getByRole("button", { name: "Undo" }).tap();
+    await expect(accents(page, 1, "mediant")).toHaveText(all[at]!);
+  });
+
+  test("dragging an accent with a finger moves it", async ({ page }) => {
+    await open(page);
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const all = await half.allTextContents();
+    const at = all.indexOf((await accents(page, 1, "mediant").textContent())!);
+    const target = half.nth(at - 2);
+    const targetText = (await target.textContent())!;
+    const centre = async (l: Locator) => {
+      const b = (await l.boundingBox())!;
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    const from = await centre(accents(page, 1, "mediant"));
+    const to = await centre(target);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [from] });
+    for (let i = 1; i <= 5; i++) {
+      const p = { x: from.x + ((to.x - from.x) * i) / 5, y: from.y + ((to.y - from.y) * i) / 5 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [p] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect
+      .poll(async () => (await accents(page, 1, "mediant").textContent())!.normalize("NFD").replace(/\u0301/g, ""))
+      .toBe(targetText);
+  });
+
+  test("in a half with two accents, a tap moves the nearer, or the one tapped first", async ({ page }) => {
+    await open(page);
+    await page.locator("#tone").selectOption("1.D");
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const plain = async () =>
+      (await accents(page, 1, "mediant").allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    await expect(accents(page, 1, "mediant")).toHaveCount(2);
+    const all = (await half.allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const [first, second] = await plain();
+    const a = all.indexOf(first!);
+    const b = all.indexOf(second!, a + 1);
+    // The syllable just before the second accent is nearer it than the first.
+    await half.nth(b - 1).tap();
+    await expect.poll(plain).toEqual([first, all[b - 1]]);
+    // Next to the first accent, the first moves, whatever moved last.
+    await half.nth(a - 1).tap();
+    await expect.poll(plain).toEqual([all[a - 1], all[b - 1]]);
+    // Tapping the second accent first chooses it, even for a syllable nearer the first.
+    await accents(page, 1, "mediant").nth(1).tap();
+    await half.nth(a).tap();
+    await expect.poll(plain).toEqual([all[a - 1], all[a]]);
+  });
+
+  test("a mouse press on an accent does not choose it for a later tap", async ({ page }) => {
+    await open(page);
+    await page.locator("#tone").selectOption("1.D");
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const plain = async () =>
+      (await accents(page, 1, "mediant").allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const all = (await half.allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const [first, second] = await plain();
+    const b = all.indexOf(second!, all.indexOf(first!) + 1);
+    await accents(page, 1, "mediant").first().click();
+    // The syllable after the second accent: the nearer, the second, moves.
+    await half.nth(b + 1).tap();
+    await expect.poll(plain).toEqual([first, all[b + 1]]);
+  });
+});
+
 test("a new tone points the psalm again", async ({ page }) => {
   await open(page);
   await page.locator("#tone").selectOption("1.D");
