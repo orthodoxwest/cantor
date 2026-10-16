@@ -151,6 +151,9 @@ export interface SingOptions {
   gabc?: string;
   /** Where the voice goes; a gain at a comfortable level into the destination when omitted. */
   output?: AudioNode;
+  /** Told when a chunk could not be sung after the start, once the voice is silenced; without
+   * it the error is thrown. One that fails at the start rejects `sing` instead. */
+  onError?: (error: unknown) => void;
 }
 
 /** A part being sung; `stop` silences it. */
@@ -162,12 +165,13 @@ export class Singing {
   readonly end: number;
   private readonly nodes: AudioNode[] = [];
   private part: Part | null;
-  private timer = 0;
+  private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly ctx: AudioContext,
     part: Part,
     output: AudioNode | undefined,
+    onError?: (error: unknown) => void,
   ) {
     this.part = part;
     const rate = ctx.sampleRate;
@@ -194,13 +198,13 @@ export class Singing {
         const buffer = ctx.createBuffer(1, len, rate);
         buffer.copyToChannel(samples, 0);
         const src = ctx.createBufferSource();
+        this.nodes.push(src);
         src.buffer = buffer;
         src.connect(out);
         // A chunk rendered late (the page was busy) plays only what is still to come.
         const when = (frame0 + from) / rate;
         const late = Math.max(0, ctx.currentTime - when);
         src.start(when + late, late);
-        this.nodes.push(src);
         let energy = 0;
         for (const x of samples) energy += x * x;
         this.chunks.push([from, len, Math.sqrt(energy / len)]);
@@ -208,8 +212,24 @@ export class Singing {
       }
       if (next >= total) this.release();
     };
-    fill();
-    if (this.part) this.timer = window.setInterval(fill, (CHUNK * 1000) / 2);
+    // A chunk that cannot be sung (the renderer trapped, the audio graph refused it) silences
+    // what is scheduled and frees the part.
+    try {
+      fill();
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
+    if (!this.part) return;
+    this.timer = setInterval(() => {
+      try {
+        fill();
+      } catch (error) {
+        this.stop();
+        if (!onError) throw error;
+        onError(error);
+      }
+    }, (CHUNK * 1000) / 2);
   }
 
   /** Stops rendering and silences the voice, at once or once what is scheduled has played. */
@@ -218,7 +238,7 @@ export class Singing {
     const nodes = this.nodes.splice(0);
     const silence = () => nodes.forEach((node) => node.disconnect());
     const left = this.end - this.ctx.currentTime;
-    if (letRing && left > 0) window.setTimeout(silence, left * 1000);
+    if (letRing && left > 0) setTimeout(silence, left * 1000);
     else silence();
   }
 
@@ -232,7 +252,7 @@ export class Singing {
 /** Sings `notes` (times in seconds from a moment from now) on the audio context. */
 export async function sing(ctx: AudioContext, notes: readonly SungNote[], options: SingOptions = {}): Promise<Singing> {
   const table = options.table ?? (await neutralTable());
-  return new Singing(ctx, table.part(notes, options.gabc), options.output);
+  return new Singing(ctx, table.part(notes, options.gabc), options.output, options.onError);
 }
 
 let neutral: Promise<VoiceTable> | undefined;

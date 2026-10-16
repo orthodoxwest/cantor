@@ -56,6 +56,7 @@ const guide =
     gabc: SAMPLE,
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
+    onError: (message) => (readout.textContent = message),
   });
 if (!guide) playButton.title = "The guide voice could not load.";
 else {

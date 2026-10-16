@@ -17,7 +17,7 @@ export interface PlayOptions {
   clock?: () => number;
   onNote: (note: TimelineNote | null) => void;
   onStop: () => void;
-  /** Told why nothing could be sung, before onStop. */
+  /** Told why nothing could be sung, or why singing stopped, before onStop. */
   onError?: (message: string) => void;
 }
 
@@ -43,7 +43,13 @@ export class Player {
       const table = await neutralTable();
       if (!current()) return;
       const midi = (semitones: number) => DO + options.transpose + semitones;
-      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC });
+      const onError = (error: unknown) => {
+        console.error("pointer:", error);
+        if (!current()) return;
+        options.onError?.("The voice failed while singing, so it stopped.");
+        this.stop();
+      };
+      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC, onError });
     } catch (error) {
       console.error("pointer:", error);
       if (this.options !== options) return;

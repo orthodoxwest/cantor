@@ -16,6 +16,8 @@ export interface GuideOptions {
   /** Seconds, for the cursor; defaults to the audio context's clock. */
   clock?: () => number;
   onStop?: () => void;
+  /** Told why the guide stopped when the voice could not sing, before onStop. */
+  onError?: (message: string) => void;
 }
 
 export class Guide {
@@ -54,11 +56,10 @@ export class Guide {
         timeline.notes.map((n) => DO + n.semitones),
         table.centre,
       );
-      singing = await sing(ctx, fromTimeline(timeline.notes, PULSE, (s) => DO + s + shift), { table, gabc });
+      const onError = (error: unknown) => this.fail(play, error);
+      singing = await sing(ctx, fromTimeline(timeline.notes, PULSE, (s) => DO + s + shift), { table, gabc, onError });
     } catch (error) {
-      console.error("guide:", error);
-      if (play === this.plays) this.halt(false);
-      return;
+      return this.fail(play, error);
     }
     if (!this.playing || play !== this.plays) return singing.stop();
     this.singing = singing;
@@ -75,6 +76,13 @@ export class Guide {
   }
 
   stop(): void {
+    this.halt(false);
+  }
+
+  private fail(play: number, error: unknown): void {
+    console.error("guide:", error);
+    if (!this.playing || play !== this.plays) return;
+    this.options.onError?.("The guide voice failed, so the guide stopped.");
     this.halt(false);
   }
 
