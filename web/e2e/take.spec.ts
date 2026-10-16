@@ -62,6 +62,7 @@ async function serve(page: Page, sent: Sent, over: Record<string, unknown> = {})
     if (!range) return route.fulfill({ body: sent.wav, contentType: "audio/wav", headers: { "Accept-Ranges": "bytes" } });
     const from = Number(range[1]);
     const to = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (from >= size) return route.fulfill({ status: 416, headers: { "Content-Range": `bytes */${size}` } });
     return route.fulfill({
       status: 206,
       body: sent.wav.subarray(from, to + 1),
@@ -116,6 +117,16 @@ test("a take's link opens it on its score, to play and to comment on note by not
   // The take plays, and the cursor follows it on the score.
   await page.locator("#audio").evaluate((a: HTMLAudioElement) => void a.play());
   await expect(page.locator("#score .cursor")).toBeVisible({ timeout: 5000 });
+  await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
+  // Paused within a note, a redraw keeps its ink marked.
+  const within = (sent.record.judged.ribbon as Array<{ from_s: number; to_s: number }>)[1]!;
+  await page.locator("#audio").evaluate((a: HTMLAudioElement, t) => {
+    a.pause();
+    a.currentTime = t;
+  }, (within.from_s + within.to_s) / 2);
+  await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
+  await page.getByRole("button", { name: "Comment on note 1", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
   await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
 });
 

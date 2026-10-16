@@ -332,7 +332,7 @@ takes.delete("/:id/comments/:comment", async (c) => {
   if (!found) return c.json({ error: "not found" }, 404);
   if (found.user_id !== caller.who.id) return c.json({ error: "forbidden" }, 403);
   const comment = c.req.param("comment");
-  if (!/^[1-9][0-9]{0,15}$/.test(comment)) return c.json({ error: "not found" }, 404);
+  if (!/^[1-9][0-9]{0,14}$/.test(comment)) return c.json({ error: "not found" }, 404);
   const gone = await c.env.DB.prepare("DELETE FROM take_comments WHERE take_id = ? AND id = ?").bind(id, Number(comment)).run();
   return gone.meta.changes ? c.body(null, 204) : c.json({ error: "not found" }, 404);
 });

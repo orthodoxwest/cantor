@@ -116,6 +116,7 @@ function show(take: Take): void {
     });
     times = timed(notes(), take.pulse);
     // The score was laid out afresh: the cursor stands again where the take is.
+    cursor?.relaid();
     follow();
     why.textContent = open === null ? "" : (judged.told[open] ?? "");
   }
