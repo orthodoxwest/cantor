@@ -3,7 +3,13 @@ import type { Timeline } from "neuma";
 
 declare global {
   interface Window {
-    __cantor: { frames: Array<{ midi: number | null }>; timeline: Timeline; visited: number[] };
+    __cantor: {
+      frames: Array<{ midi: number | null }>;
+      timeline: Timeline;
+      visited: number[];
+      chunks: Array<[number, number, number]>;
+      voice: boolean;
+    };
   }
 }
 
@@ -46,4 +52,24 @@ test("listen hears A4 from the microphone", async ({ page }) => {
     })
     .toBe(true);
   await expect(page.locator("#readout")).toHaveText(/^A4 /);
+});
+
+test("a sampled voice sings the guide in chunks", async ({ page }) => {
+  const { makeVoice } = await import("./fixtures/voice.mjs");
+  await page.route(
+    (url) => url.pathname === "/test-voice.cvox",
+    (route) => route.fulfill({ body: makeVoice() }),
+  );
+  const errors: string[] = [];
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  await page.goto("/?test=1&voice=/test-voice.cvox");
+  await expect(page.locator("#score svg")).toBeVisible();
+  expect(await page.evaluate(() => window.__cantor.voice)).toBe(true);
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.chunks.length), { timeout: 10_000 }).toBeGreaterThan(2);
+  const chunks = await page.evaluate(() => window.__cantor.chunks);
+  // Chunks follow one another without gaps, and the voice is heard in them.
+  chunks.forEach(([from], i) => i > 0 && expect(from).toBe(chunks[i - 1]![0] + chunks[i - 1]![1]));
+  expect(chunks.some(([, , rms]) => rms > 0.01)).toBe(true);
+  expect(errors).toEqual([]);
 });

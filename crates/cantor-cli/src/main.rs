@@ -1,5 +1,6 @@
 //! The `cantor` command: offline work on takes. `pitch` tracks a WAV file, `synth` renders a
-//! chant with planted faults, `eval` scores the synthetic suites against the baseline.
+//! chant with planted faults, `sing` renders it with a sampled voice, `diction` lists the
+//! vowels it would sing, `eval` scores the synthetic suites against the baseline.
 
 #![forbid(unsafe_code)]
 
@@ -9,13 +10,15 @@ mod wav;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cantor_core::{Profile, notes_from_gabc, pitch, render, track};
+use cantor_core::{Profile, Voice, notes_from_gabc, part_from_gabc, pitch, render, track, voice};
 
 /// The sample rate synthetic takes are rendered and tracked at.
 const SAMPLE_RATE: f32 = 16_000.0;
 
 const USAGE: &str = "usage: cantor pitch FILE.wav
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
+       cantor sing CHANT.gabc --voice VOICE.cvox --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
+       cantor diction CHANT.gabc
        cantor eval [--write-baseline]
        cantor version";
 
@@ -36,6 +39,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("version") | None => println!("cantor {}", env!("CARGO_PKG_VERSION")),
         Some("pitch") => pitch_cmd(rest)?,
         Some("synth") => synth_cmd(rest)?,
+        Some("sing") => sing_cmd(rest)?,
+        Some("diction") => diction_cmd(rest)?,
         Some("eval") => return eval_cmd(rest),
         Some("-h" | "--help") => println!("{USAGE}"),
         Some(other) => return Err(format!("unknown command: {other}\n{USAGE}")),
@@ -94,6 +99,65 @@ fn synth_cmd(args: &[String]) -> Result<(), String> {
         samples.len() as f32 / SAMPLE_RATE,
         out.display()
     );
+    Ok(())
+}
+
+/// Sings a chant with a sampled voice to a WAV file.
+fn sing_cmd(args: &[String]) -> Result<(), String> {
+    let mut chant = None;
+    let mut voice_path = None;
+    let mut pulse_s = None;
+    let mut transpose = 0.0f32;
+    let mut rate = 48_000.0f32;
+    let mut out = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value"));
+        let number = |v: &String| v.parse::<f32>().map_err(|e| format!("{arg}: {e}"));
+        match arg.as_str() {
+            "--voice" => voice_path = Some(PathBuf::from(value()?)),
+            "--tempo" => pulse_s = Some(number(value()?)?),
+            "--transpose" => transpose = number(value()?)?,
+            "--rate" => rate = number(value()?)?,
+            "-o" | "--out" => out = Some(PathBuf::from(value()?)),
+            _ if chant.is_none() && !arg.starts_with('-') => chant = Some(PathBuf::from(arg)),
+            _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
+        }
+    }
+    let (Some(chant), Some(voice_path), Some(pulse_s), Some(out)) = (chant, voice_path, pulse_s, out) else {
+        return Err(USAGE.into());
+    };
+    if rate.is_nan() || rate <= 0.0 {
+        return Err("--rate must be positive".into());
+    }
+    let gabc = std::fs::read_to_string(&chant).map_err(|e| format!("{}: {e}", chant.display()))?;
+    let bytes = std::fs::read(&voice_path).map_err(|e| format!("{}: {e}", voice_path.display()))?;
+    let voice = Voice::parse(&bytes).map_err(|e| format!("{}: {e}", voice_path.display()))?;
+    let mut part = part_from_gabc(&gabc, pulse_s);
+    for s in &mut part {
+        s.note.midi += transpose;
+    }
+    let samples = voice::sing(&voice, &part, rate, 0, voice::length(&part, rate));
+    wav::write_mono(&out, &samples, rate)?;
+    eprintln!("{} notes, {:.2} s -> {}", part.len(), samples.len() as f32 / rate, out.display());
+    Ok(())
+}
+
+/// Prints each syllable of a chant with the vowel it is sung on, one per line.
+fn diction_cmd(args: &[String]) -> Result<(), String> {
+    let [file] = args else { return Err(USAGE.into()) };
+    let gabc = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+    let part = part_from_gabc(&gabc, 1.0);
+    let lyrics = cantor_core::timeline::lyrics_from_gabc(&gabc, 1.0);
+    let mut out = String::new();
+    for (s, l) in part.iter().zip(&lyrics) {
+        if s.new_syllable {
+            let d = s.diction;
+            let glide = d.glide.map_or(String::new(), |g| format!(" {}", g.symbol()));
+            out.push_str(&format!("{}\t{}\t{}{glide}\n", l.word, l.text, d.vowel.symbol()));
+        }
+    }
+    print!("{out}");
     Ok(())
 }
 
