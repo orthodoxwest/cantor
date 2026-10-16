@@ -6,13 +6,15 @@
 //!
 //! While it is sung, the take's loud frames are not yet known, so the live trace has a floor
 //! of its own, [`LIVE_MARGIN_DB`] above the room: the quietest the take has been, held over
-//! [`LIVE_ROOM_FRAMES`] frames together so that one frame caught at a note's start or end is
-//! not taken for it. Exact zeros (a device's warm-up, a gap) are not the room, but a second
-//! of them is digital silence, which leaves only [`LIVE_MIN_RMS`] under the floor. Until the
-//! room is heard, and when it is louder than [`LIVE_ROOM_MAX`], the floor is the margin over
-//! that. A pitch that shows while the singer is silent misleads, so the live floor can be
-//! stricter than the take's: a quiet note the result hears may not show live, and a singer
-//! under -30 dBFS who starts before the room is heard shows only once it is.
+//! [`LIVE_ROOM_FRAMES`] frames together (about 170 ms) so that one frame caught at a note's
+//! start or end is not taken for it. Exact zeros (a device's warm-up, a stalled stream) are
+//! not the room. A take that opens with a second or more of them comes from a device that
+//! gates its silence to zero, or is synthetic; its floor is [`LIVE_MIN_RMS`] alone for the
+//! rest of the take, as it is after any stretch that quiet. Until the room is heard, and when
+//! it is louder than [`LIVE_ROOM_MAX`], the floor is the margin over that. A pitch that shows
+//! while the singer is silent misleads, so the live floor can be stricter than the take's: a
+//! quiet note the result hears may not show live, and a singer under -30 dBFS who starts
+//! before the room is heard shows only after a pause of 170 ms or so.
 //!
 //! When a guide plays while the microphone listens, some of it reaches the microphone. The
 //! app knows what it played, so its bleed is measured once, over a cue the guide plays alone
@@ -48,7 +50,7 @@ pub const LIVE_MIN_RMS: f32 = 2e-3;
 /// The room is counted no louder than this RMS (-40 dBFS), so the live floor is at most
 /// -30 dBFS: a take begun mid-note has no quiet frames yet, and its voice is not the room.
 pub const LIVE_ROOM_MAX: f32 = 1e-2;
-/// How many frames together the room is the loudest of (150 ms at the usual hop).
+/// How many frames together the room is the loudest of (about 170 ms at the usual hop).
 pub const LIVE_ROOM_FRAMES: usize = 5;
 
 /// The start of the cue window skipped, while the bleed and the room build up.
@@ -172,8 +174,8 @@ pub struct Listening {
     room: f32,
     /// The last frames' RMS since the last exact zero, up to [`LIVE_ROOM_FRAMES`].
     run: Vec<f32>,
-    /// How many frames of exact zeros have just been heard.
-    zeros: usize,
+    /// How many frames of exact zeros the take opened with, until it first made a sound.
+    zeros: Option<usize>,
     /// The frames the last push completed, as the live trace shows them.
     live: Vec<Frame>,
 }
@@ -188,7 +190,7 @@ impl Listening {
             frames: Vec::new(),
             room: LIVE_ROOM_MAX,
             run: Vec::new(),
-            zeros: 0,
+            zeros: Some(0),
             live: Vec::new(),
         }
     }
@@ -228,13 +230,15 @@ impl Listening {
     fn hear_room(&mut self, rms: f32) {
         if rms == 0.0 {
             self.run.clear();
-            self.zeros += 1;
-            if self.zeros * self.hop >= self.sample_rate as usize {
-                self.room = 0.0;
+            if let Some(zeros) = &mut self.zeros {
+                *zeros += 1;
+                if *zeros * self.hop >= self.sample_rate as usize {
+                    self.room = 0.0;
+                }
             }
             return;
         }
-        self.zeros = 0;
+        self.zeros = None;
         if self.run.len() == LIVE_ROOM_FRAMES {
             self.run.remove(0);
         }
@@ -541,6 +545,20 @@ mod tests {
             take.extend(hum(220.0, 4e-3, 0.0, 1.0, sr, &mut state));
             let (shown, _) = live(&take, sr);
             assert!(shown.iter().filter(|f| f.t > 1.3).all(|f| f.midi.is_some()), "{sr}");
+        }
+    }
+
+    #[test]
+    fn a_stalled_stream_does_not_open_the_floor() {
+        // The worker fills a stall with zeros; a long one mid-take is not digital silence.
+        for sr in RATES {
+            let mut state = 9;
+            let mut take = hum(110.0, 0.005, 1e-4, 3.5, sr, &mut state);
+            take[sr as usize..(2.3 * sr) as usize].fill(0.0);
+            let (shown, tracked) = live(&take, sr);
+            let after = |f: &&Frame| f.t > 2.4;
+            assert!(voiced(tracked.iter().filter(after)) > 20, "{sr}");
+            assert_eq!(voiced(shown.iter().filter(after)), 0, "{sr}");
         }
     }
 
