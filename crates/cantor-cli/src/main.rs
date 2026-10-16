@@ -127,8 +127,8 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
     let (Some(chant), Some(pulse_s), Some(out)) = (chant, pulse_s, out) else {
         return Err(USAGE.into());
     };
-    if rate.is_nan() || rate <= 0.0 {
-        return Err("--rate must be positive".into());
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err("--rate must be a positive number".into());
     }
     let gabc = std::fs::read_to_string(&chant).map_err(|e| format!("{}: {e}", chant.display()))?;
     let voice = match voice_path {

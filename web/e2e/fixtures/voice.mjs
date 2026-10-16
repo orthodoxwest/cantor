@@ -31,15 +31,17 @@ export function makeVoice() {
     at = unit.writeUInt32LE(marks.length, at);
     at = unit.writeUInt32LE(n, at);
     for (const m of marks) at = unit.writeUInt32LE(m, at);
+    const wave = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      let v = 0;
       for (let k = 1; k * f0 < RATE / 2; k++) {
         let amp = 1 / k;
         for (const fc of formants) amp /= Math.sqrt(1 + ((k * f0 - fc) / 60) ** 2);
-        v += amp * Math.cos((2 * Math.PI * k * f0 * i) / RATE);
+        wave[i] += amp * Math.cos((2 * Math.PI * k * f0 * i) / RATE);
       }
-      at = unit.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(v * 8000))), at);
     }
+    // Peak at half scale.
+    const peak = wave.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    for (const v of wave) at = unit.writeInt16LE(Math.round((v / peak) * 16384), at);
     parts.push(unit);
   }
   return Buffer.concat(parts);

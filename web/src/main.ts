@@ -18,26 +18,6 @@ const voiceUrl = params.get("voice");
 await init();
 const score = new Score(byId("score"), new Chant(SAMPLE));
 const cursor = new Cursor(score);
-const recorded = voiceUrl
-  ? await Voice.load(voiceUrl).catch((error: unknown) => {
-      console.error("guide voice:", error);
-      return undefined;
-    })
-  : undefined;
-const voice = recorded ?? (await Voice.neutral());
-
-const playButton = byId<HTMLButtonElement>("play");
-const guide = new Guide(score, cursor, {
-  voice,
-  gabc: SAMPLE,
-  clock: test ? () => performance.now() / 1000 : undefined,
-  onStop: () => playButton.setAttribute("aria-pressed", "false"),
-});
-playButton.addEventListener("click", () => {
-  if (guide.playing) return guide.stop();
-  playButton.setAttribute("aria-pressed", "true");
-  void guide.play();
-});
 
 const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
@@ -60,12 +40,38 @@ listenButton.addEventListener("click", async () => {
   }
 });
 
+// Play waits for the voice; without one the guide stays off and listening still works.
+const playButton = byId<HTMLButtonElement>("play");
+playButton.disabled = true;
+const failed = (error: unknown) => {
+  console.error("guide voice:", error);
+  return undefined;
+};
+const recorded = voiceUrl ? await Voice.load(voiceUrl).catch(failed) : undefined;
+const voice = recorded ?? (await Voice.neutral().catch(failed));
+const guide =
+  voice &&
+  new Guide(score, cursor, {
+    voice,
+    gabc: SAMPLE,
+    clock: test ? () => performance.now() / 1000 : undefined,
+    onStop: () => playButton.setAttribute("aria-pressed", "false"),
+  });
+if (guide) {
+  playButton.disabled = false;
+  playButton.addEventListener("click", () => {
+    if (guide.playing) return guide.stop();
+    playButton.setAttribute("aria-pressed", "true");
+    void guide.play();
+  });
+}
+
 if (test) {
   (window as Window & { __cantor?: unknown }).__cantor = {
     frames: listener.frames,
     timeline: score.timeline,
-    visited: guide.visited,
-    chunks: guide.chunks,
-    voice: recorded ? "recorded" : "neutral",
+    visited: guide?.visited ?? [],
+    chunks: guide?.chunks ?? [],
+    voice: recorded ? "recorded" : voice ? "neutral" : "none",
   };
 }

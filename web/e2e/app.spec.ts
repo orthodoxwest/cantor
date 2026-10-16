@@ -8,7 +8,7 @@ declare global {
       timeline: Timeline;
       visited: number[];
       chunks: Array<[number, number, number]>;
-      voice: "neutral" | "recorded";
+      voice: "neutral" | "recorded" | "none";
     };
   }
 }
@@ -78,3 +78,29 @@ for (const [voice, query] of [
     expect(errors).toEqual([]);
   });
 }
+
+test("a voice file with nothing to sing falls back to the neutral vowel", async ({ page }) => {
+  const empty = Buffer.alloc(12);
+  empty.write("CVOX", 0);
+  empty.writeUInt16LE(1, 4);
+  empty.writeUInt32LE(24000, 8);
+  await page.route(
+    (url) => url.pathname === "/empty.cvox",
+    (route) => route.fulfill({ body: empty }),
+  );
+  await page.goto("/?test=1&voice=/empty.cvox");
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  expect(await page.evaluate(() => window.__cantor.voice)).toBe("neutral");
+});
+
+test("without the renderer the guide is off and listening still works", async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === "/cantor.wasm",
+    (route) => route.fulfill({ status: 404 }),
+  );
+  await open(page);
+  expect(await page.evaluate(() => window.__cantor.voice)).toBe("none");
+  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.locator("#readout")).toHaveText(/^A4 /, { timeout: 15_000 });
+});

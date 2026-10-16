@@ -56,9 +56,12 @@ export class Voice {
     return new Voice(wasm, wasm.cantor_voice_neutral());
   }
 
-  /** The voice file at `voiceUrl`. */
-  static async load(voiceUrl: string, wasmUrl = WASM_URL): Promise<Voice> {
-    const [wasm, file] = await Promise.all([instantiate(fetchBytes(wasmUrl)), fetchBytes(voiceUrl)]);
+  /** The voice file at `voiceUrl`, given up on after `timeoutMs`. */
+  static async load(voiceUrl: string, wasmUrl = WASM_URL, timeoutMs = 20_000): Promise<Voice> {
+    const [wasm, file] = await Promise.all([
+      instantiate(fetchBytes(wasmUrl)),
+      fetchBytes(voiceUrl, AbortSignal.timeout(timeoutMs)),
+    ]);
     write(wasm, new Uint8Array(file));
     const voice = wasm.cantor_voice_new();
     if (!voice) throw new Error(`${voiceUrl}: not a voice file`);
@@ -106,8 +109,8 @@ export class Part {
   }
 }
 
-async function fetchBytes(url: string): Promise<ArrayBuffer> {
-  const r = await fetch(url);
+async function fetchBytes(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const r = await fetch(url, { signal });
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   return r.arrayBuffer();
 }

@@ -36,6 +36,13 @@ const GLIDE_S: f64 = 0.05;
 const DIP_S: f64 = 0.07;
 /// The longest closing glide of a diphthong.
 const DIPHTHONG_S: f64 = 0.12;
+/// The pitches a voice sings (MIDI): outside them a note is left silent.
+const SINGABLE: std::ops::RangeInclusive<f32> = 12.0..=108.0;
+/// The latest a note may start or the longest it may last, in seconds (an hour): beyond
+/// that a part is not a chant, and is left silent rather than rendered for ever.
+const LONGEST_S: f32 = 3600.0;
+/// Below this RMS a unit is taken as silence rather than amplified.
+const SILENT_RMS: f32 = 1e-3;
 /// The neutral vowel, a schwa: formant centres and bandwidths in hertz.
 const NEUTRAL_FORMANTS: [(f64, f64); 4] = [(500.0, 80.0), (1500.0, 100.0), (2500.0, 140.0), (3500.0, 200.0)];
 /// The neutral voice's pitch: middle C, the guide's DO.
@@ -73,6 +80,10 @@ pub enum VoiceError {
     Version(u16),
     /// A unit, by index, breaks a rule: why.
     Unit(usize, &'static str),
+    /// A voice file has no vowel this code sings.
+    NoVowels,
+    /// More units than a voice file holds.
+    TooManyUnits,
     /// The sample rate is not positive.
     SampleRate,
 }
@@ -85,6 +96,8 @@ impl fmt::Display for VoiceError {
             VoiceError::Version(v) => write!(f, "voice file version {v} is not supported"),
             VoiceError::Unit(i, why) => write!(f, "voice unit {i}: {why}"),
             VoiceError::SampleRate => write!(f, "voice sample rate must be positive"),
+            VoiceError::NoVowels => write!(f, "voice file has no vowel to sing"),
+            VoiceError::TooManyUnits => write!(f, "a voice holds at most 65535 units"),
         }
     }
 }
@@ -147,6 +160,9 @@ impl Voice {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return Err(VoiceError::SampleRate);
         }
+        if units.len() > u16::MAX as usize {
+            return Err(VoiceError::TooManyUnits);
+        }
         let mut gains = Vec::with_capacity(units.len());
         for (i, u) in units.iter().enumerate() {
             if !u.midi.is_finite() {
@@ -170,7 +186,7 @@ impl Voice {
             let (a, b) = (u.marks[0] as usize, u.marks[u.marks.len() - 1] as usize);
             let span = &u.samples[a..=b];
             let rms = (span.iter().map(|x| x * x).sum::<f32>() / span.len() as f32).sqrt();
-            gains.push(if rms > 1e-6 { UNIT_RMS / rms } else { 0.0 });
+            gains.push(if rms > SILENT_RMS { UNIT_RMS / rms } else { 0.0 });
         }
         Ok(Voice { sample_rate, units, gains })
     }
@@ -191,7 +207,7 @@ impl Voice {
         m.get(m.len() / 2).copied()
     }
 
-    /// Reads a voice file.
+    /// Reads a voice file; one without a vowel this code sings is refused.
     pub fn parse(bytes: &[u8]) -> Result<Voice, VoiceError> {
         let mut r = Reader { bytes, at: 0 };
         if r.take(4)? != MAGIC {
@@ -233,6 +249,9 @@ impl Voice {
                     samples,
                 });
             }
+        }
+        if units.is_empty() {
+            return Err(VoiceError::NoVowels);
         }
         Voice::new(sample_rate, units)
     }
@@ -313,12 +332,22 @@ impl<'a> Reader<'a> {
 /// The number of samples a whole part lasts at `sample_rate`, release and the last grain
 /// included.
 pub fn length(part: &[Sung], sample_rate: f32) -> usize {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 {
+        return 0;
+    }
     let end = part
         .iter()
-        .filter(|s| s.note.dur_s > 0.0 && s.note.start_s.is_finite())
+        .filter(|s| singable(s))
         .map(|s| s.note.end_s() as f64 + RELEASE_S + MAX_PERIOD_S)
         .fold(0.0, f64::max);
     (end * sample_rate as f64).ceil() as usize
+}
+
+/// Whether a note is sung at all: a singable pitch, a length, and a start and length short
+/// of an hour.
+fn singable(s: &Sung) -> bool {
+    let n = &s.note;
+    SINGABLE.contains(&n.midi) && n.dur_s > 0.0 && n.dur_s <= LONGEST_S && n.start_s.abs() <= LONGEST_S
 }
 
 /// Sings `part` with `voice` at `sample_rate`, returning `len` samples starting at sample
@@ -326,13 +355,10 @@ pub fn length(part: &[Sung], sample_rate: f32) -> usize {
 /// chunks laid end to end play as one. The same inputs always give the same samples.
 pub fn sing(voice: &Voice, part: &[Sung], sample_rate: f32, from: usize, len: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
-    if voice.units.is_empty() || len == 0 || sample_rate.is_nan() || sample_rate <= 0.0 {
+    if voice.units.is_empty() || len == 0 || !sample_rate.is_finite() || sample_rate <= 0.0 {
         return out;
     }
-    let mut notes: Vec<&Sung> = part
-        .iter()
-        .filter(|s| s.note.dur_s > 0.0 && s.note.start_s.is_finite() && s.note.midi.is_finite())
-        .collect();
+    let mut notes: Vec<&Sung> = part.iter().filter(|s| singable(s)).collect();
     notes.sort_by(|a, b| a.note.start_s.total_cmp(&b.note.start_s));
     let sr_out = sample_rate as f64;
     let window = (from as f64 / sr_out, (from + len) as f64 / sr_out);
@@ -707,6 +733,9 @@ mod tests {
             samples: vec![0.0; 10],
         };
         assert!(matches!(Voice::new(SR, vec![unit]), Err(VoiceError::Unit(0, _))));
+        let mut empty = bytes[..12].to_vec();
+        empty[6..8].copy_from_slice(&0u16.to_le_bytes());
+        assert_eq!(Voice::parse(&empty), Err(VoiceError::NoVowels));
     }
 
     #[test]
@@ -718,6 +747,9 @@ mod tests {
         bytes[at..at + 2].copy_from_slice(b"ZZ");
         let back = Voice::parse(&bytes).expect("parses");
         assert_eq!(back.units.len(), 1);
+        let first = bytes.windows(2).position(|w| w == b"AA").expect("name");
+        bytes[first..first + 2].copy_from_slice(b"ZZ");
+        assert_eq!(Voice::parse(&bytes), Err(VoiceError::NoVowels));
         assert_eq!(v.unit_for(Vowel::Ay, 55.0), Some(0), "AY stands in with AA");
         assert_eq!(v.unit_for(Vowel::Ih, 55.0), Some(1), "IH stands in with IY");
         assert_eq!(v.centre(), Some(55.0));
@@ -835,5 +867,18 @@ mod tests {
         assert!(sing(&empty, &part, SR, 0, 1000).iter().all(|&s| s == 0.0));
         assert!(sing(&test_voice(), &[], SR, 0, 1000).iter().all(|&s| s == 0.0));
         assert_eq!(length(&[], SR), 0);
+    }
+
+    #[test]
+    fn unsingable_notes_are_silent_and_quick() {
+        let v = test_voice();
+        for (midi, start_s, dur_s) in [(2000.0, 0.0, 1.0), (-500.0, 0.0, 1.0), (55.0, -1e30, 2e30), (55.0, 0.0, 1e7)] {
+            let part = [sung(midi, start_s, dur_s, Vowel::Aa, true)];
+            assert_eq!(length(&part, SR), 0, "{midi} {start_s} {dur_s}");
+            assert!(sing(&v, &part, SR, 0, 1000).iter().all(|&s| s == 0.0));
+        }
+        let part = [sung(55.0, 0.0, 1.0, Vowel::Aa, true)];
+        assert_eq!(length(&part, f32::INFINITY), 0);
+        assert!(sing(&v, &part, f32::INFINITY, 0, 8).iter().all(|&s| s == 0.0));
     }
 }

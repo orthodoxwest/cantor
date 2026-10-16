@@ -34,6 +34,8 @@ export class Guide {
   private frame = 0;
   private part: Part | null = null;
   private timer = 0;
+  /** When, on the audio clock, the last chunk ends. */
+  private end = 0;
 
   constructor(
     private readonly score: Score,
@@ -51,21 +53,22 @@ export class Guide {
     master.gain.value = LEVEL;
     master.connect(ctx.destination);
     this.nodes = [master];
-    // On a sample boundary, so chunks laid end to end meet exactly.
-    const t0 = Math.ceil((ctx.currentTime + 0.05) * ctx.sampleRate) / ctx.sampleRate;
-    this.sing(ctx, master, t0);
+    // Chunks start on whole sample frames counted from here, so they meet exactly.
+    const frame0 = Math.ceil((ctx.currentTime + 0.05) * ctx.sampleRate);
+    this.sing(ctx, master, frame0);
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const origin = clock() + 0.05;
     const tick = () => {
       if (!this.playing) return;
-      if (!this.follow((clock() - origin) / PULSE)) return this.stop();
+      // At the end the voice is left to die away.
+      if (!this.follow((clock() - origin) / PULSE)) return this.halt(Math.max(0, this.end - ctx.currentTime));
       this.frame = requestAnimationFrame(tick);
     };
     tick();
   }
 
   /** Renders the part in chunks as the clock nears them, each a buffer started on time. */
-  private sing(ctx: AudioContext, master: GainNode, t0: number): void {
+  private sing(ctx: AudioContext, master: GainNode, frame0: number): void {
     const { timeline } = this.score;
     const { voice, gabc } = this.options;
     const shift = octaveShift(
@@ -77,11 +80,12 @@ export class Guide {
     this.chunks.length = 0;
     const rate = ctx.sampleRate;
     const total = part.length(rate);
+    this.end = (frame0 + total) / rate;
     const size = Math.round(CHUNK * rate);
     let next = 0;
     const fill = () => {
       if (!this.playing || this.part !== part) return;
-      const horizon = (ctx.currentTime - t0 + AHEAD) * rate;
+      const horizon = ctx.currentTime * rate - frame0 + AHEAD * rate;
       for (const [from, len] of chunksDue(next, horizon, size, total)) {
         const samples = part.sing(rate, from, len);
         const buffer = ctx.createBuffer(1, len, rate);
@@ -89,7 +93,10 @@ export class Guide {
         const src = ctx.createBufferSource();
         src.buffer = buffer;
         src.connect(master);
-        src.start(t0 + from / rate);
+        // A chunk rendered late (the page was busy) plays only what is still to come.
+        const when = (frame0 + from) / rate;
+        const late = Math.max(0, ctx.currentTime - when);
+        src.start(when + late, late);
         this.nodes.push(src);
         let energy = 0;
         for (const x of samples) energy += x * x;
@@ -102,14 +109,22 @@ export class Guide {
   }
 
   stop(): void {
+    this.halt(0);
+  }
+
+  /** Stops, leaving the audio `linger` seconds to finish. */
+  private halt(linger: number): void {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.frame);
     clearInterval(this.timer);
     this.part?.free();
     this.part = null;
-    for (const node of this.nodes) node.disconnect();
+    const nodes = this.nodes;
     this.nodes = [];
+    const silence = () => nodes.forEach((node) => node.disconnect());
+    if (linger > 0) window.setTimeout(silence, linger * 1000);
+    else silence();
     this.cursor.hide();
     this.options.onStop?.();
   }
