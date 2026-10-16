@@ -2,7 +2,8 @@
 // its target at the centre, and the pitch heard over the note's sustained part. Each band is
 // measured in cents from the note itself, as the core's judge placed it in the singer's key,
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note when the singer taps it.
+// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. It draws
+// no verdict: no zone of what counts as in tune, no colours.
 import type { TimelineNote } from "neuma";
 
 /** One note's band, as cantor-core's `Band` serializes. */
@@ -14,9 +15,9 @@ export interface Band {
   trace: Array<[number, number]>;
 }
 
-/** A take judged, as the ear's `Judged` serializes: what the ribbon reads of it. */
+/** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
 export interface Judged {
-  verdict: { outcome: string; key_cents: number | null; marks: Array<{ kind: string; first: number; last: number; cents: number | null }> };
+  verdict: { key_cents: number | null };
   ribbon: Band[];
 }
 
@@ -24,12 +25,12 @@ export interface Judged {
 export const STRIP = 44;
 /** Cents from a band's centre to its edge; a trace beyond it is drawn at the edge. */
 export const RANGE_CENTS = 200;
-/** Where a note counts as in tune, drawn as a pale zone about the centre. */
-export const IN_TUNE_CENTS = 50;
 /** The strip's margin above and below its bands. */
 const PAD = 6;
 /** The widest a band is drawn either side of its note, for a note alone on its line. */
 const LONE = 14;
+/** The narrowest a band is drawn, centred on its note (notes stacked in a neume overlap). */
+export const MIN_WIDTH = 8;
 
 /** How a band sits on the page: its line, and its left and right edges. */
 interface Place {
@@ -45,7 +46,12 @@ export function places(notes: readonly TimelineNote[]): Place[] {
     const next = notes[i + 1];
     const left = prev && prev.line === n.line ? (prev.cx + n.cx) / 2 : n.cx - LONE;
     const right = next && next.line === n.line ? (n.cx + next.cx) / 2 : n.cx + LONE;
-    return { line: n.line, left: Math.max(left, n.cx - 2 * LONE), right: Math.min(right, n.cx + 2 * LONE) };
+    const place = { line: n.line, left: Math.max(left, n.cx - 2 * LONE), right: Math.min(right, n.cx + 2 * LONE) };
+    if (place.right - place.left < MIN_WIDTH) {
+      place.left = n.cx - MIN_WIDTH / 2;
+      place.right = n.cx + MIN_WIDTH / 2;
+    }
+    return place;
   });
 }
 
@@ -58,8 +64,9 @@ export function yOf(cents: number, top: number): number {
 
 const f = (x: number) => x.toFixed(1);
 
-/** The strips' SVG, each line's at `stripTop(line)`; cents are measured from `base`, a
- * note's own value when the singer re-based on it, else 0 (the key). */
+/** The strips' SVG, each line's at `stripTop(line)`. Every band's centre is its note in the
+ * key; the traces are drawn `base` cents lower, a note's own value when the singer re-based on
+ * it (so that note's trace sits on its centre), else 0. */
 export function drawRibbon(notes: readonly TimelineNote[], bands: readonly Band[], stripTop: (line: number) => number, base = 0): string {
   const at = places(notes);
   const out: string[] = [];
@@ -68,16 +75,17 @@ export function drawRibbon(notes: readonly TimelineNote[], bands: readonly Band[
     if (!p) continue;
     const top = stripTop(p.line);
     const w = p.right - p.left;
-    const zone = yOf(-IN_TUNE_CENTS - base, top) - yOf(IN_TUNE_CENTS - base, top);
-    const centre = yOf(-base, top);
+    const centre = yOf(0, top);
     const heard = band.cents !== null;
-    const attrs = `data-band="${band.index}" data-cents="${heard ? band.cents!.toFixed(1) : ""}"`;
+    const attrs = heard
+      ? `data-band="${band.index}" data-cents="${band.cents!.toFixed(1)}" tabindex="0" role="button" aria-label="Measure from note ${band.index + 1}"`
+      : `data-band="${band.index}" data-cents=""`;
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
-    out.push(`<rect class="band-zone" x="${f(p.left + 1)}" y="${f(yOf(IN_TUNE_CENTS - base, top))}" width="${f(w - 2)}" height="${f(zone)}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
     if (band.trace.length > 0 && band.to_s > band.from_s) {
-      const x = (t: number) => p.left + 2 + ((t - band.from_s) / (band.to_s - band.from_s)) * (w - 4);
+      const inner = Math.max(w - 4, 0);
+      const x = (t: number) => p.left + (w - inner) / 2 + ((t - band.from_s) / (band.to_s - band.from_s)) * inner;
       const points = band.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - base, top))}`).join(" ");
       out.push(`<polyline class="band-trace" points="${points}"/>`);
     }

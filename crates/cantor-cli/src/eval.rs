@@ -1048,8 +1048,32 @@ mod tests {
                 assert!(heard <= 0.02, "{at}: heard {heard} apart");
                 assert!(key <= 10.0, "{at}: key {key} cents apart");
                 assert_eq!(marks(&got.verdict), marks(&want.verdict), "{at}");
+                // Note by note, the ribbon the page draws is the eval's.
+                let mut apart = 0;
+                for (g, w) in got.ribbon.iter().zip(&want.ribbon) {
+                    match (g.cents, w.cents) {
+                        (Some(a), Some(b)) => {
+                            assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} {a} vs {b}", g.index);
+                            let (a, b) = (trace_median(&g.trace), trace_median(&w.trace));
+                            assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} trace {a} vs {b}", g.index);
+                        }
+                        (None, None) => {}
+                        _ => apart += 1,
+                    }
+                }
+                assert!(apart <= want.ribbon.len().div_ceil(50), "{at}: {apart} notes heard by one ear only");
             }
         }
+    }
+
+    /// How far a note's band may be from the eval's wherever the frames fall, in cents; the
+    /// browser test (`ear.spec.ts`) allows a little more for the browser's capture.
+    const BAND_CENTS: f32 = 20.0;
+
+    fn trace_median(trace: &[(f32, f32)]) -> f32 {
+        let mut values: Vec<f32> = trace.iter().map(|p| p.1).collect();
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
     }
 
     #[test]

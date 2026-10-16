@@ -47,7 +47,7 @@ function drawResult(): void {
   score.showStrips((timeline, top) => drawRibbon(timeline.notes, judged.ribbon, top, from));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
   baseLine.hidden = base === null;
-  if (base !== null) baseText.textContent = `Measured from note ${base + 1}.`;
+  if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
 }
 
 /** Shows a judged take, or clears it. */
@@ -58,12 +58,20 @@ function showResult(judged: Judged | null): void {
 }
 
 // Tapping a heard note's band re-bases the ribbon on it; tapping it again goes back.
-score.host.addEventListener("click", (e) => {
-  const band = (e.target as Element).closest<SVGGElement>("[data-band]");
+function rebase(target: EventTarget | null, keyboard: boolean): void {
+  const band = (target as Element | null)?.closest<SVGGElement>("[data-band]");
   if (!band || !shown || band.classList.contains("unheard")) return;
   const index = Number(band.dataset.band);
   base = base === index ? null : index;
   drawResult();
+  // The strips were drawn again; keep a keyboard's place on the band.
+  if (keyboard) score.host.querySelector<SVGGElement>(`[data-band="${index}"]`)?.focus();
+}
+score.host.addEventListener("click", (e) => rebase(e.target, false));
+score.host.addEventListener("keydown", (e) => {
+  if ((e.key !== "Enter" && e.key !== " ") || !(e.target as Element).closest("[data-band]")) return;
+  e.preventDefault();
+  rebase(e.target, true);
 });
 byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
   base = null;
@@ -149,7 +157,6 @@ if (test) {
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
     heard: () => listener.heard,
-    judge: (gabc: string, pulse: number, offset: number) => listener.judge(gabc, pulse, offset),
     // Shows the last take judged against `gabc` (put on the page if it is not there), as
     // the after-take view will once a take is timed against the chant; returns the JSON.
     show: async (gabc: string, pulse: number, offset: number) => {

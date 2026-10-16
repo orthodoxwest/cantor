@@ -30,6 +30,7 @@ export class Score {
 
   /** Shows another chant. */
   setChant(chant: Chant): void {
+    this.view.free();
     this.chant.free();
     this.chant = chant;
     this.view = chant.view({ svg: "lines" });
@@ -61,10 +62,17 @@ export class Score {
     return { top: box.top + shift, bottom: box.bottom + shift, staff: box.staff + shift, baseline: box.baseline + shift };
   }
 
+  /** Where line `i`'s strip starts: under the line, and under the page's foot (an initial's
+   * descent) for the last. */
+  private stripTop(i: number): number {
+    const bottom = this.line(i).bottom;
+    return i === this.timeline.lines.length - 1 ? Math.max(bottom, this.page.height + i * STRIP) : bottom;
+  }
+
   private render(): void {
     const { head, defs, rest, lines } = this.page.svgParts;
     const gap = this.strips ? STRIP : 0;
-    const height = (this.timeline.lines.at(-1)?.bottom ?? 0) + gap * lines.length;
+    const height = this.page.height + gap * lines.length;
     const svg = [
       head
         .replace(/ height="[\d.]+"/, ` height="${height.toFixed(2)}"`)
@@ -72,7 +80,7 @@ export class Score {
       `<defs>${defs}</defs>`,
       rest,
       ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + i * gap).toFixed(2)})">${l.svg}</g>`),
-      this.strips ? `<g class="ribbon">${this.strips(this.timeline, (i) => this.line(i).bottom)}</g>` : "",
+      this.strips ? `<g class="ribbon">${this.strips(this.timeline, (i) => this.stripTop(i))}</g>` : "",
       "</svg>",
     ].join("");
     const old = this.host.querySelector("svg");

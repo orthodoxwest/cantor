@@ -4,18 +4,18 @@
 //! carries the note's value as the judge read it and the pitch heard over its sustained
 //! part, smoothed; the page draws them and adds nothing.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::judge::Verdict;
 use crate::pitch::Frame;
-use crate::score::{Report, SKIP_HEAD, SKIP_TAIL, fold};
+use crate::score::{Report, fold, sustained};
 use crate::synth::Note;
 
 /// How many frames each point of a band's trace is the median of.
 pub const SMOOTH_FRAMES: usize = 3;
 
 /// One note's band.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Band {
     /// The note's index in the expected notes.
     pub index: usize,
@@ -37,8 +37,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
         .iter()
         .enumerate()
         .map(|(index, note)| {
-            let from_s = note.start_s + SKIP_HEAD * note.dur_s;
-            let to_s = note.start_s + (1.0 - SKIP_TAIL) * note.dur_s;
+            let (from_s, to_s) = sustained(note);
             let cents = verdict.relative.get(index).copied().flatten();
             // The judge's reference for this note: its pitch, the key and the drift line there.
             let reference = match (cents, verdict.key_cents, report.notes.get(index).and_then(|r| r.cents)) {
@@ -65,7 +64,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
 }
 
 /// Each point the median of it and its neighbours, [`SMOOTH_FRAMES`] in all (fewer at the
-/// ends).
+/// ends, where an even count takes the mean of the middle two).
 fn smooth(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
     let half = SMOOTH_FRAMES / 2;
     (0..points.len())
@@ -73,7 +72,13 @@ fn smooth(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
             let window = &points[i.saturating_sub(half)..(i + half + 1).min(points.len())];
             let mut values: Vec<f32> = window.iter().map(|p| p.1).collect();
             values.sort_by(f32::total_cmp);
-            (points[i].0, values[values.len() / 2])
+            let mid = values.len() / 2;
+            let median = if values.len().is_multiple_of(2) {
+                (values[mid - 1] + values[mid]) / 2.0
+            } else {
+                values[mid]
+            };
+            (points[i].0, median)
         })
         .collect()
 }
@@ -127,6 +132,22 @@ mod tests {
                     .all(|&(t, c)| t >= band.from_s && t < band.to_s && (c - want).abs() < 1.0),
                 "{band:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_band_follows_the_drift_line() {
+        // A tone sinking 20 cents a note, and the fifth note a further 200 cents flat.
+        let notes: Vec<Note> = (0..10).map(|i| Note::new(60.0 + (i % 3) as f32, i as f32, 1.0)).collect();
+        let sung: Vec<f32> = (0..10).map(|i| -20.0 * i as f32 - if i == 4 { 200.0 } else { 0.0 }).collect();
+        let fr = frames(&notes, &sung);
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        assert!(verdict.drift_cents < -150.0, "{}", verdict.drift_cents);
+        for band in ribbon(&notes, &fr, &report, &verdict) {
+            let want = if band.index == 4 { -200.0 } else { 0.0 };
+            assert!((band.cents.unwrap() - want).abs() < 2.0, "{band:?}");
+            assert!(band.trace.iter().all(|&(_, c)| (c - want).abs() < 2.0), "{band:?}");
         }
     }
 

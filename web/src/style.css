@@ -56,10 +56,15 @@ main {
 }
 .ribbon .band-hit {
   fill: transparent;
+}
+.ribbon .band:not(.unheard) {
   cursor: pointer;
 }
-.ribbon .band-zone {
-  fill: color-mix(in srgb, currentColor 7%, transparent);
+.ribbon .band:focus {
+  outline: none;
+}
+.ribbon .band:focus-visible .band-hit {
+  fill: color-mix(in srgb, currentColor 10%, transparent);
 }
 .ribbon .band-target {
   stroke: color-mix(in srgb, currentColor 35%, transparent);
@@ -70,7 +75,7 @@ main {
 }
 .ribbon .band-trace {
   fill: none;
-  stroke: #1f5fa8;
+  stroke: light-dark(#1f5fa8, #8ab8f0);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;

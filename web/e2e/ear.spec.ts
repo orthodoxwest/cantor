@@ -12,8 +12,10 @@ import { readTake, TAKE_WAV, takeSeconds } from "./fixtures/take.mjs";
 const HEARD_TOLERANCE = 0.02;
 /** And the key, in cents. */
 const KEY_TOLERANCE_CENTS = 10;
-/** And each note's value on the ribbon, in cents from the key, where both heard it. */
-const BAND_TOLERANCE_CENTS = 20;
+/** And each note on the ribbon, in cents from the key, where both heard it: its value and the
+ * middle of its trace. Where the frames fall moves a short note's median by up to 17 cents
+ * (the cli test holds 20 at quarter hops), and the browser's capture adds a little more. */
+const BAND_TOLERANCE_CENTS = 25;
 
 test.use({
   launchOptions: {
@@ -63,24 +65,37 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
     seconds: heard!.seconds,
   };
   console.log(`ear: ${JSON.stringify(summary)}`);
-  // The ribbon the page draws is the core's, note for note, and agrees with the eval's.
+  // The ribbon the page draws is the core's, note for note, and agrees with the eval's: each
+  // band's value, and the middle of the trace drawn for it.
+  type Band = { cents: number | null; trace: Array<[number, number]> };
   const drawn = await page.locator("[data-band]").evaluateAll((els) =>
     els.map((el) => {
       const cents = (el as SVGGElement).dataset.cents;
-      return cents ? Number(cents) : null;
+      return { cents: cents ? Number(cents) : null, traced: el.querySelector("polyline.band-trace") !== null };
     }),
   );
-  const wanted: Array<number | null> = want.ribbon.map((b: { cents: number | null }) => b.cents);
-  expect(drawn).toHaveLength(wanted.length);
-  expect(drawn).toEqual(got.ribbon.map((b: { cents: number | null }) => (b.cents === null ? null : Number(b.cents.toFixed(1)))));
-  const both = wanted.flatMap((w, i) => (w !== null && drawn[i] !== null ? [Math.abs(w - drawn[i]!)] : []));
-  const apart = wanted.filter((w, i) => (w === null) !== (drawn[i] === null)).length;
-  console.log(`ribbon: ${JSON.stringify({ notes: wanted.length, both: both.length, apart, worst: Math.max(...both).toFixed(1) })}`);
+  const median = (trace: Array<[number, number]>) => trace.map((p) => p[1]).sort((a, b) => a - b)[trace.length >> 1]!;
+  const wanted: Band[] = want.ribbon;
+  const ours: Band[] = got.ribbon;
+  const both = wanted.flatMap((w, i) => {
+    const g = ours[i]!;
+    return w.cents !== null && g.cents !== null
+      ? [Math.max(Math.abs(w.cents - g.cents), Math.abs(median(w.trace) - median(g.trace)))]
+      : [];
+  });
+  const apart = wanted.filter((w, i) => (w.cents === null) !== (ours[i]!.cents === null)).length;
+  const ribbon = { notes: wanted.length, both: both.length, apart, worst: Math.max(...both).toFixed(1) };
+  console.log(`ribbon: ${JSON.stringify(ribbon)}`);
+  await info.attach("ear.json", { body: JSON.stringify({ ...summary, ribbon }, null, 2), contentType: "application/json" });
+  await info.attach("page.png", { body: await page.screenshot(), contentType: "image/png" });
+  expect(drawn).toEqual(
+    ours.map((b) => ({ cents: b.cents === null ? null : Number(b.cents.toFixed(1)), traced: b.cents !== null })),
+  );
+  expect(ours).toHaveLength(wanted.length);
+  expect(both.length).toBeGreaterThan(0);
   expect(apart).toBeLessThanOrEqual(Math.ceil(HEARD_TOLERANCE * wanted.length));
   expect(Math.max(...both)).toBeLessThanOrEqual(BAND_TOLERANCE_CENTS);
   await expect(page.locator("#key")).toHaveText(/^Your key: /);
-  await info.attach("ear.json", { body: JSON.stringify(summary, null, 2), contentType: "application/json" });
-  await info.attach("page.png", { body: await page.screenshot(), contentType: "image/png" });
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
