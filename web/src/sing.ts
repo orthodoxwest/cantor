@@ -9,7 +9,7 @@ import { drawMarks } from "./marks";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
-import { firstNoteAt, firstSound, headphonesIn, ONSET_WINDOW, timed } from "./timing";
+import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
@@ -320,7 +320,7 @@ async function takeScored(): Promise<void> {
     // input's; the cursor is seen at once.
     const output = worn ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0;
     const due = started.origin + started.first - heard.startedAt + listener.inputLatency + output;
-    const sound = firstSound(listener.frames, heard.startedAt, heard.onset);
+    const sound = firstSound(listener.frames, heard.startedAt, heard.onset, due - ONSET_EARLY);
     const at = firstNoteAt(due, sound);
     timing = { due, sound, at };
     const json = await listener.judge(score.source, guide.pulse, at - started.first);

@@ -64,21 +64,38 @@ const VOICED_RUN = 4;
 const SHARPEN = 0.1;
 
 /** Where the singer first sounded, in seconds from `start` (the take's first sample, on the
- * frames' clock): the first of [`VOICED_RUN`] voiced frames in a row, or the first loud sample
- * (`loud`, in seconds of the take) when it falls just before; null when nothing was voiced. */
-export function firstSound(frames: readonly { t: number; midi: number | null }[], start: number, loud: number | null): number | null {
+ * frames' clock): the first of [`VOICED_RUN`] voiced frames in a row that begin at `from`
+ * seconds or later, or the first loud sample (`loud`, in seconds of the take) when it falls
+ * just before. Null when nothing was voiced then, or when the voice was already going at
+ * `from` (a singer humming the opening notes through the lead), so the take is timed as due. */
+export function firstSound(
+  frames: readonly { t: number; midi: number | null }[],
+  start: number,
+  loud: number | null,
+  from = 0,
+): number | null {
   let run = 0;
+  let before = false;
   for (const [i, frame] of frames.entries()) {
-    run = frame.t < start || frame.midi === null ? 0 : run + 1;
+    if (frame.t < start + from) {
+      before = frame.t >= start && frame.midi !== null;
+      continue;
+    }
+    if (before && frame.midi !== null && run === 0) return null;
+    before = false;
+    run = frame.midi === null ? 0 : run + 1;
     if (run < VOICED_RUN) continue;
     const voiced = frames[i - VOICED_RUN + 1]!.t - start;
-    return loud !== null && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
+    return loud !== null && loud >= from && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
   }
   return null;
 }
 
 /** Output devices whose name says they are worn. */
 const WORN = /head(phone|set)|ear(bud|phone|pod)|airpods|\bbuds/i;
+
+/** An output named for speakers and headphones at once, whatever is plugged in. */
+const BOTH = /speakers?\s*\/\s*head(phone|set)|head(phone|set)s?\s*\/\s*speaker/i;
 
 /** Whether the audio goes to headphones, from the devices the browser lists: null when it does
  * not say (no outputs listed, or none named, as before the microphone is allowed, or a name
@@ -87,6 +104,6 @@ export function headphonesIn(devices: readonly Pick<MediaDeviceInfo, "kind" | "l
   const outputs = devices.filter((d) => d.kind === "audiooutput");
   if (outputs.length === 0 || outputs.every((d) => !d.label)) return null;
   const current = outputs.find((d) => d.deviceId === "default") ?? outputs[0]!;
-  if (/speaker/i.test(current.label) && WORN.test(current.label)) return null;
+  if (BOTH.test(current.label)) return null;
   return WORN.test(current.label);
 }

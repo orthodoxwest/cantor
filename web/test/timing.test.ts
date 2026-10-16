@@ -39,6 +39,12 @@ describe("timing", () => {
     // Times are from the take's own start.
     expect(firstSound(frames, 10.5, null)).toBeCloseTo(0.52, 6);
     expect(firstSound(frames.map((f) => ({ ...f, midi: null })), 10, 0.5)).toBeNull();
+    // Humming through the lead is not the entry; the voice from 1.02 s is, when the first note
+    // was due a little before it.
+    const hummed = frames.map((f, i) => (i >= 10 && i < 20 ? { ...f, midi: 57 } : f));
+    expect(firstSound(hummed, 10, null, 0.8)).toBeCloseTo(1.02, 6);
+    // A voice already going when the note fell due gives no entry.
+    expect(firstSound(frames, 10, null, 1.1)).toBeNull();
   });
 
   it("knows headphones by the output's name, and says when it cannot tell", () => {
@@ -50,6 +56,8 @@ describe("timing", () => {
     expect(headphonesIn([out("")])).toBeNull();
     // A laptop's one output, named for both whatever is plugged in.
     expect(headphonesIn([out("Speakers/Headphones (Realtek(R) Audio)")])).toBeNull();
+    // A headset whose output the system calls its speakers.
+    expect(headphonesIn([out("Speakers (Logitech PRO X Gaming Headset)")])).toBe(true);
     expect(headphonesIn([mic])).toBeNull();
   });
 });

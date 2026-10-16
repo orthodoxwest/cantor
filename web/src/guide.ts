@@ -108,11 +108,12 @@ export class Guide {
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const zero = clock() + (origin - ctx.currentTime);
     const ended = new Promise<boolean>((resolve) => (this.end = resolve));
-    // The cursor appears when the chant begins, after the lead.
+    // The cursor appears on the first note, after the lead.
+    const begins = this.times[0]?.start ?? 0;
     const step = (): boolean => {
       if (!this.playing) return false;
       const t = clock() - zero;
-      if (t < 0) {
+      if (t < begins) {
         this.cursor.hide();
         return true;
       }
