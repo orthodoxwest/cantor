@@ -35,8 +35,9 @@
 //! cadences called off pitch (one called on pitch one way and not clearly heard the other is
 //! not counted). A take sung as on the page, after a lead of [`PAGE_LEAD_S`] or more with no
 //! guide in it (every real take, and the `-lead` suites), is timed again as for a singer
-//! each of [`LATE_S`] behind the cursor, its note due that much earlier: it must be timed by
-//! the same first sound as on time, within [`SAME_SOUND_S`], and be told the same. Not
+//! each of [`LATE_S`] behind the cursor, its note due that much earlier: it must be told the
+//! same, and under the expert, student and wrong gates be timed by the same first sound as on
+//! time, within [`SAME_SOUND_S`]. Not
 //! covered: a singer late behind a guide heard in the take. A synthetic guide sings with the
 //! singer, and its cue ends just before the first note, where the page listens only after the
 //! cue; on the page the guide's bleed can be the first sound heard. Nor a singer who leads
@@ -181,8 +182,8 @@ struct Judged {
     timing: Timing,
 }
 
-/// How far behind the cursor a singer is taken to be, in seconds, when a take is timed as
-/// the page times it: its first note falls due this long before it was sung.
+/// How far behind the cursor a singer is taken to be, in seconds, each time a take is timed as
+/// the page times it for a late singer: its first note falls due that long before it was sung.
 const LATE_S: [f32; 2] = [0.3, 0.8];
 /// A late singer's take must be timed by a first sound this close to the one it is timed by
 /// on time, in seconds.
@@ -405,9 +406,9 @@ struct Metrics {
     cadence_recall: f32,
     /// Takes given an outcome instead of a judgement.
     unjudged: u32,
-    /// Takes timed as for a singer [`LATE_S`] behind the cursor, and those of them the page
-    /// would time by the first sound it times them by on time; and takes told otherwise when
-    /// timed as the page times them, any way.
+    /// Takes timed as for a singer [`LATE_S`] behind the cursor; those of them timed each way
+    /// by the same first sound as on time; and takes told otherwise when timed as the page
+    /// times them, any way.
     timed_late: u32,
     timed_by_sound: u32,
     timing_moved_marks: u32,

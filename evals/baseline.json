@@ -140,14 +140,14 @@
     "worst_take_heard": 1.0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 8.048487,
+    "tracking_cents": 7.935205,
     "gross_error_rate": 0.0,
     "marks": 0,
     "false_marks": 0,
     "faults": 0,
     "recall": 1.0,
     "false_in_tune": 0,
-    "key_error_cents": 7.6535034,
+    "key_error_cents": 7.546692,
     "summary_errors": 0,
     "cadences": 53,
     "cadences_judged": 53,
@@ -159,7 +159,7 @@
     "timed_by_sound": 6,
     "timing_moved_marks": 0,
     "in_tune": 523,
-    "agreement": 0.9974948
+    "agreement": 0.9919567
   },
   "expert-rooms": {
     "takes": 6,

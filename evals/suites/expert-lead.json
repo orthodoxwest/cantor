@@ -13,7 +13,8 @@
     {
       "gabc": "evals/chants/psalm-117.gabc",
       "seed": 711,
-      "key_cents": -1500
+      "key_cents": -1500,
+      "noise_rms": 0.01
     },
     {
       "gabc": "evals/chants/psalm-117.gabc",
@@ -31,6 +32,8 @@
       "gabc": "content/chants/ubi-caritas.gabc",
       "seed": 714,
       "key_cents": -470,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4,
       "pulse_s": 0.4
     },
     {

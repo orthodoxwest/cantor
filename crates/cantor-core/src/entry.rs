@@ -17,9 +17,10 @@ pub const ONSET_WINDOW: f32 = 1.0;
 pub const ONSET_EARLY: f32 = 0.15;
 /// Voiced frames in a row that make a first sound, and not a click or a breath.
 const VOICED_RUN: usize = 4;
-/// A pitch within this many semitones of the bottom of the tracker's range is a rumble read
-/// at its edge (a room's hum, a chair moved), not a voice.
-const FLOOR_SEMITONES: f32 = 1.0;
+/// A pitch within this many semitones of the tracker's lowest ([`MIN_HZ`]) is a rumble read
+/// at the edge of its range (a room's hum, a chair moved), not a voice: below 63.8 Hz, so a
+/// bass's C2 (65.4 Hz) is still a voice.
+const EDGE_SEMITONES: f32 = 0.5;
 /// How far before the first voiced frame's centre the first loud sample may be and still be
 /// where the voice began, in seconds: half a frame and a hop.
 const SHARPEN: f32 = 0.1;
@@ -46,17 +47,18 @@ pub fn entry(live: &[Frame], loud: Option<f32>, due: f32) -> Entry {
     }
 }
 
-/// Where the singer first sounded: the first of [`VOICED_RUN`] voiced frames in a row (above
-/// the tracker's floor, see [`FLOOR_SEMITONES`]) that begin at `from` seconds or later, or the first loud sample (`loud`) when it falls just
+/// Where the singer first sounded: the first of [`VOICED_RUN`] voiced frames in a row (clear
+/// of the tracker's lowest pitch, see [`EDGE_SEMITONES`]) that begin at `from` seconds or
+/// later, or the first loud sample (`loud`) when it falls just
 /// before. None when nothing was voiced then, or when the voice was already going at `from`
 /// (a singer humming the opening notes through the lead), so the take is timed as due.
 pub fn first_sound(frames: &[Frame], loud: Option<f32>, from: f32) -> Option<f32> {
     let bound = from.max(0.0);
-    let floor = hz_to_midi(MIN_HZ) + FLOOR_SEMITONES;
+    let lowest = hz_to_midi(MIN_HZ) + EDGE_SEMITONES;
     let mut run = 0;
     let mut began = 0.0;
     for frame in frames {
-        if frame.midi.is_none_or(|m| m < floor) {
+        if frame.midi.is_none_or(|m| m < lowest) {
             run = 0;
             continue;
         }
@@ -148,11 +150,16 @@ mod tests {
         assert_eq!(first_sound(&live, None, 1.1), None);
         let flicker = frames(|i| voice(i) || i == 26 || i == 27);
         assert!(close(first_sound(&flicker, None, 0.8), 1.02));
-        // A rumble at the bottom of the tracker's range is not a voice.
+        // A rumble at the bottom of the tracker's range is not a voice; a bass's C2 is.
         let mut rumble = frames(voice);
         for f in &mut rumble[20..26] {
-            f.midi = Some(hz_to_midi(MIN_HZ) + 0.2);
+            f.midi = Some(hz_to_midi(MIN_HZ) + 0.3);
         }
         assert!(close(first_sound(&rumble, None, 0.5), 1.02));
+        let mut bass = frames(voice);
+        for f in &mut bass[20..26] {
+            f.midi = Some(36.0);
+        }
+        assert!(close(first_sound(&bass, None, 0.5), 0.6));
     }
 }
