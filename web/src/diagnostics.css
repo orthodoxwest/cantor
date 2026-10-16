@@ -1,0 +1,32 @@
+/* /diagnostics: one button and the table it fills. */
+.diagnostics {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.diagnostics th,
+.diagnostics td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  border-bottom: 1px solid var(--gold-line);
+}
+.diagnostics th {
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.diagnostics td {
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.note {
+  color: var(--muted);
+  font-size: 0.95rem;
+}

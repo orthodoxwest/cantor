@@ -329,6 +329,13 @@ function showMode(): void {
   modeText.textContent = worn
     ? `A take is scored with the guide in your headphones (${why}). Play sings the chant to you and is never scored.`
     : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
+  // A browser that does not say can be checked.
+  if (!chosen && detected === null) {
+    const check = document.createElement("a");
+    check.href = "/diagnostics";
+    check.textContent = "Check this browser";
+    modeText.append(" ", check, ".");
+  }
 }
 
 async function detect(take?: number): Promise<void> {
