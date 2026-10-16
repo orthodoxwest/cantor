@@ -864,6 +864,38 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
     ))
 }
 
+/// Every take's audio and its rate, named as the eval names it: each suite's synthetic takes,
+/// then the real takes in `takes`.
+pub fn audio(root: &Path, takes: Option<&Path>) -> Result<Vec<(String, Vec<f32>, f32)>, String> {
+    let mut out = Vec::new();
+    for suite in load_suites(&root.join("evals/suites"))? {
+        for (i, spec) in suite.takes.iter().enumerate() {
+            let path = root.join(&spec.gabc);
+            let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
+            for n in &mut notes {
+                n.start_s += spec.lead_in_s;
+            }
+            let take = render_take(&notes, &spec.profile, SAMPLE_RATE, spec.seed);
+            out.push((format!("{}-{i}", suite.name), take.samples, SAMPLE_RATE));
+        }
+    }
+    if let Some(dir) = takes {
+        for path in json_files(dir)? {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (samples, rate) = crate::wav::read_mono(&path.parent().unwrap_or(dir).join(&take.audio))?;
+            out.push((format!("{REAL} {}", take.name), samples, rate));
+        }
+    }
+    Ok(out)
+}
+
+/// `f` over `items` on every core, as the eval runs takes.
+pub fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    in_parallel(items, |_, item| f(item))
+}
+
 fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
     let mut out = Vec::new();
     for path in json_files(dir)? {

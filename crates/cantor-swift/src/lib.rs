@@ -1,25 +1,24 @@
-//! SwiftF0 (MIT, `model/LICENSE`), a small convolutional pitch tracker, run with tract as a
-//! second opinion beside the core's NSDF tracker. The model is the `swift-f0` 0.3.0 release's
-//! `model.onnx`; the windowing below follows that release's `detect`.
+//! SwiftF0 (MIT, `model/LICENSE`), a small convolutional pitch tracker, the second opinion
+//! beside the core's NSDF tracker. The model is the `swift-f0` 0.3.0 release's `model.onnx`,
+//! run by [`model`] in plain Rust (weights read from the file), so it builds anywhere the core
+//! does, the browser included; the windowing below follows that release's `detect`. With the
+//! `tract` feature, [`reference`] runs the same file with tract, the reference the port is
+//! held to.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+mod model;
+mod onnx;
+#[cfg(feature = "tract")]
+pub mod reference;
 
 use cantor_core::{Track, hz_to_midi};
-use tract_onnx::pb::attribute_proto::AttributeType;
-use tract_onnx::pb::tensor_proto::DataType;
-use tract_onnx::pb::{AttributeProto, TensorProto};
-use tract_onnx::prelude::*;
+
+pub use crate::model::HOP;
+use crate::model::Model;
 
 const MODEL: &[u8] = include_bytes!("../model/swift-f0.onnx");
 
 /// The only sample rate the model takes.
 pub const SAMPLE_RATE: f32 = 16_000.0;
-/// Samples per frame.
-const HOP: usize = 256;
-/// The model's pitch range, in hertz.
-const FMIN: f32 = 46.875;
-const FMAX: f32 = 2093.75;
 /// A frame is voiced when its confidence is at least this.
 pub const VOICED: f32 = 0.5;
 /// Frames whose audio peaks below this are digital silence, which the model never saw.
@@ -30,125 +29,98 @@ const WINDOW_FRAMES: usize = 1875;
 const LEFT_FRAMES: usize = 11;
 const LOOKAHEAD_FRAMES: usize = 10;
 
-type Plan = Arc<TypedRunnableModel>;
+/// What the model makes of one frame: its pitch in hertz and its confidence, and whether the
+/// frame's audio is digital silence.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Raw {
+    pub hz: f32,
+    pub confidence: f32,
+    pub quiet: bool,
+}
 
-/// A loaded model. tract cannot type the model over a symbolic length, so it is planned once
-/// for each length of audio it is given.
+impl Raw {
+    /// The frame's pitch, when it is voiced: confident, and not digital silence.
+    pub fn midi(&self) -> Option<f32> {
+        (!self.quiet && self.confidence >= VOICED && self.hz > 0.0).then(|| hz_to_midi(self.hz))
+    }
+}
+
+/// A loaded model.
 pub struct SwiftF0 {
-    model: InferenceModel,
-    plans: Mutex<HashMap<usize, Plan>>,
+    model: Model,
 }
 
 impl SwiftF0 {
     /// Loads the bundled model.
-    pub fn new() -> TractResult<SwiftF0> {
-        let onnx = tract_onnx::onnx();
-        let mut proto = onnx.proto_model_for_read(&mut &MODEL[..])?;
-        // A ConstantOfShape without a value fills with float32 zeros, but tract fills it
-        // with float64 ones' type; give the model's three the value explicitly.
-        for node in proto.graph.iter_mut().flat_map(|g| g.node.iter_mut()) {
-            if node.op_type == "ConstantOfShape" && !node.attribute.iter().any(|a| a.name == "value") {
-                node.attribute.push(AttributeProto {
-                    name: "value".into(),
-                    r#type: AttributeType::Tensor as i32,
-                    t: Some(TensorProto {
-                        dims: vec![1],
-                        data_type: DataType::Float as i32,
-                        float_data: vec![0.0],
-                        ..TensorProto::default()
-                    }),
-                    ..AttributeProto::default()
-                });
-            }
-        }
-        let model = onnx.model_for_proto_model(&proto)?;
+    pub fn new() -> Result<SwiftF0, String> {
         Ok(SwiftF0 {
-            model,
-            plans: Mutex::new(HashMap::new()),
+            model: Model::new(MODEL).map_err(|e| format!("SwiftF0: {e}"))?,
         })
-    }
-
-    fn plan(&self, len: usize) -> TractResult<Plan> {
-        let plans = || self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(plan) = plans().get(&len) {
-            return Ok(plan.clone());
-        }
-        // Planned without the lock, so that takes of different lengths plan side by side.
-        let mut model = self.model.clone();
-        model.set_input_fact(0, f32::fact([1, len]).into())?;
-        model.set_input_fact(1, f32::scalar_fact().into())?;
-        model.set_input_fact(2, f32::scalar_fact().into())?;
-        let plan = model.into_optimized()?.into_runnable()?;
-        Ok(plans().entry(len).or_insert(plan).clone())
     }
 
     /// Tracks `samples` at `sample_rate`, resampled to 16 kHz for the model: one frame every
     /// 16 ms, frame `i` centred at `i` hops.
-    pub fn track(&self, samples: &[f32], sample_rate: f32) -> TractResult<Track> {
-        if !RATES.contains(&sample_rate) {
-            tract_onnx::tract_core::internal::bail!("{sample_rate} Hz is not a sample rate SwiftF0 can take");
-        }
-        if sample_rate == SAMPLE_RATE {
-            self.track_16k(samples)
-        } else {
-            self.track_16k(&resample(samples, sample_rate, SAMPLE_RATE))
-        }
+    pub fn track(&self, samples: &[f32], sample_rate: f32) -> Result<Track, String> {
+        Ok(track_of(&self.raw(samples, sample_rate)?))
     }
 
-    fn track_16k(&self, samples: &[f32]) -> TractResult<Track> {
-        let n = (samples.len() / HOP).max(1);
-        let mut midi = Vec::with_capacity(n);
-        let mut start = 0;
-        while start < n {
-            let end = (start + WINDOW_FRAMES).min(n);
-            let left = start.saturating_sub(LEFT_FRAMES);
-            let to = if end < n {
-                ((end + LOOKAHEAD_FRAMES) * HOP).min(samples.len())
-            } else {
-                samples.len()
-            };
-            let window = &samples[left * HOP..to];
-            let (pitch, confidence) = self.run(window)?;
-            for i in start - left..end - left {
-                let quiet = window
-                    .get(i * HOP..((i + 1) * HOP).min(window.len()))
-                    .is_none_or(|hop| hop.iter().all(|x| x.abs() < SILENCE_PEAK));
-                let voiced = !quiet && confidence.get(i).is_some_and(|c| *c >= VOICED);
-                midi.push(
-                    voiced
-                        .then(|| pitch.get(i).copied())
-                        .flatten()
-                        .filter(|hz| *hz > 0.0)
-                        .map(hz_to_midi),
-                );
-            }
-            start = end;
-        }
-        Ok(Track {
-            start_s: 0.0,
-            hop_s: HOP as f32 / SAMPLE_RATE,
-            midi,
+    /// What the model makes of each frame of `samples` at `sample_rate`.
+    pub fn raw(&self, samples: &[f32], sample_rate: f32) -> Result<Vec<Raw>, String> {
+        windows(samples, sample_rate, |window| {
+            let (pitch, confidence) = self.model.run(window);
+            Ok((pitch.into_iter().map(|hz| hz as f32).collect(), confidence))
         })
     }
+}
 
-    fn run(&self, window: &[f32]) -> TractResult<(Vec<f32>, Vec<f32>)> {
-        // The model needs at least one hop. Padding changes the frames near the end, so a
-        // window is planned at its own length.
-        let mut audio = window.to_vec();
-        if audio.len() < HOP {
-            audio.resize(HOP, 0.0);
-        }
-        let len = audio.len();
-        let out = self.plan(len)?.run(tvec!(
-            tract_ndarray::Array2::from_shape_vec((1, len), audio)?.into_tvalue(),
-            tensor0(FMIN).into_tvalue(),
-            tensor0(FMAX).into_tvalue(),
-        ))?;
-        let values =
-            |t: &TValue| -> TractResult<Vec<f32>> { Ok(t.cast_to::<f32>()?.to_plain_array_view::<f32>()?.iter().copied().collect()) };
-        let (pitch, confidence) = (values(&out[0])?, values(&out[1])?);
-        Ok((pitch, confidence))
+/// The track of frames `raw`.
+pub fn track_of(raw: &[Raw]) -> Track {
+    Track {
+        start_s: 0.0,
+        hop_s: HOP as f32 / SAMPLE_RATE,
+        midi: raw.iter().map(Raw::midi).collect(),
     }
+}
+
+/// `samples` at `sample_rate` resampled to 16 kHz and run a window at a time, with `run`
+/// giving pitch and confidence for each frame of a window.
+fn windows(samples: &[f32], sample_rate: f32, run: impl Fn(&[f32]) -> Result<(Vec<f32>, Vec<f32>), String>) -> Result<Vec<Raw>, String> {
+    if !RATES.contains(&sample_rate) {
+        return Err(format!("{sample_rate} Hz is not a sample rate SwiftF0 can take"));
+    }
+    let resampled;
+    let samples = if sample_rate == SAMPLE_RATE {
+        samples
+    } else {
+        resampled = resample(samples, sample_rate, SAMPLE_RATE);
+        &resampled[..]
+    };
+    let n = (samples.len() / HOP).max(1);
+    let mut out = Vec::with_capacity(n);
+    let mut start = 0;
+    while start < n {
+        let end = (start + WINDOW_FRAMES).min(n);
+        let left = start.saturating_sub(LEFT_FRAMES);
+        let to = if end < n {
+            ((end + LOOKAHEAD_FRAMES) * HOP).min(samples.len())
+        } else {
+            samples.len()
+        };
+        let window = &samples[left * HOP..to];
+        let (pitch, confidence) = run(window)?;
+        for i in start - left..end - left {
+            let quiet = window
+                .get(i * HOP..((i + 1) * HOP).min(window.len()))
+                .is_none_or(|hop| hop.iter().all(|x| x.abs() < SILENCE_PEAK));
+            out.push(Raw {
+                hz: pitch.get(i).copied().unwrap_or(0.0),
+                confidence: confidence.get(i).copied().unwrap_or(0.0),
+                quiet,
+            });
+        }
+        start = end;
+    }
+    Ok(out)
 }
 
 /// The sample rates `track` takes.
@@ -245,11 +217,11 @@ mod tests {
             .collect();
         let swift = SwiftF0::new().expect("model");
         let windowed = swift.track(&samples, sr).expect("run").midi;
-        let (pitch, confidence) = swift.run(&samples).expect("run");
+        let (pitch, confidence) = swift.model.run(&samples);
         assert_eq!(windowed.len(), n / HOP);
         let mut worst = 0.0f32;
         for (i, m) in windowed.iter().enumerate() {
-            let whole = (confidence[i] >= VOICED).then(|| hz_to_midi(pitch[i]));
+            let whole = (confidence[i] >= VOICED).then(|| hz_to_midi(pitch[i] as f32));
             assert_eq!(m.is_some(), whole.is_some(), "frame {i}");
             if let (Some(a), Some(b)) = (m, whole) {
                 worst = worst.max((a - b).abs());
@@ -300,6 +272,81 @@ mod tests {
             })
             .fold(0.0f32, f32::max);
         assert!(worst < 0.01, "{worst}");
+    }
+
+    /// The plain model against tract's run of the same file, frame for frame.
+    #[cfg(feature = "tract")]
+    fn agree_with_tract(samples: &[f32], sample_rate: f32) {
+        let ours = SwiftF0::new().expect("model").raw(samples, sample_rate).expect("run");
+        let theirs = reference::Reference::new().expect("tract").raw(samples, sample_rate).expect("run");
+        assert_eq!(ours.len(), theirs.len());
+        let mut worst = (0.0f32, 0.0f32);
+        for (i, (a, b)) in ours.iter().zip(&theirs).enumerate() {
+            assert_eq!(a.quiet, b.quiet, "frame {i}");
+            assert_eq!(a.midi().is_some(), b.midi().is_some(), "frame {i}: {a:?} against {b:?}");
+            worst.1 = worst.1.max((a.confidence - b.confidence).abs());
+            if let (Some(x), Some(y)) = (a.midi(), b.midi()) {
+                worst.0 = worst.0.max((x - y).abs());
+            }
+        }
+        assert!(worst.0 <= 0.001, "{} semitones apart", worst.0);
+        assert!(worst.1 <= 1e-4, "confidence {} apart", worst.1);
+    }
+
+    #[cfg(feature = "tract")]
+    #[test]
+    fn the_spectrograms_are_tracts_to_the_bit() {
+        let swift = SwiftF0::new().expect("model");
+        let reference = reference::Reference::new().expect("tract");
+        let mut state = 3u32;
+        // A quiet chord in noise, whose upper bins are nearly silent, at lengths from under a
+        // hop to several seconds.
+        for len in [100, HOP, 5 * HOP + 17, 40_000, 100_000] {
+            let audio: Vec<f32> = (0..len)
+                .map(|i| {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let t = i as f32 / SAMPLE_RATE;
+                    let chord = [196.0, 247.0, 294.0]
+                        .iter()
+                        .map(|hz| (std::f32::consts::TAU * hz * t).sin())
+                        .sum::<f32>();
+                    0.02 * chord + 1e-4 * (state as f32 / u32::MAX as f32 - 0.5)
+                })
+                .collect();
+            let mut window = audio.clone();
+            window.resize(len.max(HOP), 0.0);
+            let ours = swift.model.spectrogram(&window).data;
+            let theirs = reference.values(&window, &["v352"]).expect("tract").remove(0);
+            assert_eq!(ours.len(), theirs.len(), "{len}");
+            let differ = ours.iter().zip(&theirs).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+            assert_eq!(differ, 0, "{differ} of {} values differ at {len} samples", ours.len());
+        }
+    }
+
+    #[cfg(feature = "tract")]
+    #[test]
+    fn the_port_hears_as_tract_does() {
+        let mut state = 7u32;
+        let mut noise = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state as f32 / u32::MAX as f32 - 0.5
+        };
+        // A glissando over the model's range with noise, a chord, a short burst and silence.
+        let sr = SAMPLE_RATE;
+        let mut samples: Vec<f32> = (0..96_000)
+            .map(|i| {
+                let t = i as f32 / sr;
+                let hz = 60.0 * 2f32.powf(t * 0.8);
+                0.2 * (std::f32::consts::TAU * 60.0 * (2f32.powf(t * 0.8) - 1.0) / (0.8 * std::f32::consts::LN_2)).sin() * (hz / hz)
+                    + 0.01 * noise()
+            })
+            .collect();
+        samples.extend(tone(220.0, sr, 8_000).iter().zip(tone(277.2, sr, 8_000)).map(|(a, b)| a + b));
+        samples.extend(vec![0.0; 3_000]);
+        samples.extend((0..200).map(|_| 0.3 * noise()));
+        agree_with_tract(&samples, sr);
+        agree_with_tract(&samples[..100], sr);
+        agree_with_tract(&tone(110.0, 48_000.0, 50_000), 48_000.0);
     }
 
     #[test]

@@ -38,5 +38,8 @@ strip = true
 [profile.dev.package.cantor-core]
 opt-level = 3
 
+[profile.dev.package.cantor-swift]
+opt-level = 3
+
 [profile.dev.package."*"]
 opt-level = 3
