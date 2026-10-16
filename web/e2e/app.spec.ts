@@ -10,7 +10,7 @@ declare global {
 const PULSE = 0.5;
 
 async function open(page: Page): Promise<Timeline> {
-  await page.goto("/?test=1");
+  await page.goto("/sing.html?test=1");
   await expect(page.locator("#score svg")).toBeVisible();
   return page.evaluate(() => window.__cantor.timeline);
 }
