@@ -26,7 +26,7 @@ describe("api", () => {
 
   it("lists the private chants only to a known caller", async () => {
     const res = await get("/api/chants", { "X-Dev-User": "student" });
-    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "ubi-caritas"]);
+    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "private-sung", "ubi-caritas"]);
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
@@ -39,6 +39,22 @@ describe("api", () => {
     const row = await res.json<{ slug: string; gabc: string }>();
     expect(row.gabc).toContain("BOok");
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("gives a private chant's recording with it, to a known caller only", async () => {
+    expect((await get("/api/chants/private-sung")).status).toBe(404);
+    const sung = await (await get("/api/chants/private-sung", { "X-Dev-User": "student" })).json<{ recording: unknown }>();
+    expect(sung.recording).toEqual([{ index: 0, from_s: 1.05, to_s: 1.5, cents: -12.5, trace: [[1.1, -10], [1.2, -14]] }]);
+    const plain = await (await get("/api/chants/private-test", { "X-Dev-User": "student" })).json<object>();
+    expect(plain).not.toHaveProperty("recording");
+    expect(await (await get("/api/chants/ubi-caritas")).json<object>()).not.toHaveProperty("recording");
+    for (const bad of ["{not json", '{"index":0}']) {
+      await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-test'").bind(bad).run();
+      const res = await get("/api/chants/private-test", { "X-Dev-User": "student" });
+      expect(res.status).toBe(200);
+      expect(await res.json<object>()).not.toHaveProperty("recording");
+    }
+    await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
   });
 
   it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {

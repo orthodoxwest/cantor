@@ -1,9 +1,9 @@
-import { Chant, init } from "neuma";
+import { Chant, init, summarize } from "neuma";
 import { Cursor } from "./cursor";
-import { Guide } from "./guide";
-import { Listener } from "./listen";
+import { Guide, PULSE } from "./guide";
+import { type Entry, Listener } from "./listen";
 import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
-import { kicker, library, chant as findChant } from "./library";
+import { escape, finds, highlight, kicker, library, chant as findChant, terms, type LibraryChant } from "./library";
 import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
@@ -11,8 +11,9 @@ import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
+import { Drone, droneNote, modeNumber } from "./drone";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
-import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
+import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
 void offerSignIn();
 
@@ -34,29 +35,108 @@ if (!found && asked !== DEFAULT) byId("status").textContent = "That chant is not
 byId("kicker").textContent = ["Practice", kicker({ kind: piece.kind, mode: piece.mode })].filter(Boolean).join(" · ");
 byId("title").textContent = piece.title;
 document.title = `${piece.title} · Practice · Cantor`;
-const picker = byId<HTMLSelectElement>("chant");
-picker.add(new Option(`${piece.title}${piece.name ? ` (${piece.name})` : ""}`, piece.slug, true, true));
-// The rest of the library joins the picker when it comes.
-void library().then(
-  (all) => {
-    picker.replaceChildren(...all.map((c) => new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c.slug === piece.slug)));
-    if (picker.value !== piece.slug) picker.add(new Option(piece.title, piece.slug, true, true), 0);
-  },
-  () => {},
-);
-picker.addEventListener("change", () => {
-  params.set("chant", picker.value);
-  location.search = params.toString();
+
+// Another chant is found by its words as they are typed: a few of the library's chants, each a
+// link to practise it.
+const find = byId<HTMLInputElement>("find");
+const foundList = byId<HTMLOListElement>("found");
+const foundNote = byId<HTMLSpanElement>("found-note");
+/** Matches listed at a time; more words narrow them. */
+const FOUND = 8;
+let everything: LibraryChant[] | null = null;
+let reaching = false;
+let unreachable = false;
+
+/** Fetches the library once it is wanted, and again after a failure. */
+function reach(): void {
+  if (everything || reaching) return;
+  reaching = true;
+  unreachable = false;
+  void library()
+    .then(
+      (all) => (everything = all),
+      () => (unreachable = true),
+    )
+    .finally(() => {
+      reaching = false;
+      drawFound();
+    });
+}
+
+/** The address of `slug`'s practice, keeping the rest of this one's. */
+function practice(slug: string): string {
+  const next = new URLSearchParams(params);
+  next.set("chant", slug);
+  return `/sing?${next}`;
+}
+
+function drawFound(): void {
+  const q = find.value.trim();
+  const ts = find.disabled ? [] : terms(q);
+  const matches = ts.length && everything ? everything.filter((c) => finds(c, ts)) : [];
+  foundList.innerHTML = matches
+    .slice(0, FOUND)
+    .map(
+      (c) => `<li><a href="${escape(practice(c.slug))}"${c.slug === piece.slug ? ' aria-current="page"' : ""}>
+  <span class="name">${highlight(c.title, ts)}${c.name ? ` <span class="latin">${highlight(c.name, ts)}</span>` : ""}</span>
+  <span class="kicker">${escape(kicker(c))}</span></a></li>`,
+    )
+    .join("");
+  foundList.hidden = !matches.length;
+  let note = "";
+  if (!ts.length) note = "";
+  else if (!everything) note = unreachable ? "The library could not be reached." : "Searching…";
+  else if (!matches.length) note = `Nothing matches “${q}”.`;
+  else if (matches.length > FOUND) note = `${FOUND} of ${matches.length}; another word narrows them.`;
+  else note = matches.length === 1 ? "1 chant" : `${matches.length} chants`;
+  foundNote.textContent = note;
+}
+find.addEventListener("focus", reach);
+find.addEventListener("input", () => {
+  reach();
+  drawFound();
+});
+const links = () => [...foundList.querySelectorAll<HTMLAnchorElement>("a")];
+find.addEventListener("keydown", (e) => {
+  // Enter practises the first match (not the Enter that ends an input method's composing, which
+  // Safari sends as key code 229), the down arrow goes into the list, Escape clears.
+  if (e.key === "Escape" && find.value) {
+    e.preventDefault();
+    find.value = "";
+    drawFound();
+    return;
+  }
+  const first = links()[0];
+  if (!first) return;
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    location.assign(first.href);
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    first.focus();
+  }
+});
+foundList.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") return find.focus();
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const all = links();
+  const at = all.indexOf(document.activeElement as HTMLAnchorElement);
+  if (at < 0) return;
+  e.preventDefault();
+  (all[at + (e.key === "ArrowDown" ? 1 : -1)] ?? (e.key === "ArrowUp" ? find : all[at]!)).focus();
 });
 const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
 // After a scored take: above the score, the core's two sentences on the take, the singer's key
 // and the note the ribbon is re-based on; on the score, the ribbon under the staff and the core's
-// marks on the notes; below it, the words of the mark tapped.
+// marks on the notes; below it, the words of the mark tapped. Where the chant has an aligned
+// recording of the same notes, the ribbon draws its trace under the singer's.
 const result = byId<HTMLElement>("result");
 const summaryText = byId<HTMLParagraphElement>("summary");
 const keyText = byId<HTMLParagraphElement>("key");
+const recordedText = byId<HTMLParagraphElement>("recorded");
+const recording = found?.recording ?? [];
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
 const why = byId<HTMLParagraphElement>("why");
@@ -101,17 +181,22 @@ function drawResult(): void {
     score.showStrips(null);
     say("");
     baseLine.hidden = true;
+    recordedText.hidden = true;
     keyText.hidden = judged?.ribbon.length === 0;
     if (judged) keyText.textContent = unheard(judged);
     return;
   }
   keyText.hidden = false;
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
+  // The recording is of the chant as the library gave it, so not of another put on the page.
+  const underlay = score.source === piece.gabc && recording.length === judged.ribbon.length ? recording : [];
+  // Re-based on a note the recording has no value for, the ribbon draws no recording.
+  recordedText.hidden = !underlay.some((b) => b.trace.length > 0) || (base !== null && (underlay[base]?.cents ?? null) === null);
   score.showStrips(
     (timeline, room) =>
       // The marks first, so that the keyboard reaches them before the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base),
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base, undefined, underlay),
   );
   say(open === null ? "" : (judged.told[open] ?? ""));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
@@ -144,11 +229,17 @@ function offerSend(take: ToSend): void {
   });
 }
 
+/** Keeps the page on this chant, or lets another be found. */
+function holdChant(on: boolean): void {
+  find.disabled = on;
+  drawFound();
+}
+
 /** Holds a new take and the chant while the take being sent is read from the ear, which
  * keeps only the last take, or lets them go. */
 function holdTake(on: boolean): void {
   takeButton.disabled = on || !guide;
-  picker.disabled = on;
+  holdChant(on);
 }
 
 sendButton.addEventListener("click", () => {
@@ -318,17 +409,160 @@ const guide =
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
     onError: (message) => setStatus(taking ? "The guide voice failed, so the take was stopped." : message),
   });
+// Start note sounds the opening notes a take without headphones is given (`cueNotes`), to
+// find the pitch before singing; Play and it each stop the other.
+const noteButton = byId<HTMLButtonElement>("note");
+/** The starting pitch, while it sounds. */
+let pitching: Singing | null = null;
+/** Counts presses of Start note, so one pressed again while it is starting does not go on. */
+let pitches = 0;
+
+function stopPitch(): void {
+  pitches++;
+  pitching?.stop();
+  pitching = null;
+  noteButton.setAttribute("aria-pressed", "false");
+}
+
+async function soundPitch(): Promise<void> {
+  if (!guide || !table) return;
+  guide.stop();
+  stopPitch();
+  const press = pitches;
+  noteButton.setAttribute("aria-pressed", "true");
+  if (status.classList.contains("error")) setStatus("");
+  const noteFailed = (error: unknown) => {
+    console.error("start note:", error);
+    if (press !== pitches) return;
+    stopPitch();
+    setStatus(`The starting pitch could not be sung: ${error instanceof Error ? error.message : String(error)}`);
+  };
+  try {
+    const ctx = await audioContext();
+    if (press !== pitches) return;
+    const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source, onError: noteFailed });
+    if (press !== pitches) return cue.stop();
+    pitching = cue;
+    await wait(cue.end - ctx.currentTime);
+    if (press === pitches) stopPitch();
+  } catch (error) {
+    noteFailed(error);
+  }
+}
+
+// Drone holds the reciting note (droneNote) under Play, Start note or the singer's own
+// practice, until it is pressed again or a take begins.
+const droneButton = byId<HTMLButtonElement>("drone");
+let drone: Drone | null = null;
+/** Counts presses of Drone, so one pressed again while it is starting does not go on. */
+let drones = 0;
+
+function stopDrone(fade = true): void {
+  drones++;
+  drone?.stop(fade);
+  // Before a take, a drone still fading is cut too.
+  if (!fade) Drone.cutAll();
+  drone = null;
+  droneButton.setAttribute("aria-pressed", "false");
+}
+
+async function startDrone(): Promise<void> {
+  if (!guide) return;
+  const press = ++drones;
+  droneButton.setAttribute("aria-pressed", "true");
+  try {
+    const ctx = await audioContext();
+    if (press !== drones) return;
+    const { notes, pauses } = score.timeline;
+    // The chant's body ends at its first double bar, before any verse and repeat cue.
+    const double = pauses.find((p) => p.kind === "double");
+    const sung = guide.notes();
+    const mode = summarize(score.source).mode?.number ?? modeNumber(piece.mode);
+    const midi = droneNote(
+      notes.map((n, i) => ({ semitones: n.semitones, midi: sung[i]!.midi, recitation: n.recitation })),
+      mode !== null && mode >= 1 && mode <= 8 ? mode : null,
+      double ? double.beforeNote - 1 : notes.length - 1,
+    );
+    if (midi === null) return stopDrone();
+    drone = new Drone(ctx, midi);
+  } catch (error) {
+    if (press !== drones) return;
+    stopDrone();
+    setStatus(`The drone could not sound: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Speed and Pitch set the guide's pulse and transposition, so the voice, the cursor, a take's
+// timing, Start note and Drone all follow them; the clef's do is named when it moves. They
+// are kept in the address, and so in the links to the chants found.
+const speedSelect = byId<HTMLSelectElement>("speed");
+/** The clef's do moved by 0 to 11 semitones, spelled as a singer would read the key. */
+const DO_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const pitchSelect = byId<HTMLSelectElement>("pitch");
+const doText = byId<HTMLSpanElement>("do");
+for (let s = -7; s <= 7; s++) {
+  const label = s === 0 ? "As written" : `${s > 0 ? "+" : "−"}${Math.abs(s)} semitone${Math.abs(s) === 1 ? "" : "s"}`;
+  pitchSelect.add(new Option(label, String(s)));
+}
+const askedSpeed = params.get("speed");
+if ([...speedSelect.options].some((o) => o.value === askedSpeed)) speedSelect.value = askedSpeed!;
+const askedPitch = Number(params.get("pitch") ?? 0);
+pitchSelect.value = String(Number.isInteger(askedPitch) && Math.abs(askedPitch) <= 7 ? askedPitch : 0);
+
+function applyTempo(): void {
+  const pulse = Number(speedSelect.value);
+  const transpose = Number(pitchSelect.value);
+  if (guide) {
+    guide.pulse = pulse;
+    guide.transpose = transpose;
+  }
+  doText.hidden = transpose === 0;
+  doText.textContent = `The clef’s do is ${DO_NAMES[(transpose + 12) % 12]}.`;
+  if (pulse === PULSE) params.delete("speed");
+  else params.set("speed", speedSelect.value);
+  if (transpose === 0) params.delete("pitch");
+  else params.set("pitch", String(transpose));
+  const query = params.toString();
+  history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  // The chants found lead to their practice at this speed and pitch.
+  drawFound();
+}
+applyTempo();
+for (const select of [speedSelect, pitchSelect]) {
+  select.addEventListener("change", () => {
+    // What is sounding was set going at the old speed and pitch; Start note and a drone have
+    // no speed.
+    guide?.stop();
+    if (select === pitchSelect) stopPitch();
+    const retune = select === pitchSelect && droneButton.getAttribute("aria-pressed") === "true";
+    applyTempo();
+    if (retune) {
+      stopDrone();
+      void startDrone();
+    }
+  });
+}
+
 if (!guide) {
-  playButton.title = "The guide voice could not load.";
+  playButton.title = noteButton.title = droneButton.title = "The guide voice could not load.";
   setStatus(playButton.title);
 } else {
-  playButton.disabled = false;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = false;
+  droneButton.addEventListener("click", () => {
+    if (droneButton.getAttribute("aria-pressed") === "true") return stopDrone();
+    void startDrone();
+  });
   playButton.addEventListener("click", () => {
     if (guide.playing) return guide.stop();
+    stopPitch();
     setStatus("");
     showResult(null);
     playButton.setAttribute("aria-pressed", "true");
     void guide.play();
+  });
+  noteButton.addEventListener("click", () => {
+    if (noteButton.getAttribute("aria-pressed") === "true") return stopPitch();
+    void soundPitch();
   });
 }
 
@@ -341,6 +575,8 @@ const modeLine = modeText.parentElement!;
 const headphonesBox = byId<HTMLInputElement>("headphones");
 /** What the browser says of headphones, until the singer says otherwise. */
 let detected: boolean | null = null;
+/** Whether the browser names its devices, as it does once the microphone is allowed. */
+let named = false;
 let chosen = false;
 /** How long the cursor waits before the chant begins, after listening begins, in seconds. */
 const LEAD = 1.5;
@@ -349,7 +585,7 @@ const LEAD = 1.5;
 const TAIL = ONSET_WINDOW + 0.5;
 /** How the last take was timed, in seconds of the take: when its first note was due, when the
  * singer first sounded, and the first note's start it was judged by. */
-let timing: { due: number; sound: number | null; at: number } | null = null;
+let timing: Entry | null = null;
 
 function showMode(): void {
   const worn = headphonesBox.checked;
@@ -365,11 +601,20 @@ function showMode(): void {
   modeText.textContent = worn
     ? `A take is scored with the guide in your headphones (${why}). Play sings the chant to you and is never scored.`
     : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
+  // A browser that names its devices but does not say which is playing can be checked.
+  if (!chosen && detected === null && named) {
+    const check = document.createElement("a");
+    check.href = "/diagnostics";
+    check.textContent = "Check this browser";
+    modeText.append(" ", check, ".");
+  }
 }
 
 async function detect(take?: number): Promise<void> {
   try {
-    detected = headphonesIn(await navigator.mediaDevices.enumerateDevices());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    named = devices.some((d) => d.label);
+    detected = headphonesIn(devices);
   } catch {
     detected = null;
   }
@@ -425,13 +670,18 @@ async function takeScored(): Promise<void> {
   // A take that is no longer going leaves the page alone: whatever stopped it has seen to it.
   const going = () => taking && take === takes;
   taking = true;
+  document.body.classList.add("taking");
   timing = null;
   stopAsked = false;
   let shownNow = false;
   // Nothing else sounds or listens during a take.
   guide.stop();
+  stopPitch();
+  stopDrone(false);
   listener.stop();
-  playButton.disabled = picker.disabled = headphonesBox.disabled = true;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = true;
+  speedSelect.disabled = pitchSelect.disabled = true;
+  holdChant(true);
   takeButton.textContent = "Stop";
   readout.textContent = "–";
   readout.setAttribute("aria-live", "off");
@@ -500,13 +750,13 @@ async function takeScored(): Promise<void> {
     // input's; the cursor is seen at once.
     const output = worn ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0;
     const due = started.origin + started.first - heard.startedAt + listener.inputLatency + output;
-    const sound = firstSound(listener.frames, heard.startedAt, heard.onset, due - ONSET_EARLY);
-    const at = firstNoteAt(due, sound);
-    timing = { due, sound, at };
+    const entry = await listener.entry(due);
+    if (!going()) return;
+    timing = entry;
+    const offset = entry.at - started.first;
     // A take stopped is judged through the last note the singer had time to sing whole, on
     // their own time (they may be late on the cursor), to the end of the last phrase finished
     // there (the ear's `judge_gabc`).
-    const offset = at - started.first;
     let through: number | null = null;
     if (cut !== null) {
       const times = timed(score.timeline.notes, guide.pulse);
@@ -549,13 +799,15 @@ function stopTake(): void {
 function endTake(): void {
   taking = chanting = false;
   hurry = null;
+  document.body.classList.remove("taking");
   cueing?.stop();
   cueing = null;
-  playButton.disabled = takeButton.disabled = !guide;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = takeButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
-  picker.disabled = headphonesBox.disabled = false;
+  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = false;
+  holdChant(false);
   modeLine.hidden = !guide;
   void detect();
 }
@@ -589,6 +841,24 @@ if (test) {
     get chunks() {
       return guide?.chunks ?? [];
     },
+    /** The drone's note while it sounds, as MIDI. */
+    get drone() {
+      return drone?.midi ?? null;
+    },
+    /** Where the guide's voice is at home, as MIDI. */
+    centre: table?.centre ?? null,
+    /** The notes the guide sings, at the page's speed and pitch. */
+    get sung() {
+      return guide?.notes() ?? [];
+    },
+    /** Drones not yet silent, fading ones included. */
+    get drones() {
+      return Drone.sounding.size;
+    },
+    /** The starting pitch's notes while it sounds, as MIDI. */
+    get pitch() {
+      return pitching && guide ? cueNotes(guide.notes()).map((n) => n.midi) : [];
+    },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
     heard: () => listener.heard,
     listen: () => toggleListening(),
@@ -596,10 +866,11 @@ if (test) {
     // Puts `gabc` on the page at `pulse` seconds a pulse, for a take of another chant.
     practise: (gabc: string, pulse: number) => {
       if (gabc !== score.source) score.setChant(new Chant(gabc));
-      if (guide) {
-        guide.gabc = gabc;
-        guide.pulse = pulse;
-      }
+      if (guide) guide.gabc = gabc;
+      // Through the Speed select, as a singer would, adding the pulse to it if it is not there.
+      if (![...speedSelect.options].some((o) => o.value === String(pulse))) speedSelect.add(new Option(`${pulse} s a pulse`, String(pulse)));
+      speedSelect.value = String(pulse);
+      applyTempo();
     },
     /** The page's times for the notes on it, at `pulse` seconds a pulse. */
     timed: (pulse: number) => timed(score.timeline.notes, pulse),

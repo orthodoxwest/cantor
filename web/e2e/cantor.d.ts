@@ -8,6 +8,11 @@ declare global {
       timeline: Timeline;
       visited: number[];
       chunks: Array<[number, number, number]>;
+      pitch: number[];
+      drone: number | null;
+      drones: number;
+      centre: number | null;
+      sung: Array<{ midi: number; start: number; duration: number }>;
       voice: "neutral" | "recorded" | "none";
       heard: () =>
         | Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; startedAt: number | null; busy: number; stopMs: number }>

@@ -40,13 +40,32 @@
       <p class="titulus" id="kicker">Practice</p>
       <h1 class="title" id="title">Practice</h1>
       <p class="lede">Press Play to hear it sung. Then sing a take and see where your voice went, note by note.</p>
-      <label class="pick">Chant <select id="chant"></select></label>
+      <div class="pick">
+        <label class="search">
+          <span class="sr">Find another chant</span>
+          <input type="search" id="find" placeholder="Find another chant" autocomplete="off" spellcheck="false" enterkeyhint="go" aria-controls="found" aria-describedby="found-note" />
+        </label>
+        <ol class="found" id="found" hidden></ol>
+        <p class="found-note"><span id="found-note" role="status"></span> <a href="/library">Browse the library</a></p>
+      </div>
       <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
+      <p class="tempo">
+        <label>Speed
+          <select id="speed">
+            <option value="0.65">Slow</option>
+            <option value="0.5" selected>Steady</option>
+            <option value="0.38">Brisk</option>
+          </select>
+        </label>
+        <label>Pitch <select id="pitch"></select></label>
+        <span id="do" hidden></span>
+      </p>
       <p id="status" class="status" role="status"></p>
       <section id="result" class="result lead" hidden>
         <p id="cut" hidden></p>
         <p id="summary"></p>
         <p id="key"></p>
+        <p id="recorded" hidden>The broad grey line under yours is a recording of this chant.</p>
         <p id="base" hidden><span id="base-text"></span> <button id="rebase" class="btn" type="button">Back to your key</button></p>
         <p id="send-line" class="send" hidden>
           <button id="send" class="btn" type="button">Send to a director</button>
@@ -60,6 +79,8 @@
     <div class="bar">
       <div class="bar-in">
         <button id="play" class="btn primary" type="button" aria-pressed="false" disabled>Play</button>
+        <button id="note" class="btn" type="button" aria-pressed="false" title="The first note, then the reciting tone if there is one" disabled>Start note</button>
+        <button id="drone" class="btn" type="button" aria-pressed="false" title="A soft held tone on the reciting note, to sing against" disabled>Drone</button>
         <button id="take" class="btn" type="button" disabled>Sing a take</button>
         <span class="spacer"></span>
         <output id="readout" aria-live="polite">–</output>

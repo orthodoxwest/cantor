@@ -43,54 +43,8 @@ export function noteAt(times: readonly Timed[], t: number): number {
 }
 
 /** How late the singer's first sound may be from where the first note was due, in seconds,
- * for the take to be timed by it. */
+ * for the take to be timed by it (cantor-core's `ONSET_WINDOW`, entry.rs, which times it). */
 export const ONSET_WINDOW = 1;
-/** And how early: a singer who starts early holds the first note until the cursor moves, so an
- * early sound says nothing of when the notes fall. */
-export const ONSET_EARLY = 0.15;
-
-/** When the take's first note starts, in seconds of the take: where the singer first sounded,
- * if that is within [`ONSET_EARLY`] before or [`ONSET_WINDOW`] after where the note was due
- * (`due`), else when it was due. The singer follows the guide or the cursor a little late, and
- * the first sound is the truest measure of how late. */
-export function firstNoteAt(due: number, onset: number | null): number {
-  return onset !== null && onset >= due - ONSET_EARLY && onset <= due + ONSET_WINDOW ? onset : due;
-}
-
-/** Voiced frames in a row that make a first sound, and not a click or a breath. */
-const VOICED_RUN = 4;
-/** How far before the first voiced frame's centre the first loud sample may be and still be
- * where the voice began, in seconds: half a frame and a hop. */
-const SHARPEN = 0.1;
-
-/** Where the singer first sounded, in seconds from `start` (the take's first sample, on the
- * frames' clock): the first of [`VOICED_RUN`] voiced frames in a row that begin at `from`
- * seconds or later, or the first loud sample (`loud`, in seconds of the take) when it falls
- * just before. Null when nothing was voiced then, or when the voice was already going at
- * `from` (a singer humming the opening notes through the lead), so the take is timed as due. */
-export function firstSound(
-  frames: readonly { t: number; midi: number | null }[],
-  start: number,
-  loud: number | null,
-  from = 0,
-): number | null {
-  const bound = Math.max(from, 0);
-  let run = 0;
-  let began = 0;
-  for (const [i, frame] of frames.entries()) {
-    if (frame.t < start || frame.midi === null) {
-      run = 0;
-      continue;
-    }
-    if (run++ === 0) began = i;
-    if (run < VOICED_RUN) continue;
-    const voiced = frames[began]!.t - start;
-    if (voiced >= bound) return loud !== null && loud >= bound && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
-    // A voice that began before the bound and holds past it gives no entry.
-    if (frame.t - start >= bound) return null;
-  }
-  return null;
-}
 
 /** Output devices whose name says they are worn. */
 const WORN = /head(phone|set)|ear(bud|phone|pod)|airpods|\bbuds/i;

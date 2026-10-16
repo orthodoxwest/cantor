@@ -4,7 +4,7 @@
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
-import { chant as fetchChant, kicker, kindName, library, type FullChant, type LibraryChant } from "./library";
+import { chant as fetchChant, escape, finds, highlight, kicker, kindName, library, terms, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
 import { offerSignIn } from "./beam";
 import { neutralTable } from "./singer";
@@ -50,17 +50,6 @@ let limit = PAGE;
 const ALL = "";
 let kind = ALL;
 
-const escape = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot", "'": "#39" }[c]};`);
-const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-
-/** `text` with the first match of `q` marked. */
-function highlight(text: string, q: string): string {
-  const at = q ? fold(text).indexOf(q) : -1;
-  if (at < 0) return escape(text);
-  return `${escape(text.slice(0, at))}<mark>${escape(text.slice(at, at + q.length))}</mark>${escape(text.slice(at + q.length))}`;
-}
-
 const kindOf = (c: LibraryChant) => kindName(c.kind) ?? "Other";
 const kinds = [...new Set(chants.map(kindOf))].sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
 
@@ -101,10 +90,8 @@ async function drawThumb(el: HTMLElement, slug: string): Promise<void> {
 }
 
 function drawResults(): void {
-  const q = fold(els.q.value.trim());
-  const shown = chants.filter(
-    (c) => (kind === ALL || kindOf(c) === kind) && (!q || fold(`${c.title} ${c.name ?? ""} ${c.words}`).includes(q)),
-  );
+  const q = terms(els.q.value);
+  const shown = chants.filter((c) => (kind === ALL || kindOf(c) === kind) && finds(c, q));
   els.count.textContent = shown.length === 1 ? "1 piece" : `${shown.length} pieces`;
   thumbs.disconnect();
   els.more.hidden = shown.length <= limit;
