@@ -48,6 +48,13 @@ describe("api", () => {
     const plain = await (await get("/api/chants/private-test", { "X-Dev-User": "student" })).json<object>();
     expect(plain).not.toHaveProperty("recording");
     expect(await (await get("/api/chants/ubi-caritas")).json<object>()).not.toHaveProperty("recording");
+    for (const bad of ["{not json", '{"index":0}']) {
+      await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-test'").bind(bad).run();
+      const res = await get("/api/chants/private-test", { "X-Dev-User": "student" });
+      expect(res.status).toBe(200);
+      expect(await res.json<object>()).not.toHaveProperty("recording");
+    }
+    await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
   });
 
   it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {

@@ -93,8 +93,10 @@ describe("ribbon", () => {
     expect(rebased[1]!.map((p) => p[1])).toEqual([yOf(30, 0), yOf(30, 0)].map((y) => Number(y.toFixed(1))));
     expect(drawRibbon(notes, bands, () => 0)).not.toContain("band-recorded");
     // Re-based on a note the recording has no value for, the recording is not drawn.
-    const missed = [recorded[0]!, { ...recorded[1]!, cents: null }];
-    expect(drawRibbon(notes, bands, () => 0, 0, 1, undefined, missed)).not.toContain("band-recorded");
+    const missed = [{ ...recorded[0]!, cents: null }, recorded[1]!];
+    const unbased = drawRibbon(notes, bands, () => 0, 50, 0, undefined, missed);
+    expect(unbased).not.toContain("band-recorded");
+    expect(unbased).toContain("band-trace");
   });
 
   it("names the key as a transposition", () => {
