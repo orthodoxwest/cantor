@@ -108,6 +108,20 @@ describe("moveAccents", () => {
     }
   });
 
+  it("moves an accent along a split word without printing a hyphen in it", () => {
+    for (const verse of [
+      "1 Why do the heathen so furiously rage together * and why do the people imagine a vain thing?",
+      "4 It is the Lord that ruleth the sea; the voice of the Lord is mighty in operation * the voice of the Lord is a glorious voice.",
+    ]) {
+      const text = pointText(verse, "8.G").text;
+      const half = syllables(text, "8.G", 0, "mediant");
+      const accent = half.findIndex((s) => s.accent);
+      for (const step of [-1, 1]) {
+        const moved = moveAccents(text, "8.G", 0, "mediant", [half[accent + step]!]);
+        expect(moved.split("*")[0]).not.toMatch(/\p{L}-\p{L}/u);
+      }
+    }
+  });
 });
 
 describe("nucleus", () => {

@@ -144,8 +144,11 @@ test("points text of your own", async ({ page }) => {
   await expect(accents(page, 0, "mediant")).toHaveCount(2);
 });
 
-test("sings a range of verses", async ({ page }) => {
+test("sings a range of verses, keeping the edits of verses still in it", async ({ page }) => {
   await open(page);
+  await accents(page, 2, "termination").focus();
+  await page.keyboard.press("ArrowLeft");
+  const edited = (await text(page)).split("\n")[2]!;
   await page.locator("#from").fill("2");
   await page.locator("#from").dispatchEvent("change");
   await page.locator("#to").fill("4");
@@ -154,10 +157,39 @@ test("sings a range of verses", async ({ page }) => {
   await expect(page.locator(".verse")).toHaveCount(5);
   await expect(page.locator(".verse .num").first()).toHaveText("2");
   await expect(page).toHaveURL(/verses=2-4/);
+  expect((await text(page)).split("\n")[1]).toBe(edited);
+  await expect(page.locator("#status")).toContainText("pointing edited");
+  // Ctrl+Z in a verse field is the field's own.
+  await page.locator("#to").focus();
+  await page.keyboard.press("Control+z");
+  expect((await text(page)).split("\n")[1]).toBe(edited);
   // Each end of the range was its own change.
   await page.getByRole("button", { name: "Undo" }).click();
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.locator(".verse")).toHaveCount(6 + 2);
+  expect((await text(page)).split("\n")[2]).toBe(edited);
+});
+
+test("the check button visits each flagged half in turn", async ({ page }) => {
+  await open(page, "#psalm=1&tone=8.G");
+  const flagged = await page.locator(".acc.unsure").evaluateAll((els) => [
+    ...new Set(els.map((el) => `${el.closest<HTMLElement>(".verse")!.dataset.verse}:${el.dataset.part}`)),
+  ]);
+  expect(flagged.length).toBeGreaterThan(2);
+  const focused = () =>
+    page.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      return `${el.closest<HTMLElement>(".verse")!.dataset.verse}:${el.dataset.part}`;
+    });
+  const check = page.locator("#check");
+  await check.click();
+  expect(await focused()).toBe(flagged[0]);
+  // Fixing the first takes nothing from the rest.
+  await page.keyboard.press("ArrowLeft");
+  await check.click();
+  expect(await focused()).toBe(flagged[1]);
+  await check.click();
+  expect(await focused()).toBe(flagged[2]);
 });
 
 test("copies the pointing for a word processor", async ({ page, context }) => {

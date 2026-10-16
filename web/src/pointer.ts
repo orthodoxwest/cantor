@@ -89,7 +89,8 @@ const clean = (text: string) =>
 
 function sourceText(): string {
   if (state.psalm === OWN) {
-    const own = clean(state.own).trim();
+    // Without blank lines, so that a line of the text is a verse of the pointing.
+    const own = clean(state.own).split("\n").filter((l) => l.trim()).join("\n");
     return state.gloria ? [own, ...psalmText([], 1, true).split("\n")].filter(Boolean).join("\n") : own;
   }
   const entry = psalter.get(state.psalm) ?? psalter.get(DEFAULT.psalm)!;
@@ -110,6 +111,38 @@ function repoint(): void {
   const { text, unsure } = pointText(sourceText(), state.tone);
   state.auto = state.text = text;
   state.unsure = new Set(unsure);
+}
+
+/** A line's place that outlasts a change of range: its verse number, or its line of the Gloria. */
+function lineKey(line: string, i: number, count: number): string {
+  const number = line.match(/^(\d+) /)?.[1];
+  if (number) return `v${number}`;
+  return state.gloria && i >= count - GLORIA.length ? `g${count - i}` : `l${i}`;
+}
+
+/** Points the source afresh for the tone, keeping the hand edits of lines still in it. */
+function repointKeepingEdits(): void {
+  const old = state.text.split("\n");
+  const auto = state.auto.split("\n");
+  const edited = new Map<string, { line: string; unsure: Half[] }>();
+  old.forEach((line, i) => {
+    if (line === auto[i]) return;
+    const unsure = (["mediant", "termination"] as const).filter((part) => state.unsure.has(halfKey(i, part)));
+    edited.set(lineKey(line, i, old.length), { line, unsure });
+  });
+  repoint();
+  if (!edited.size) return;
+  const lines = state.text.split("\n");
+  lines.forEach((line, i) => {
+    const edit = edited.get(lineKey(line, i, lines.length));
+    if (!edit) return;
+    lines[i] = edit.line;
+    for (const part of ["mediant", "termination"] as const) {
+      if (edit.unsure.includes(part)) state.unsure.add(halfKey(i, part));
+      else state.unsure.delete(halfKey(i, part));
+    }
+  });
+  state.text = lines.join("\n");
 }
 
 function snapshot(): Snapshot {
@@ -185,11 +218,11 @@ els.gloria.addEventListener("change", () => {
   pushUndo();
   state.gloria = els.gloria.checked;
   // The Gloria comes and goes at the end, so hand edits to the verses stay.
-  const lines = state.text.split("\n");
+  const lines = state.text ? state.text.split("\n") : [];
   if (state.gloria) {
     const gloria = pointText(GLORIA.join("\n"), state.tone);
-    state.text += "\n" + gloria.text;
-    state.auto += "\n" + gloria.text;
+    state.text = [...lines, gloria.text].join("\n");
+    state.auto = [...(state.auto ? [state.auto] : []), gloria.text].join("\n");
     for (const key of gloria.unsure) {
       const [v, part] = key.split(":") as [string, Half];
       state.unsure.add(halfKey(Number(v) + lines.length, part));
@@ -219,7 +252,7 @@ for (const input of [els.from, els.to]) {
     if (String(state.verses) === String(before)) return syncControls();
     undoStack.push({ ...snapshot(), verses: before });
     els.undo.disabled = false;
-    repoint();
+    repointKeepingEdits();
     refresh({ tone: false });
   });
 }
@@ -256,7 +289,7 @@ function flushOwn(): boolean {
 
 els.undo.addEventListener("click", undo);
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z" && !(e.target instanceof HTMLTextAreaElement)) {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z" && !(e.target instanceof Element && e.target.closest("input, textarea, [contenteditable]"))) {
     e.preventDefault();
     undo();
   }
@@ -500,12 +533,19 @@ els.verses.addEventListener("keydown", (e) => {
   if (index !== null) focusAccent(verse, part, index);
 });
 
-let checkAt = -1;
+/** The half last taken to by the check button, as its place in the psalm. */
+let checked = -1;
 els.check.addEventListener("click", () => {
+  // One stop a half, the first after the last (in the psalm's order), so a half fixed since
+  // takes nothing from the rest.
+  const order = (el: HTMLElement) => {
+    const { verse, part } = halfOf(el);
+    return verse * 2 + (part === "termination" ? 1 : 0);
+  };
   const all = [...els.verses.querySelectorAll<HTMLElement>(".acc.unsure")];
   if (!all.length) return;
-  checkAt = (checkAt + 1) % all.length;
-  const next = all[checkAt]!;
+  const next = all.find((el) => order(el) > checked) ?? all[0]!;
+  checked = order(next);
   next.scrollIntoView({ block: "center", behavior: "smooth" });
   next.focus({ preventScroll: true });
 });

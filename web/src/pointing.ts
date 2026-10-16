@@ -71,13 +71,6 @@ function accentedSyllables(text: string, tone: string, verse: number, part: Half
   );
 }
 
-/** One half's syllables as the display splits them, accents off: "glo|ri|ous". */
-function halfSyllables(text: string, tone: string, verse: number, part: Half): string {
-  return (psalmDisplay(text, tone).verses[verse]?.runs ?? [])
-    .flatMap((r) => (r.kind === "syllable" && r.part === part ? [[...r.text].map(unaccent).join("")] : []))
-    .join("|");
-}
-
 /**
  * Re-points one half-verse with its accents on the syllables at `accents` (spans of syllables
  * in `text`). The half's old marks go; the acutes go on each syllable's vowel; and the `·`
@@ -136,18 +129,28 @@ export function moveAccents(
     );
     if (!first) return marked;
     const at = first.sourceUtf16Start;
-    if (splits.has(at - 1)) return marked.slice(0, at - 1) + "·" + marked.slice(at);
-    const wordStart = at === halfStart || marked[at - 1] === " ";
-    return marked.slice(0, at) + (wordStart ? "· " : "·") + marked.slice(at);
+    // A kept split before the cadence is sung on the tenor either way: drop it rather than
+    // print a hyphen inside the word.
+    let head = marked.slice(0, at);
+    for (const i of [...splits].filter((i) => i < at - 1).sort((a, b) => b - a)) {
+      head = head.slice(0, i) + head.slice(i + 1);
+    }
+    const tail = marked.slice(at);
+    if (splits.has(at - 1)) return head.slice(0, -1) + "·" + tail;
+    const wordStart = at === halfStart || head.at(-1) === " ";
+    return head + (wordStart ? "· " : "·") + tail;
   };
-  const was = halfSyllables(text, tone, verse, part);
-  const plain = build(false);
-  const result = halfSyllables(plain, tone, verse, part) === was ? plain : build(true);
-  // An accent can join syllables the syllabifier had apart ("Is·ráel"): refuse rather than
-  // put it somewhere else.
-  if (accentedSyllables(result, tone, verse, part).join("|") !== wanted.join("|")) {
-    throw new Error(`The accent can't go on “${wanted.join("”, “")}” here`);
-  }
+  // Each accent must land on the syllable asked for, or (where the display had run two
+  // syllables of a split word together, "ope·rátion") on its first part. An accent can also
+  // join syllables the syllabifier had apart ("Is·ráel"): refuse rather than put it elsewhere.
+  const lands = (result: string): boolean => {
+    const got = accentedSyllables(result, tone, verse, part);
+    return got.length === wanted.length && got.every((g, i) => wanted[i]!.startsWith(g));
+  };
+  // Without the hand's splits the syllabifier splits each word whole; with them, the cadence
+  // keeps the hand's syllables.
+  const result = [build(false), build(true)].find(lands);
+  if (!result) throw new Error(`The accent can't go on “${wanted.join("”, “")}” here`);
   return result;
 }
 

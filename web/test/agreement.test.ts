@@ -1,5 +1,7 @@
-// The pointing evaluation on a small hand-pointed set written for the test (the real
-// corpus is private; scripts/pointing-eval.mjs runs it locally).
+// The pointing evaluation on a small hand-pointed set written for the test, mostly as the
+// pointer points it today: a gate on the method and on the pointer's choices for these
+// verses, not a measure of its accuracy (the real corpus is private;
+// scripts/pointing-eval.mjs measures that locally).
 import { init } from "neuma";
 import { beforeAll, describe, expect, it } from "vitest";
 import { compareVerse, plain, shapes, summarize, toneShapes } from "../../scripts/agreement.mjs";
@@ -42,13 +44,12 @@ describe("pointing evaluation", () => {
     ]);
   });
 
-  it("agrees with the hand on most half-verses", () => {
+  it("agrees with the hand on every half-verse but one", () => {
     const results = HAND.flatMap((v) => compareVerse(v, "8", toneShapes(TONES)));
     expect(results).toHaveLength(12);
     expect(results.every((r) => r.builtin)).toBe(true);
-    const { agreement } = summarize(results);
-    // The floor the pointer must keep; it agrees on more today.
-    expect(agreement).toBeGreaterThanOrEqual(0.75);
+    expect(results.map((r, i) => (r.agree ? null : `${Math.floor(i / 2)}:${r.part}`)).filter(Boolean)).toEqual(["5:termination"]);
+    expect(summarize(results).agreement).toBeCloseTo(11 / 12);
   });
 
   it("counts a disagreement", () => {
