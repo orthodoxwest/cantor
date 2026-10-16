@@ -77,7 +77,8 @@ export function chunksDue(next: number, horizon: number, size: number, total: nu
 }
 
 /** A renderer and the voice loaded into it. A call that traps leaves the renderer's state
- * mid-use for good (it aborts without unwinding), so after one nothing more is asked of it. */
+ * mid-use for good (it aborts without unwinding), so a trapped renderer is not asked to free
+ * anything, and the table replaces it before the next part is made. */
 interface Renderer {
   wasm: Exports;
   voice: number;
@@ -97,6 +98,9 @@ function call<T>(r: Renderer, f: (wasm: Exports) => T): T {
 
 /** A set of sung vowels to sing with. */
 export class VoiceTable {
+  /** A fresh renderer being opened, shared by every `renew` that waits for it. */
+  private opening: Promise<void> | undefined;
+
   private constructor(
     private renderer: Renderer,
     private readonly open: () => Promise<Renderer>,
@@ -130,7 +134,15 @@ export class VoiceTable {
 
   /** Replaces a renderer that has trapped with a fresh one, so the voice sings again. */
   async renew(): Promise<void> {
-    if (this.renderer.trapped) this.renderer = await this.open();
+    if (!this.renderer.trapped) return;
+    this.opening ??= this.open()
+      .then((renderer) => {
+        this.renderer = renderer;
+      })
+      .finally(() => {
+        this.opening = undefined;
+      });
+    await this.opening;
   }
 
   /** A part to sing. `gabc` is read only for its `language:` header; without one the language
