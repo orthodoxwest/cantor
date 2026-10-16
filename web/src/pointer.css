@@ -31,6 +31,9 @@
   gap: 0.4rem;
   align-items: center;
 }
+.pointer label[hidden] {
+  display: none;
+}
 .pointer select,
 .pointer button,
 .pointer textarea {

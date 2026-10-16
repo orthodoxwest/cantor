@@ -30,6 +30,29 @@ describe("api", () => {
     expect((await get("/api/chants/missing")).status).toBe(404);
   });
 
+  it("serves a psalm's booklet pointing, its halves included, to a known caller", async () => {
+    const res = await get("/api/pointing/116", { "X-Dev-User": "student" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await res.json()).toEqual([
+      {
+        id: "test/1",
+        label: "viii.1",
+        tone: "8.G",
+        nearest: "8.G",
+        match: "exact",
+        section: "Test",
+        verses: [{ n: 1, pointed: "I am well · pléased * that the Lord hath · héard" }],
+      },
+    ]);
+    expect(await (await get("/api/pointing/1", { "X-Dev-User": "student" })).json()).toEqual([]);
+    expect((await get("/api/pointing/x", { "X-Dev-User": "student" })).status).toBe(404);
+  });
+
+  it("keeps the booklets' pointing from strangers", async () => {
+    expect((await get("/api/pointing/116")).status).toBe(401);
+  });
+
   it("names the dev user from the header", async () => {
     const res = await get("/api/me", { "X-Dev-User": "student" });
     expect(res.status).toBe(200);
