@@ -13,6 +13,7 @@ declare global {
       drones: number;
       centre: number | null;
       loop: [number, number] | null;
+      replayed: { visited: number[]; playing: boolean };
       sung: Array<{ midi: number; start: number; duration: number }>;
       voice: "neutral" | "recorded" | "none";
       heard: () =>
