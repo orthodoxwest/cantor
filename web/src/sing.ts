@@ -8,7 +8,10 @@ import { describePitch } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
+import { offerSignIn } from "./beam";
 import { neutralTable, VoiceTable } from "./singer";
+
+void offerSignIn();
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);

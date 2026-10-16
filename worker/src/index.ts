@@ -77,4 +77,12 @@ app.get("/api/me", async (c) => {
   return user ? c.json(user) : c.json({ error: "unauthorized" }, 401);
 });
 
+// Signing in: Access covers this path, so reaching it means the visitor has signed in; it sends
+// them back to the page they came from, which must be a path on this site.
+app.get("/signin", (c) => {
+  const next = c.req.query("next") ?? "";
+  c.header("Cache-Control", "no-store");
+  return c.redirect(/^\/(?!\/)[^\\\x00-\x20]*$/.test(next) ? next : "/", 302);
+});
+
 export default app;

@@ -38,6 +38,17 @@ describe("api", () => {
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
+  it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {
+    const to = async (next: string) => (await get(`/signin?next=${encodeURIComponent(next)}`)).headers.get("Location");
+    expect(await to("/library?q=light#lumen-gentium")).toBe("/library?q=light#lumen-gentium");
+    for (const next of ["//evil.example", "/\\evil.example", "https://evil.example/", "/\t/evil.example", "library", ""])
+      expect(await to(next)).toBe("/");
+    const res = await get("/signin");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("returns one chant with its GABC", async () => {
     const res = await get("/api/chants/ubi-caritas");
     expect(res.status).toBe(200);

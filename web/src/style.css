@@ -152,12 +152,15 @@ a {
   max-width: var(--measure);
   margin: 0 auto;
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
   gap: 1rem;
 }
+.brand {
+  margin-right: auto;
+}
 .brand,
-.beam nav a {
+.beam nav a,
+.signin {
   font-size: 0.82rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -175,7 +178,8 @@ a {
   display: flex;
   gap: 1.25rem;
 }
-.beam nav a {
+.beam nav a,
+.signin {
   color: var(--muted);
   letter-spacing: 0.06em;
   padding-block: 0.75rem;
@@ -185,8 +189,14 @@ a {
   color: var(--text);
   box-shadow: inset 0 -1px var(--rubric);
 }
+.signin {
+  color: var(--rubric);
+  border-left: 1px solid var(--gold-line);
+  padding-left: 1rem;
+}
 @media (hover: hover) {
-  .beam nav a:hover {
+  .beam nav a:hover,
+  .signin:hover {
     color: var(--text);
   }
 }

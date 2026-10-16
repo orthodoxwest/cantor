@@ -71,3 +71,18 @@ test("a piece the visitor may not see is not in their library", async ({ page })
   await expect(page.locator("#count")).toHaveText("That piece is not in the library.");
   await expect(page.locator("#piece")).toBeHidden();
 });
+
+test("a visitor the site does not know is offered a sign-in that returns them to the page", async ({ page }) => {
+  await page.route("/api/me", (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }));
+  await page.goto("/library#lumen-gentium");
+  const signIn = page.getByRole("link", { name: "Sign in" });
+  await expect(signIn).toHaveAttribute("href", "/signin?next=%2Flibrary%23lumen-gentium");
+  await expect(page.getByRole("navigation", { name: "Pages" }).getByRole("link")).toHaveCount(3);
+});
+
+test("a signed-in visitor is not offered a sign-in", async ({ page }) => {
+  await page.route("/api/me", (route) => route.fulfill({ json: { id: "abc", email: null } }));
+  await page.goto("/library");
+  await expect(page.locator("#results > li").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+});
