@@ -1,6 +1,6 @@
 //! CREPE (full), an offline pitch oracle: a large convolutional tracker, too slow to listen
-//! with, run to label takes so the scorer can be checked against a judge it shares nothing
-//! with. The model is built by `scripts/crepe.py` from torchcrepe's MIT-licensed weights and
+//! with, run to label takes so the scorer can be checked against a tracker not its own. The
+//! model is built by `scripts/crepe.py` from torchcrepe's MIT-licensed weights and
 //! is never committed; it is loaded from a path.
 
 use std::path::Path;
@@ -21,6 +21,9 @@ const BIN0_CENTS: f32 = 1_997.379_4;
 const SPREAD: usize = 4;
 /// A frame is voiced when its strongest activation is at least this.
 pub const VOICED: f32 = 0.5;
+/// Changes when the same model's activations would decode to different labels, so caches of
+/// labels can key on it.
+pub const DECODER_VERSION: u32 = 1;
 /// Frames whose audio peaks below this are digital silence, which the model never saw.
 const SILENCE_PEAK: f32 = 1e-3;
 
@@ -71,6 +74,9 @@ impl Crepe {
                 let input = tract_ndarray::Array2::from_shape_vec((1, WINDOW), normalized(&frame))?;
                 let out = self.plan.run(tvec!(input.into_tvalue()))?;
                 let activations = out[0].to_plain_array_view::<f32>()?;
+                if activations.len() != BINS {
+                    tract_onnx::tract_core::internal::bail!("the model gave {} activations, not {BINS}", activations.len());
+                }
                 Ok(decode(&activations.iter().copied().collect::<Vec<f32>>()))
             })
             .collect()

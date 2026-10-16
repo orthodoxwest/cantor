@@ -177,23 +177,24 @@ struct OracleStats {
     /// The oracle's mean distance from the truth over the notes it heard, where the truth
     /// is known (synthetic takes).
     tracking_cents: Option<f32>,
-    /// The judge's summaries and key on the oracle's labels, counted as for the scorer's.
+    /// The judge's summaries and key on the oracle's labels, counted as for the scorer's; the
+    /// key only where the truth is known.
     summary_errors: u32,
-    key_error_cents: f32,
+    key_error_cents: Option<f32>,
 }
 
 impl OracleStats {
     fn of(takes: &[Judged]) -> Option<OracleStats> {
         let (mut sung, mut heard, mut compared, mut disagreements) = (0u32, 0u32, 0u32, 0u32);
         let (mut errors, mut tracked) = (0.0f32, 0u32);
-        let (mut summary_errors, mut key_error_cents) = (0u32, 0.0f32);
+        let (mut summary_errors, mut key_error_cents) = (0u32, None::<f32>);
         for take in takes {
             let oracle = take.oracle.as_ref()?;
             let v = &oracle.verdict;
             if v.outcome == Outcome::Heard {
                 summary_errors += u32::from(summary_wrong(v, take.planted_drift));
                 if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
-                    key_error_cents = key_error_cents.max(fold(k - t).abs());
+                    key_error_cents = Some(key_error_cents.unwrap_or(0.0).max(fold(k - t).abs()));
                 }
             }
             for (i, (o, r)) in oracle.report.notes.iter().zip(&take.report.notes).enumerate() {
@@ -607,6 +608,7 @@ pub fn run(
     let mut gate_failures = Vec::new();
     let mut baseline_failures = Vec::new();
     let mut oracle_md = String::new();
+    let mut oracle_console = String::new();
     for (name, gate, judged) in &suites {
         let metrics = Metrics::of(judged);
         let oracle = OracleStats::of(judged);
@@ -660,9 +662,14 @@ pub fn run(
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
         if let Some(o) = oracle {
             let cents = o.tracking_cents.map_or("-".to_string(), |c| format!("{c:.2}"));
+            let key = o.key_error_cents.map_or("-".to_string(), |c| format!("{c:.0}"));
+            oracle_console.push_str(&format!(
+                "{name:<22} {:>6.3} {:>8} {:>8} {cents:>7} {:>8} {key:>6}\n",
+                o.heard, o.compared, o.disagreements, o.summary_errors
+            ));
             oracle_md.push_str(&format!(
-                "| {name} | {:.3} | {} | {} | {cents} | {} | {:.0} |\n",
-                o.heard, o.compared, o.disagreements, o.summary_errors, o.key_error_cents
+                "| {name} | {:.3} | {} | {} | {cents} | {} | {key} |\n",
+                o.heard, o.compared, o.disagreements, o.summary_errors
             ));
         }
         outputs.push(SuiteOutput {
@@ -688,11 +695,17 @@ pub fn run(
     }
 
     if !oracle_md.is_empty() {
-        let table = format!(
-            "| suite | oracle heard | notes compared | disagree with the scorer | oracle \\|cents\\| | oracle summary errors | oracle key error |\n|---|--:|--:|--:|--:|--:|--:|\n{oracle_md}"
+        let note = format!(
+            "The oracle (CREPE), not gated. Heard: of the notes sung, the share it gave a pitch. \
+             Disagree: notes both heard more than {GROSS_CENTS:.0} cents apart, octaves aside."
         );
-        println!("\nThe oracle (CREPE), not gated:\n{table}");
-        md.push_str(&format!("\nThe oracle (CREPE), not gated:\n\n{table}"));
+        println!(
+            "\n{note}\n{:<22} {:>6} {:>8} {:>8} {:>7} {:>8} {:>6}\n{oracle_console}",
+            "suite", "heard", "compared", "disagree", "|cents|", "summary", "key"
+        );
+        md.push_str(&format!(
+            "\n{note}\n\n| suite | oracle heard | notes compared | disagree with the scorer | oracle \\|cents\\| | oracle summary errors | oracle key error |\n|---|--:|--:|--:|--:|--:|--:|\n{oracle_md}"
+        ));
     }
     write_json(&out_dir.join(format!("eval{tag}.json")), &outputs)?;
     std::fs::write(out_dir.join(format!("eval{tag}.md")), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;

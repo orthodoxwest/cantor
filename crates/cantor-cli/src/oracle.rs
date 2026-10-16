@@ -1,7 +1,7 @@
 //! The offline oracle: CREPE's pitch for each note, read at a few points across the part the
 //! scorer judges, so the scorer's per-note pitch can be checked against a tracker that
-//! shares nothing with it. Labels are cached under `out/oracle/` by a hash of the audio and
-//! the times asked for.
+//! shares no tracker with it. Labels are cached under `out/oracle/` by a hash of the model,
+//! its decoder, the audio and the times asked for.
 
 use std::path::{Path, PathBuf};
 
@@ -15,13 +15,17 @@ const POINTS_PER_NOTE: usize = 5;
 pub struct Oracle {
     crepe: Crepe,
     cache: PathBuf,
+    /// The model's bytes and decoder, hashed, which every cache key starts from.
+    model_key: u64,
 }
 
 impl Oracle {
     pub fn load(model: &Path, cache: PathBuf) -> Result<Oracle, String> {
+        let bytes = std::fs::read(model).map_err(|e| format!("{}: {e}", model.display()))?;
+        let model_key = fnv(FNV_OFFSET, bytes.iter().copied().chain(cantor_crepe::DECODER_VERSION.to_le_bytes()));
         let crepe = Crepe::load(model).map_err(|e| format!("{}: {e}", model.display()))?;
         std::fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
-        Ok(Oracle { crepe, cache })
+        Ok(Oracle { crepe, cache, model_key })
     }
 
     /// Frames for the scorer to read: CREPE's pitch at [`POINTS_PER_NOTE`] points evenly
@@ -56,7 +60,8 @@ impl Oracle {
     }
 
     fn pitch_at(&self, samples: &[f32], sample_rate: f32, times: &[f32]) -> Result<Vec<Option<f32>>, String> {
-        let path = self.cache.join(format!("{:016x}.json", key(samples, sample_rate, times)));
+        let name = format!("{:016x}", key(self.model_key, samples, sample_rate, times));
+        let path = self.cache.join(format!("{name}.json"));
         if let Some(midi) = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str::<Vec<Option<f32>>>(&text).ok())
@@ -69,7 +74,11 @@ impl Oracle {
             .pitch_at(samples, sample_rate, times)
             .map_err(|e| format!("CREPE: {e}"))?;
         let text = serde_json::to_string(&midi).map_err(|e| e.to_string())?;
-        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Written aside and renamed, so an interrupted run never leaves half a file to read.
+        let partial = self.cache.join(format!("{name}.{}.partial", std::process::id()));
+        std::fs::write(&partial, text)
+            .and_then(|()| std::fs::rename(&partial, &path))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(midi)
     }
 }
@@ -84,15 +93,19 @@ fn nearest(frames: &[Frame], t: f32) -> Option<&Frame> {
         .min_by(|a, b| (a.t - t).abs().total_cmp(&(b.t - t).abs()))
 }
 
-/// FNV-1a over the audio, its rate and the times.
-fn key(samples: &[f32], sample_rate: f32, times: &[f32]) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for x in samples.iter().chain([&sample_rate]).chain(times) {
-        for b in x.to_bits().to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// FNV-1a over `bytes`, from `h`.
+fn fnv(h: u64, bytes: impl IntoIterator<Item = u8>) -> u64 {
+    bytes
+        .into_iter()
+        .fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// FNV-1a over the model's key, the audio, its rate and the times.
+fn key(model_key: u64, samples: &[f32], sample_rate: f32, times: &[f32]) -> u64 {
+    let floats = samples.iter().chain([&sample_rate]).chain(times);
+    fnv(model_key, floats.flat_map(|x| x.to_bits().to_le_bytes()))
 }
 
 #[cfg(test)]
@@ -123,11 +136,12 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_key_changes_with_audio_rate_and_times() {
-        let k = key(&[0.1, 0.2], 16_000.0, &[0.5]);
-        assert_ne!(k, key(&[0.1, 0.25], 16_000.0, &[0.5]));
-        assert_ne!(k, key(&[0.1, 0.2], 44_100.0, &[0.5]));
-        assert_ne!(k, key(&[0.1, 0.2], 16_000.0, &[0.6]));
-        assert_eq!(k, key(&[0.1, 0.2], 16_000.0, &[0.5]));
+    fn the_cache_key_changes_with_model_audio_rate_and_times() {
+        let k = key(1, &[0.1, 0.2], 16_000.0, &[0.5]);
+        assert_ne!(k, key(2, &[0.1, 0.2], 16_000.0, &[0.5]));
+        assert_ne!(k, key(1, &[0.1, 0.25], 16_000.0, &[0.5]));
+        assert_ne!(k, key(1, &[0.1, 0.2], 44_100.0, &[0.5]));
+        assert_ne!(k, key(1, &[0.1, 0.2], 16_000.0, &[0.6]));
+        assert_eq!(k, key(1, &[0.1, 0.2], 16_000.0, &[0.5]));
     }
 }

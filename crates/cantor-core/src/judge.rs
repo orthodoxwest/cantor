@@ -39,8 +39,9 @@ const VERSE_AGREE: f32 = 0.6;
 const VERSE_NOTE_CENTS: f32 = 100.0;
 /// A verse is silent when at least this share of its notes' frames were below the floor.
 const VERSE_SILENT: f32 = 0.8;
-/// Notes further than this from the drift line are left out of its second fit.
-const DRIFT_OUTLIER_CENTS: f32 = 100.0;
+/// Notes further than this from the drift line, out of tune by the take's own measure, are
+/// left out of its second fit.
+const DRIFT_OUTLIER_CENTS: f32 = IN_TUNE_CENTS;
 /// Pairs of notes closer in time than this are left out of the drift's slope.
 const DRIFT_MIN_DT_S: f32 = 0.5;
 
@@ -199,7 +200,9 @@ fn is_masked(r: &NoteResult) -> bool {
 /// candidate; the one with the most note duration within [`KEY_WINDOW_CENTS`] of it wins (the
 /// earliest on a tie), and the key is the median of the errors in its window, at the mean
 /// time of those notes. A later verse sung a tone high is then a verse off the key, whatever
-/// share of the take it is. Distances are octave-agnostic, as the errors are.
+/// share of the take it is. Distances are octave-agnostic, as the errors are. A take scooping
+/// into short notes with a wide vibrato reads some tens of cents flat; reading each note past
+/// its scoop alone did not narrow that.
 fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
     let heard_in = |pick: &dyn Fn(&Note) -> bool| -> Vec<(f32, f32, f32)> {
         results
@@ -243,9 +246,10 @@ fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
 /// the heard notes' errors from the key, fitted twice. The first fit pairs notes only within
 /// a verse: a tone sinking moves within each verse, while a verse sung off is level inside
 /// and would otherwise read as a slope across verses. The second leaves out the notes further
-/// than [`DRIFT_OUTLIER_CENTS`] from the first line, so faults and verses sung off do not
-/// tilt it, and pairs the rest across verses too: within one verse a singer's slow wander
-/// can rise or fall by tens of cents, which the first line would carry across the take.
+/// than [`DRIFT_OUTLIER_CENTS`] from the first line, faults and verses sung that far off, and
+/// pairs the rest across verses too: within one verse a singer's slow wander can rise or fall
+/// by tens of cents, which the first line would carry across the take. A verse sung off by
+/// less than the cut tilts the line by up to its offset, short of [`DRIFT_CENTS`].
 fn drift_slope(notes: &[Note], errors: &[Option<f32>], t0: f32) -> f32 {
     let points: Vec<(u32, f32, f32)> = errors
         .iter()
@@ -419,6 +423,28 @@ mod tests {
         assert!(v.steady, "{}", v.drift_cents);
         assert!(v.drift_cents.abs() < 30.0, "{}", v.drift_cents);
         assert!(v.marks.is_empty(), "{v:?}");
+    }
+
+    #[test]
+    fn a_verse_sung_off_is_not_a_drift() {
+        let c: Vec<Option<f32>> = (0..10).map(|i| Some(if i < 5 { 0.0 } else { 80.0 })).collect();
+        let v = judge(&notes(), &report(&c));
+        assert!(v.steady, "{}", v.drift_cents);
+        assert!(v.drift_cents.abs() < 30.0, "{}", v.drift_cents);
+        assert_eq!(v.in_tune, 5);
+    }
+
+    #[test]
+    fn a_drift_under_a_step_the_other_way_is_still_a_drift() {
+        // Sinking 20 cents a second, the second verse a step sharp: still sinking.
+        let c: Vec<Option<f32>> = notes()
+            .iter()
+            .enumerate()
+            .map(|(i, n)| Some(-20.0 * n.start_s + if i < 5 { 0.0 } else { 80.0 }))
+            .collect();
+        let v = judge(&notes(), &report(&c));
+        assert!(!v.steady, "{}", v.drift_cents);
+        assert!(v.drift_cents < -DRIFT_CENTS, "{}", v.drift_cents);
     }
 
     #[test]
