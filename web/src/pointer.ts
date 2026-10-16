@@ -692,6 +692,10 @@ function sing(verse: number | null): void {
     transpose: state.transpose,
     clock: test ? () => performance.now() / 1000 : undefined,
     onNote: follow,
+    onError: (message) => {
+      els.status.textContent = message;
+      els.status.classList.add("error");
+    },
     onStop: () => {
       els.play.setAttribute("aria-pressed", "false");
       els.play.textContent = "Play";

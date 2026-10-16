@@ -113,6 +113,17 @@ test("singing a verse follows its syllables in order", async ({ page }) => {
   expect(visited.filter((s, i) => s !== visited[i - 1])).toEqual(starts);
 });
 
+test("without the voice, singing says why nothing sounds", async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === "/cantor.wasm",
+    (route) => route.fulfill({ status: 404 }),
+  );
+  await open(page);
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(page.locator("#status")).toHaveText(/could not be loaded/);
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+});
+
 test("exports the setting as GABC and text", async ({ page }) => {
   await open(page);
   const [gabc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "GABC" }).click()]);

@@ -3,7 +3,7 @@
 import { type TimelineNote, noteAtTime } from "neuma";
 import { audioContext } from "./audio";
 import { DO } from "./notes";
-import { fromTimeline, neutralTable, octaveShift, sing, type Singing } from "./singer";
+import { fromTimeline, neutralTable, sing, type Singing } from "./singer";
 
 /** The pointer sings English. */
 const GABC = "language: English;\n%%\n";
@@ -11,12 +11,14 @@ const GABC = "language: English;\n%%\n";
 export interface PlayOptions {
   /** Seconds per pulse. */
   pulse: number;
-  /** Semitones above where the voice is at home. */
+  /** Semitones above the clef's do at C4. */
   transpose: number;
   /** Seconds, for following along; defaults to the audio context's clock. */
   clock?: () => number;
   onNote: (note: TimelineNote | null) => void;
   onStop: () => void;
+  /** Told why nothing could be sung, before onStop. */
+  onError?: (message: string) => void;
 }
 
 export class Player {
@@ -40,17 +42,13 @@ export class Player {
       ctx = await audioContext();
       const table = await neutralTable();
       if (!current()) return;
-      const first = notes[0]!.start;
-      // The run moves by whole octaves to where the voice is at home, then by the pitch chosen.
-      const shift = octaveShift(
-        notes.map((n) => DO + n.semitones),
-        table.centre,
-      );
-      const midi = (semitones: number) => DO + semitones + shift + options.transpose;
-      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, first), { table, gabc: GABC });
+      const midi = (semitones: number) => DO + options.transpose + semitones;
+      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC });
     } catch (error) {
       console.error("pointer:", error);
-      if (this.options === options) this.stop();
+      if (this.options !== options) return;
+      options.onError?.("The voice could not be loaded, so nothing can be sung.");
+      this.stop();
       return;
     }
     if (!current()) return singing.stop();
@@ -59,8 +57,9 @@ export class Player {
     const last = notes[notes.length - 1]!;
     const length = last.start + last.duration - first;
     const clock = options.clock ?? (() => ctx.currentTime);
-    // The follower runs on the clock given, from when the singer's first sample plays.
-    const origin = clock() + (singing.start - ctx.currentTime);
+    // The follower runs on the clock given, from when the singer's first sample plays; on the
+    // audio clock, behind by the output's latency.
+    const origin = clock() + (singing.start - ctx.currentTime) + (options.clock ? 0 : ctx.outputLatency || 0);
     const run = { notes: [...notes] };
     this.started = true;
     let shown: TimelineNote | null | undefined;
