@@ -34,7 +34,7 @@ test("play moves the cursor across every note", async ({ page }) => {
 
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   // Within 20 cents of A4.
   await expect
     .poll(() => page.evaluate(() => window.__cantor.frames.some((f) => f.midi !== null && Math.abs(f.midi - 69) < 0.2)), {
@@ -46,16 +46,15 @@ test("listen hears A4 from the microphone", async ({ page }) => {
 
 test("a take started at once after another is heard on its own", async ({ page }) => {
   await open(page);
-  const listen = page.getByRole("button", { name: "Listen" });
-  await listen.click();
+  const listen = () => page.evaluate(() => void window.__cantor.listen());
+  await listen();
   await page.waitForTimeout(3000);
-  await listen.click();
-  await listen.click();
-  await expect(listen).toHaveAttribute("aria-pressed", "true");
+  await listen();
+  await listen();
   // Once the second take has reached the ear, a second of it.
   await expect.poll(() => page.evaluate(() => window.__cantor.heard() !== undefined), { intervals: [50] }).toBe(true);
   await page.waitForTimeout(1000);
-  await listen.click();
+  await listen();
   const heard = await page.evaluate(() => window.__cantor.heard());
   expect(heard).toBeDefined();
   // The second take alone, about a second: not the first (three) nor both (four).
@@ -125,6 +124,6 @@ test("without the renderer the guide is off and listening still works", async ({
   await open(page);
   expect(await page.evaluate(() => window.__cantor.voice)).toBe("none");
   await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
-  await page.getByRole("button", { name: "Listen" }).click();
+  await page.evaluate(() => void window.__cantor.listen());
   await expect(page.locator("#readout")).toHaveText(/^A4 /, { timeout: 15_000 });
 });

@@ -121,7 +121,6 @@ byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
   drawResult();
 });
 
-const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
 const status = byId<HTMLParagraphElement>("status");
 /** Shows `text` in the status line: as an error, or quietly when it is `news` and nothing
@@ -146,30 +145,26 @@ const listener = new Listener(
     const text = frame.midi === null ? "–" : taking ? noteName(frame.midi) : describePitch(frame.midi);
     if (readout.textContent !== text) readout.textContent = text;
   },
-  (error) => {
-    listenButton.setAttribute("aria-pressed", "false");
-    failedListening(error);
-  },
+  (error) => failedListening(error),
 );
-listenButton.addEventListener("click", async () => {
+/** Listens freely, unscored, or stops; the tests hear the microphone this way. A take is the
+ * page's one way to sing and be heard. */
+async function toggleListening(): Promise<void> {
   if (listener.listening) {
     listener.stop();
-    listenButton.setAttribute("aria-pressed", "false");
     listener.heard?.then(
       (h) => setStatus((heardLine = `Heard ${h.seconds.toFixed(1)} s.`), true),
       failedListening,
     );
     return;
   }
-  listenButton.setAttribute("aria-pressed", "true");
   showResult(null);
   try {
     await listener.start();
   } catch (error) {
-    listenButton.setAttribute("aria-pressed", "false");
     readout.textContent = error instanceof Error ? error.message : String(error);
   }
-});
+}
 
 // Play (disabled in the page) waits for the voice; without one the guide stays off and
 // listening still works.
@@ -238,14 +233,14 @@ function showMode(): void {
     : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
 }
 
-async function detect(starting = false): Promise<void> {
+async function detect(take?: number): Promise<void> {
   try {
     detected = headphonesIn(await navigator.mediaDevices.enumerateDevices());
   } catch {
     detected = null;
   }
   // A take keeps the mode it began in.
-  if (taking && !starting) return;
+  if (taking && take !== takes) return;
   if (!chosen) headphonesBox.checked = detected === true;
   showMode();
 }
@@ -293,11 +288,8 @@ async function takeScored(): Promise<void> {
   timing = null;
   // Nothing else sounds or listens during a take.
   guide.stop();
-  if (listener.listening) {
-    listener.stop();
-    listenButton.setAttribute("aria-pressed", "false");
-  }
-  playButton.disabled = listenButton.disabled = picker.disabled = headphonesBox.disabled = true;
+  listener.stop();
+  playButton.disabled = picker.disabled = headphonesBox.disabled = true;
   takeButton.textContent = "Stop";
   readout.textContent = "–";
   readout.setAttribute("aria-live", "off");
@@ -307,7 +299,7 @@ async function takeScored(): Promise<void> {
     const ctx = await audioContext();
     await allowMicrophone();
     if (!going()) return;
-    await detect(true);
+    await detect(take);
     if (!going()) return;
     const worn = headphonesBox.checked;
     // From here the page says nothing it need not: the mode is chosen.
@@ -366,7 +358,6 @@ function endTake(): void {
   cueing?.stop();
   cueing = null;
   playButton.disabled = !guide;
-  listenButton.disabled = false;
   takeButton.textContent = "Sing a take";
   readout.setAttribute("aria-live", "polite");
   picker.disabled = headphonesBox.disabled = false;
@@ -402,6 +393,7 @@ if (test) {
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
     heard: () => listener.heard,
+    listen: () => toggleListening(),
     take: () => timing,
     // Puts `gabc` on the page at `pulse` seconds a pulse, for a take of another chant.
     practise: (gabc: string, pulse: number) => {
