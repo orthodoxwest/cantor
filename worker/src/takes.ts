@@ -190,15 +190,53 @@ takes.get("/:id", async (c) => {
   // A reader not signed in sees which chant was sung, and its score, only for a public chant's
   // take; a private chant (booklet-derived) is shown only to a known caller.
   const open = who !== null || found.public === 1;
+  const { results: comments } = await c.env.DB.prepare(
+    "SELECT id, note, body, by_singer, created_at FROM take_comments WHERE take_id = ? ORDER BY id",
+  )
+    .bind(id)
+    .all<{ id: number; note: number; body: string; by_singer: number; created_at: string }>();
   return c.json({
     id,
     ...record,
+    comments: comments.map(({ by_singer, ...comment }) => ({ ...comment, by: by_singer ? "singer" : "reader" })),
     slug: open ? record.slug : null,
     title: open ? found.title : null,
     gabc: open ? record.gabc : null,
     created_at: found.created_at,
     mine: who?.id === found.user_id,
   });
+});
+
+/** The longest comment, in characters, and the most a take may gather. */
+export const MAX_COMMENT = 2000;
+export const MAX_COMMENTS = 300;
+
+// A comment on one note of a take, from whoever holds its link. The Worker, not the page, says
+// whether the singer wrote it.
+takes.post("/:id/comments", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.json({ error: "forbidden" }, 403);
+  const id = c.req.param("id");
+  const found = await row(c, id);
+  if (!found) return c.json({ error: "not found" }, 404);
+  const sent = (await c.req.json().catch(() => null)) as { note?: unknown; body?: unknown } | null;
+  const note = sent?.note;
+  const body = typeof sent?.body === "string" ? sent.body.trim() : "";
+  if (typeof note !== "number" || !Number.isInteger(note) || note < 0 || note > 10_000 || !body || body.length > MAX_COMMENT)
+    return c.json({ error: "bad request" }, 400);
+  const who = await identity(c.req.raw.headers, c.env);
+  const bySinger = who?.id === found.user_id ? 1 : 0;
+  // At most MAX_COMMENTS a take, counted in the same statement that adds one.
+  const added = await c.env.DB.prepare(
+    `INSERT INTO take_comments (take_id, note, body, by_singer, author_id)
+     SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT count(*) FROM take_comments WHERE take_id = ?1) < ?6
+     RETURNING id, note, body, by_singer, created_at`,
+  )
+    .bind(id, note, body, bySinger, who?.id ?? null, MAX_COMMENTS)
+    .first<{ id: number; note: number; body: string; by_singer: number; created_at: string }>();
+  if (!added) return c.json({ error: "this take has as many comments as it may hold" }, 429);
+  const { by_singer, ...comment } = added;
+  return c.json({ ...comment, by: by_singer ? "singer" : "reader" }, 201);
 });
 
 /** The one byte range `header` asks of `size` bytes: null for the whole (no header, a

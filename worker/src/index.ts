@@ -91,4 +91,15 @@ app.get("/signin", (c) => {
 
 app.route("/api/takes", takes);
 
+// The page a take's link opens. The id is in the path, so the page is never cached by others
+// and gives no referrer to anything it links to; the page reads the take from /api/takes.
+app.get("/take/:id", async (c) => {
+  const page = await c.env.ASSETS.fetch(new URL("/take", c.req.url));
+  const res = new Response(page.body, page);
+  res.headers.set("Cache-Control", "private, no-cache");
+  res.headers.set("Referrer-Policy", "no-referrer");
+  res.headers.set("X-Robots-Tag", "noindex");
+  return res;
+});
+
 export default app;

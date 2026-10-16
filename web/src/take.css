@@ -1,0 +1,101 @@
+/* A sent take (take.ts): the take to play, its score with the ribbon, and comments by note. */
+#audio {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+}
+.ribbon .band[aria-pressed="true"] .band-hit {
+  fill: color-mix(in srgb, var(--trace) 12%, transparent);
+}
+.ribbon .band.unheard {
+  cursor: pointer;
+}
+.ribbon .band:focus-visible .band-hit {
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.pins .pin {
+  fill: var(--trace);
+  pointer-events: none;
+}
+.comments {
+  border-top: 1px solid var(--gold-line);
+  margin-top: 1rem;
+  padding-top: 0.6rem;
+}
+.comments h2 {
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin: 0.4rem 0 0.6rem;
+}
+#comments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#comments li {
+  margin: 0 0 0.9rem;
+}
+#comments li.none {
+  color: var(--muted);
+}
+.comment-head {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.comment-body {
+  margin: 0.15rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#comments li.singer .comment-body {
+  padding-left: 0.8rem;
+  border-left: 2px solid var(--gold-line);
+}
+.note-link {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.comment-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  margin: 1rem 0 2rem;
+}
+.note-pick input {
+  width: 4.5rem;
+  margin-left: 0.4rem;
+  font: inherit;
+}
+.note-words {
+  color: var(--muted);
+}
+.comment-form textarea {
+  grid-column: 1 / -1;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+}
+.comment-form .btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.jump {
+  margin: 0 0 0.75rem;
+}
+.jump a {
+  color: var(--accent);
+}

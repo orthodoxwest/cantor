@@ -192,3 +192,68 @@ describe("takes", () => {
     expect((await get("/api/takes", { "X-Dev-User": "singer" })).status).toBe(404);
   });
 });
+
+describe("comments", () => {
+  const comment = (id: string, sent: unknown, headers: Record<string, string> = {}) =>
+    app.request(
+      `/api/takes/${id}/comments`,
+      { method: "POST", body: typeof sent === "string" ? sent : JSON.stringify(sent), headers: { Origin: ORIGIN, "Content-Type": "application/json", ...headers } },
+      env,
+    );
+
+  it("takes a comment on a note from whoever holds the link, and says when the singer wrote it", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    const reader = await comment(id, { note: 3, body: "  Lighter here.  " });
+    expect(reader.status).toBe(201);
+    expect(await reader.json()).toMatchObject({ note: 3, body: "Lighter here.", by: "reader" });
+    // The page cannot claim to be the singer; the Worker knows the singer.
+    expect(await (await comment(id, { note: 3, body: "Thank you.", by: "singer" }, { "X-Dev-User": "someone" })).json()).toMatchObject({ by: "reader" });
+    expect(await (await comment(id, { note: 3, body: "Will do." }, { "X-Dev-User": "singer" })).json()).toMatchObject({ by: "singer" });
+    const take = await (await get(`/api/takes/${id}`)).json<{ comments: Array<{ note: number; body: string; by: string }> }>();
+    expect(take.comments.map((c) => [c.note, c.body, c.by])).toEqual([
+      [3, "Lighter here.", "reader"],
+      [3, "Thank you.", "reader"],
+      [3, "Will do.", "singer"],
+    ]);
+    const row = await env.DB.prepare("SELECT author_id FROM take_comments WHERE body = 'Will do.'").first();
+    expect(row).toEqual({ author_id: "singer" });
+  });
+
+  it("refuses a comment from another site, on no take, or that is not one", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    expect((await comment(id, { note: 0, body: "x" }, { Origin: "https://evil.example" })).status).toBe(403);
+    expect((await comment("A".repeat(32), { note: 0, body: "x" })).status).toBe(404);
+    for (const bad of [{ note: -1, body: "x" }, { note: 1.5, body: "x" }, { note: "1", body: "x" }, { note: 0, body: "   " }, { note: 0, body: "x".repeat(2001) }, "{"])
+      expect((await comment(id, bad)).status).toBe(400);
+    expect((await (await get(`/api/takes/${id}`)).json<{ comments: unknown[] }>()).comments).toEqual([]);
+  });
+
+  it("holds no more than its share of comments", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    await env.DB.prepare(
+      "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300) INSERT INTO take_comments (take_id, note, body, by_singer) SELECT ?, 0, 'x', 0 FROM n",
+    )
+      .bind(id)
+      .run();
+    expect((await comment(id, { note: 0, body: "one more" })).status).toBe(429);
+  });
+});
+
+describe("a take's page", () => {
+  it("is the app's take page, cached by no one, giving no referrer", async () => {
+    const asked: string[] = [];
+    const ASSETS = {
+      fetch: async (url: string | URL | Request) => {
+        asked.push(new URL(url instanceof Request ? url.url : url).pathname);
+        return new Response("<!doctype html><title>Take</title>", { headers: { "Content-Type": "text/html", "Cache-Control": "public, max-age=3600" } });
+      },
+    };
+    const res = await app.request(`/take/${"A".repeat(32)}`, {}, { ...env, ASSETS } as unknown as Env);
+    expect(res.status).toBe(200);
+    expect(asked).toEqual(["/take"]);
+    expect(await res.text()).toContain("<title>Take</title>");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-cache");
+    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+  });
+});
