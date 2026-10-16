@@ -682,8 +682,11 @@ mod tests {
             ..Profile::default()
         };
         let played = render_take(&notes, &profile, SR, 1).guide.expect("guide");
-        let note = &played[(2.3 * SR) as usize..(2.3 * SR) as usize + 2048];
-        let midi = crate::pitch::detect(note, SR, 1e-4, 0.8).midi.expect("voiced");
-        assert!((midi - 64.0).abs() < 0.1, "{midi}");
+        let (cue, _) = cue_span(&notes).expect("a cue");
+        for t in [cue + 0.1, 2.3] {
+            let at = &played[(t * SR) as usize..(t * SR) as usize + 2048];
+            let midi = crate::pitch::detect(at, SR, 1e-4, 0.8).midi.expect("voiced");
+            assert!((midi - 64.0).abs() < 0.1, "{midi} at {t} s");
+        }
     }
 }
