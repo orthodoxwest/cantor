@@ -53,7 +53,7 @@ test("a take started at once after another is heard on its own", async ({ page }
   await listen.click();
   await expect(listen).toHaveAttribute("aria-pressed", "true");
   // Once the second take has reached the ear, a second of it.
-  await expect.poll(() => page.evaluate(() => window.__cantor.heard() !== undefined)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__cantor.heard() !== undefined), { intervals: [50] }).toBe(true);
   await page.waitForTimeout(1000);
   await listen.click();
   const heard = await page.evaluate(() => window.__cantor.heard());

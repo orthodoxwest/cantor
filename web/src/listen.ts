@@ -108,10 +108,11 @@ export class Listener {
     // The last take is heard before the next starts, so the ear hears one take at a time.
     const last = this.last;
     this.heard = undefined;
+    let ctx: AudioContext;
     let stream: MediaStream;
     try {
       await last;
-      const ctx = await audioContext();
+      ctx = await audioContext();
       this.module ??= ctx.audioWorklet.addModule(WORKLET_URL).catch((error: unknown) => {
         this.module = undefined;
         throw error;
@@ -122,17 +123,25 @@ export class Listener {
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
     } catch (err) {
-      if (!stopped()) this.listening = false;
+      // A start that was stopped gives up quietly.
+      if (stopped()) return;
+      this.listening = false;
       throw err;
     }
     if (stopped()) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
-    const ctx = await audioContext();
     this.stream = stream;
-    const source = ctx.createMediaStreamSource(this.stream);
-    const node = new AudioWorkletNode(ctx, "capture");
+    let source: MediaStreamAudioSourceNode;
+    let node: AudioWorkletNode;
+    try {
+      source = ctx.createMediaStreamSource(stream);
+      node = new AudioWorkletNode(ctx, "capture");
+    } catch (err) {
+      this.stop();
+      throw err;
+    }
     const channel = new MessageChannel();
     if (this.ear?.failed) this.ear = undefined;
     this.ear ??= new Ear((frames) => {
