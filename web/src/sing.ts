@@ -5,6 +5,7 @@ import { Listener } from "./listen";
 import { describePitch } from "./notes";
 import { SAMPLE } from "./sample";
 import { Score } from "./score";
+import { drawMarks } from "./marks";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { neutralTable, VoiceTable } from "./singer";
 
@@ -21,13 +22,16 @@ const score = new Score(byId("score"), new Chant(SAMPLE));
 const cursor = new Cursor(score);
 
 // After a take (for now only through `__cantor.show`, until a take is timed against the
-// chant): the ribbon under the staff, the singer's key, and the note it is re-based on.
+// chant): the ribbon under the staff, the core's marks on the notes, the singer's key, the
+// note the ribbon is re-based on, and the words of the mark tapped.
 const result = byId<HTMLElement>("result");
 const keyText = byId<HTMLParagraphElement>("key");
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
+const why = byId<HTMLParagraphElement>("why");
 let shown: Judged | null = null;
 let base: number | null = null;
+let open: number | null = null;
 
 function drawResult(): void {
   if (!shown) {
@@ -42,10 +46,17 @@ function drawResult(): void {
     score.showStrips(null);
     keyText.textContent = "Too little was heard to show.";
     baseLine.hidden = true;
+    why.hidden = true;
     return;
   }
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
-  score.showStrips((timeline, top) => drawRibbon(timeline.notes, judged.ribbon, top, from, base));
+  score.showStrips(
+    (timeline, room) =>
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base) +
+      drawMarks(timeline.notes, judged.verdict.marks, room.shift, open),
+  );
+  why.hidden = open === null;
+  why.textContent = open === null ? "" : (judged.told[open] ?? "");
   keyText.textContent = `Your key: ${describeKey(key)}.`;
   baseLine.hidden = base === null;
   if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
@@ -55,24 +66,37 @@ function drawResult(): void {
 function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
+  open = null;
   drawResult();
 }
 
-// Tapping a heard note's band re-bases the ribbon on it; tapping it again goes back.
-function rebase(target: EventTarget | null, keyboard: boolean): void {
-  const band = (target as Element | null)?.closest<SVGGElement>("[data-band]");
-  if (!band || !shown || band.classList.contains("unheard")) return;
-  const index = Number(band.dataset.band);
-  base = base === index ? null : index;
+// Tapping a heard note's band re-bases the ribbon on it, and tapping a mark shows its words;
+// tapping either again goes back.
+function tap(target: EventTarget | null, keyboard: boolean): boolean {
+  if (!shown) return false;
+  const el = target as Element | null;
+  const mark = el?.closest<SVGGElement>("[data-mark]");
+  const band = el?.closest<SVGGElement>("[data-band]");
+  let again: string;
+  if (mark) {
+    const k = Number(mark.dataset.mark);
+    open = open === k ? null : k;
+    again = `[data-mark="${k}"]`;
+  } else if (band && !band.classList.contains("unheard")) {
+    const index = Number(band.dataset.band);
+    base = base === index ? null : index;
+    again = `[data-band="${index}"]`;
+  } else {
+    return false;
+  }
   drawResult();
-  // The strips were drawn again; keep a keyboard's place on the band.
-  if (keyboard) score.host.querySelector<SVGGElement>(`[data-band="${index}"]`)?.focus();
+  // The strips were drawn again; keep a keyboard's place.
+  if (keyboard) score.host.querySelector<SVGGElement>(again)?.focus();
+  return true;
 }
-score.host.addEventListener("click", (e) => rebase(e.target, false));
+score.host.addEventListener("click", (e) => tap(e.target, false));
 score.host.addEventListener("keydown", (e) => {
-  if ((e.key !== "Enter" && e.key !== " ") || !(e.target as Element).closest("[data-band]")) return;
-  e.preventDefault();
-  rebase(e.target, true);
+  if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) e.preventDefault();
 });
 byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
   base = null;

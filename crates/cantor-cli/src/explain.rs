@@ -5,12 +5,13 @@
 //! violet under the heard pitch: violet alone is a frame only SwiftF0 voiced (or one under the
 //! take's loudness floor), and violet away from blue is the two trackers disagreeing. When the
 //! oracle listened, each note carries two short bars over the part the scorer judges: the
-//! scorer's pitch for it in blue and the oracle's in black, apart where the two disagree.
+//! scorer's pitch for it in blue and the oracle's in black, apart where the two disagree. Each
+//! mark carries its words (the page's explanation of it) as its title.
 
 use std::fmt::Write;
 
 use cantor_core::score::{SKIP_HEAD, SKIP_TAIL, fold};
-use cantor_core::{Frame, MarkKind, Note, NoteResult, Verdict};
+use cantor_core::{Frame, MarkKind, Note, NoteResult, Verdict, tell};
 
 const WIDTH: f32 = 1400.0;
 const HEIGHT: f32 = 420.0;
@@ -90,7 +91,8 @@ pub fn svg(p: &Picture) -> String {
         };
         let _ = writeln!(
             s,
-            r##"<rect x="{:.1}" y="{TOP}" width="{:.1}" height="{:.1}" fill="#d64545" fill-opacity="0.12" stroke="#d64545"/><text x="{:.1}" y="{}" fill="#b02a2a">{label}</text>"##,
+            r##"<g><title>{}</title><rect x="{:.1}" y="{TOP}" width="{:.1}" height="{:.1}" fill="#d64545" fill-opacity="0.12" stroke="#d64545"/><text x="{:.1}" y="{}" fill="#b02a2a">{label}</text></g>"##,
+            escape(&tell(mark)),
             x(a.start_s),
             (x(b.end_s()) - x(a.start_s)).max(2.0),
             HEIGHT - TOP - BOTTOM,

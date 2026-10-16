@@ -3,8 +3,15 @@
 import type { Chant, LineBox, LinesPage, Timeline, View } from "neuma";
 import { STRIP } from "./ribbon";
 
-/** Draws the ribbon's strips, given where each line's strip starts. */
-export type Strips = (timeline: Timeline, stripTop: (line: number) => number) => string;
+/** Where things go once the strips are open: each line's strip, and how far each line's
+ * engraving moved down to make room for the strips over it. */
+export interface Room {
+  stripTop(line: number): number;
+  shift(line: number): number;
+}
+
+/** Draws the ribbon's strips, and anything over the engraving, given the room made. */
+export type Strips = (timeline: Timeline, room: Room) => string;
 
 export class Score {
   private view: View<LinesPage>;
@@ -83,7 +90,7 @@ export class Score {
       // buttons beside it the engraving alone is the image.
       const label = / aria-label="([^"]*)"/.exec(top)?.[1] ?? "";
       top = top.replace(/ role="img"/, "").replace(/ aria-label="[^"]*"/, "");
-      body = `<g role="img" aria-label="${label}">${engraving}</g><g class="ribbon">${this.strips(this.timeline, (i) => this.stripTop(i))}</g>`;
+      body = `<g role="img" aria-label="${label}">${engraving}</g><g class="ribbon">${this.strips(this.timeline, { stripTop: (i) => this.stripTop(i), shift: (i) => i * STRIP })}</g>`;
     }
     const svg = `${top}<defs>${defs}</defs>${body}</svg>`;
     const old = this.host.querySelector("svg");

@@ -82,6 +82,24 @@ main {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+.marks .mark-ring {
+  fill: transparent;
+  stroke: #b8452f;
+  stroke: light-dark(#b8452f, #ef8a73);
+  stroke-width: 1.5;
+}
+.marks .mark {
+  cursor: pointer;
+}
+.marks .mark[aria-pressed="true"] .mark-ring {
+  stroke-width: 2.5;
+}
+.marks .mark:focus {
+  outline: none;
+}
+.marks .mark:focus-visible .mark-ring {
+  stroke-dasharray: 3 2;
+}
 .result p {
   margin: 0.5rem 0;
 }

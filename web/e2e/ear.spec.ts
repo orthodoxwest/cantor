@@ -104,6 +104,20 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await expect(first).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Back to your key" }).click();
   await expect(page.locator("#base")).toBeHidden();
+  // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
+  // a mark tapped shows the core's words for it.
+  type Marked = { first: number; last: number };
+  const notesOf = (marks: Marked[]) => marks.flatMap((m) => Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k));
+  const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.note)));
+  expect(ringed).toEqual(notesOf(got.verdict.marks));
+  expect(ringed).toEqual(notesOf(want.verdict.marks));
+  expect(ringed.length).toBeGreaterThan(0);
+  const mark = page.locator('[data-mark="0"]');
+  await mark.click();
+  await expect(page.locator("#why")).toHaveText(got.told[0]);
+  await expect(mark).toHaveAttribute("aria-pressed", "true");
+  await mark.click();
+  await expect(page.locator("#why")).toBeHidden();
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
