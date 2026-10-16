@@ -1,7 +1,7 @@
 target/
 node_modules/
 dist/
-vendor/
+vendor
 out/
 .wrangler/
 test-results/
