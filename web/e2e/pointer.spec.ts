@@ -124,6 +124,19 @@ test("without the voice, singing says why nothing sounds", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
 });
 
+test("a renderer that traps stops singing and says so, and the next play sings", async ({ page }) => {
+  const { trapFourthChunk } = await import("./fixtures/trap.mjs");
+  await page.addInitScript(trapFourthChunk);
+  await open(page);
+  const verse = page.locator(`.verse[data-verse="2"] .num`);
+  await verse.click();
+  await expect(page.locator("#status")).toHaveText(/failed while singing/, { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+  await verse.click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__pointer.player.started)).toBe(true);
+});
+
 test("exports the setting as GABC and text", async ({ page }) => {
   await open(page);
   const [gabc] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "GABC" }).click()]);

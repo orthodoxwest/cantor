@@ -28,6 +28,11 @@ main {
   font-variant-numeric: tabular-nums;
   min-width: 7rem;
 }
+.status {
+  min-height: 1.4em;
+  margin: -0.75rem 0 1rem;
+  color: var(--accent);
+}
 .score {
   position: relative;
 }
