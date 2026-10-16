@@ -104,6 +104,29 @@ test.describe("on a touch screen", () => {
     await page.getByRole("button", { name: "Undo" }).tap();
     await expect(accents(page, 1, "mediant")).toHaveText(all[at]!);
   });
+
+  test("in a half with two accents, a tap moves the nearer, or the one tapped first", async ({ page }) => {
+    await open(page);
+    await page.locator("#tone").selectOption("1.D");
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const plain = async () =>
+      (await accents(page, 1, "mediant").allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    await expect(accents(page, 1, "mediant")).toHaveCount(2);
+    const all = (await half.allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const [first, second] = await plain();
+    const a = all.indexOf(first!);
+    const b = all.indexOf(second!, a + 1);
+    // The syllable just before the second accent is nearer it than the first.
+    await half.nth(b - 1).tap();
+    await expect.poll(plain).toEqual([first, all[b - 1]]);
+    // Next to the first accent, the first moves, whatever moved last.
+    await half.nth(a - 1).tap();
+    await expect.poll(plain).toEqual([all[a - 1], all[b - 1]]);
+    // Tapping the second accent first chooses it, even for a syllable nearer the first.
+    await accents(page, 1, "mediant").nth(1).tap();
+    await half.nth(a).tap();
+    await expect.poll(plain).toEqual([all[a - 1], all[a]]);
+  });
 });
 
 test("a new tone points the psalm again", async ({ page }) => {

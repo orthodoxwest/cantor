@@ -147,8 +147,10 @@
   text-decoration-color: var(--unsure);
   text-decoration-style: dashed;
 }
-.syl[data-part] {
-  cursor: pointer;
+@media (pointer: coarse) {
+  .syl[data-part]:not(.acc, [data-part="flex"]) {
+    cursor: pointer;
+  }
 }
 .acc {
   font-weight: 600;
