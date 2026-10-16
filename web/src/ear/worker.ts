@@ -2,7 +2,9 @@
 // worklet sends it the take a block at a time over a port of its own; the core tracks each
 // frame as soon as its samples are in and the frames go to the page for the live trace, while
 // SwiftF0 runs on the take behind it. When the worklet ends the take, the core listens to the
-// whole of it with both, and the page may then ask for it judged against a chant.
+// whole of it with both, and the page may then ask for it judged against a chant, or for its
+// audio as a file to send.
+import { takeFile } from "../wav";
 
 interface Exports {
   memory: WebAssembly.Memory;
@@ -34,7 +36,8 @@ const FRAME_FIELDS = 4;
 /** What the page sends, each request numbered by `id`. */
 export type ToEar =
   | { type: "start"; id: number; sampleRate: number; audio: MessagePort }
-  | { type: "judge"; id: number; gabc: string; pulse: number; offset: number };
+  | { type: "judge"; id: number; gabc: string; pulse: number; offset: number }
+  | { type: "audio"; id: number };
 
 /** What the worklet sends: a block of the take with the context time of its first sample, or
  * the take's end. */
@@ -59,6 +62,7 @@ export type FromEar =
       stopMs: number;
     }
   | { type: "judged"; id: number; json: string }
+  | { type: "audio"; id: number; wav: ArrayBuffer; seconds: number }
   | { type: "error"; id: number; message: string };
 
 /** The longest gap in the audio filled with silence, in seconds; a longer one ends the take. */
@@ -73,6 +77,8 @@ let sampleRate = 0;
 let start: number | undefined;
 let pushed = 0;
 let trackMs = 0;
+/** The take's samples as heard, silence filled in, kept (as 16-bit) to send when asked. */
+let kept: Int16Array[] = [];
 
 /** ear.wasm, loaded once; a load that fails is tried again on the next request. */
 function load(): Promise<Exports> {
@@ -86,7 +92,7 @@ function load(): Promise<Exports> {
 
 // The worker's own scope, which lib.dom types as a window.
 const scope = self as unknown as {
-  postMessage(message: FromEar): void;
+  postMessage(message: FromEar, transfer?: Transferable[]): void;
   onmessage: ((e: MessageEvent<ToEar>) => void) | null;
 };
 const post = (message: FromEar) => scope.postMessage(message);
@@ -102,6 +108,13 @@ function check(ear: Exports, result: number): number {
   return result;
 }
 
+/** `samples` as 16-bit, the depth they are sent at. */
+function toInt16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = Math.round(Math.max(-1, Math.min(1, samples[i]!)) * 32767);
+  return out;
+}
+
 /** Adds `samples` to the take and sends the page the frames they complete. */
 function push(ear: Exports, samples: Float32Array): void {
   // Each call may grow the memory, detaching its old buffer, so the buffer is read after.
@@ -111,6 +124,7 @@ function push(ear: Exports, samples: Float32Array): void {
   const n = check(ear, ear.ear_push(samples.length));
   trackMs += performance.now() - began;
   pushed += samples.length;
+  kept.push(toInt16(samples));
   if (n === 0) return;
   const t0 = start ?? 0;
   const fieldsAt = ear.ear_frames();
@@ -178,6 +192,7 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       sampleRate = message.sampleRate;
       start = undefined;
       pushed = trackMs = 0;
+      kept = [];
       take.audio.onmessage = (b: MessageEvent<Block>) => {
         if (hearing !== take) return;
         try {
@@ -187,6 +202,16 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
           failed(take.id, error);
         }
       };
+    } else if (message.type === "audio") {
+      if (hearing || pushed === 0) throw new Error("no take has been heard");
+      const samples = new Float32Array(pushed);
+      let at = 0;
+      for (const block of kept) {
+        for (let i = 0; i < block.length; i++) samples[at + i] = block[i]! / 32767;
+        at += block.length;
+      }
+      const { wav } = takeFile(samples, sampleRate);
+      scope.postMessage({ type: "audio", id: message.id, wav, seconds: pushed / sampleRate }, [wav]);
     } else {
       const gabc = new TextEncoder().encode(message.gabc);
       const at = ear.ear_bytes(gabc.length);
