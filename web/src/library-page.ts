@@ -6,9 +6,10 @@ import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { chant as fetchChant, kicker, kindName, library, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
-import { offerSignIn } from "./beam";
+import { offerSignIn, themeSwitch } from "./beam";
 import { neutralTable } from "./singer";
 
+themeSwitch();
 void offerSignIn();
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

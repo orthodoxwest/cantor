@@ -98,3 +98,20 @@ test("a piece that cannot be opened returns to the list and says so", async ({ p
   await expect(page.locator("#piece")).toBeHidden();
   await expect(page.locator("#browse")).toBeVisible();
 });
+
+test("the header switches between light and dark pages, and remembers the choice", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/library");
+  const root = page.locator("html");
+  const theme = page.locator("#theme");
+  await expect(root).not.toHaveAttribute("data-theme");
+  await expect(theme).toHaveAccessibleName("Light pages");
+  await theme.click();
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await expect(theme).toHaveAccessibleName("Dark pages");
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(250, 243, 233)");
+  await page.goto("/sing");
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await page.locator("#theme").click();
+  await expect(root).toHaveAttribute("data-theme", "dark");
+});

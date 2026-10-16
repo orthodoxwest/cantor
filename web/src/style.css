@@ -192,14 +192,53 @@ a {
 .signin {
   color: var(--rubric);
 }
-/* A short gold rule between the pages and signing in. */
-.signin::before {
-  content: "";
-  display: inline-block;
-  height: 1em;
-  vertical-align: -0.12em;
-  border-left: 1px solid var(--gold-line);
-  margin-right: 1rem;
+/* The light-or-dark switch: a quiet moon (or sun, in the dark) after the pages. */
+.theme {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0.6rem 0.35rem;
+  margin: -0.6rem -0.35rem;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+  align-self: center;
+}
+.theme svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+}
+.theme .moon {
+  stroke: none;
+}
+.theme .sun circle {
+  stroke: none;
+}
+.theme .sun {
+  display: none;
+}
+:root[data-theme="dark"] .theme .moon {
+  display: none;
+}
+:root[data-theme="dark"] .theme .sun {
+  display: inline;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme .moon {
+    display: none;
+  }
+  :root:not([data-theme="light"]) .theme .sun {
+    display: inline;
+  }
+}
+@media (hover: hover) {
+  .theme:hover {
+    color: var(--text);
+  }
 }
 @media (hover: hover) {
   .beam nav a:hover,
@@ -232,8 +271,13 @@ a {
     font-size: 0.74rem;
     letter-spacing: 0.02em;
   }
-  .signin::before {
-    margin-right: 0.7rem;
+}
+
+/* The narrowest phones draw in a little more. */
+@media (max-width: 379.98px) {
+  .beam-in.offers-signin,
+  .beam-in.offers-signin nav {
+    gap: 0.5rem;
   }
 }
 

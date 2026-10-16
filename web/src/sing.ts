@@ -8,11 +8,12 @@ import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
-import { offerSignIn } from "./beam";
+import { offerSignIn, themeSwitch } from "./beam";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
 
+themeSwitch();
 void offerSignIn();
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
