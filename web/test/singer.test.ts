@@ -12,6 +12,25 @@ describe("fromTimeline and notesText", () => {
     expect(notes[1]).toEqual({ midi: 57, start: 0.5, duration: 1, word: 3, syllable: 6, text: "le\tlu" });
     expect(notesText(notes)).toBe("55\t0\t0.5\t3\t5\tAl\n57\t0.5\t1\t3\t6\tle lu");
   });
+
+  it("recite at speech pace, as the core times a take", () => {
+    const run = [
+      { semitones: 9, start: 4, duration: 1, recitation: true, word: 0, syllable: 0, syllableText: "Glo" },
+      { semitones: 9, start: 5, duration: 1, recitation: true, word: 0, syllable: 1, syllableText: "ry" },
+      { semitones: 7, start: 7, duration: 2, word: 1, syllable: 2, syllableText: "be" },
+    ] as unknown as TimelineNote[];
+    const notes = fromTimeline(run, 0.5, (s) => 48 + s, 4);
+    // Each recited note lasts 0.6 of its pulse; the pause of a pulse before "be" stays whole.
+    const want = [
+      [0, 0.3],
+      [0.3, 0.3],
+      [1.1, 1],
+    ];
+    notes.forEach((n, i) => {
+      expect(n.start).toBeCloseTo(want[i]![0]!, 9);
+      expect(n.duration).toBeCloseTo(want[i]![1]!, 9);
+    });
+  });
 });
 
 describe("octaveShift", () => {
