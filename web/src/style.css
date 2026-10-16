@@ -34,7 +34,8 @@
   /* What scrolls into view stays clear of the bar and the mark's words above it. */
   scroll-padding-bottom: 10rem;
 }
-@media (prefers-color-scheme: dark) {
+/* Dark is for the screen; paper is always light. */
+@media screen and (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #121c28;
     --surface: #172232;
@@ -61,30 +62,32 @@
     color-scheme: dark;
   }
 }
-:root[data-theme="dark"] {
-  --bg: #121c28;
-  --surface: #172232;
-  --text: #ddd6c3;
-  --muted: #9aa4b0;
-  --border: #2a3648;
-  --rubric: #d47070;
-  --titulus: #d8bc74;
-  --lining: #cf8c6a;
-  --gold: #d8bc74;
-  --gold-line: #6a5c3a;
-  --oak: #ddd6c3;
-  --accent: #d0b06a;
-  --wash: rgba(208, 176, 106, 0.08);
-  --pressed: rgba(208, 176, 106, 0.14);
-  --cur: rgba(216, 188, 116, 0.18);
-  --trace: #8ab8f0;
-  --unsure: #e2a656;
-  --primary-bg: rgba(216, 188, 116, 0.07);
-  --primary-line: rgba(216, 188, 116, 0.6);
-  --primary-ink: var(--gold);
-  --primary-hover: rgba(216, 188, 116, 0.16);
-  --page-material: radial-gradient(ellipse at 20% 0%, rgba(216, 188, 116, 0.05), transparent 50%);
-  color-scheme: dark;
+@media screen {
+  :root[data-theme="dark"] {
+    --bg: #121c28;
+    --surface: #172232;
+    --text: #ddd6c3;
+    --muted: #9aa4b0;
+    --border: #2a3648;
+    --rubric: #d47070;
+    --titulus: #d8bc74;
+    --lining: #cf8c6a;
+    --gold: #d8bc74;
+    --gold-line: #6a5c3a;
+    --oak: #ddd6c3;
+    --accent: #d0b06a;
+    --wash: rgba(208, 176, 106, 0.08);
+    --pressed: rgba(208, 176, 106, 0.14);
+    --cur: rgba(216, 188, 116, 0.18);
+    --trace: #8ab8f0;
+    --unsure: #e2a656;
+    --primary-bg: rgba(216, 188, 116, 0.07);
+    --primary-line: rgba(216, 188, 116, 0.6);
+    --primary-ink: var(--gold);
+    --primary-hover: rgba(216, 188, 116, 0.16);
+    --page-material: radial-gradient(ellipse at 20% 0%, rgba(216, 188, 116, 0.05), transparent 50%);
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -192,14 +195,61 @@ a {
 .signin {
   color: var(--rubric);
 }
-/* A short gold rule between the pages and signing in. */
-.signin::before {
-  content: "";
-  display: inline-block;
-  height: 1em;
-  vertical-align: -0.12em;
-  border-left: 1px solid var(--gold-line);
-  margin-right: 1rem;
+/* The light-or-dark switch: a quiet moon (or sun, in the dark) after the pages. */
+.theme {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0.6rem 0.35rem;
+  margin: -0.6rem -0.35rem;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+  align-self: center;
+}
+.theme svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+}
+.theme .moon {
+  stroke: none;
+}
+.theme .sun circle {
+  stroke: none;
+}
+.theme .sun {
+  display: none;
+}
+:root[data-theme="dark"] .theme .moon {
+  display: none;
+}
+:root[data-theme="dark"] .theme .sun {
+  display: inline;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme .moon {
+    display: none;
+  }
+  :root:not([data-theme="light"]) .theme .sun {
+    display: inline;
+  }
+}
+@media (hover: hover) {
+  .theme:hover {
+    color: var(--text);
+  }
+}
+.theme:focus-visible {
+  outline-offset: -2px;
+}
+@media print {
+  .theme {
+    display: none;
+  }
 }
 @media (hover: hover) {
   .beam nav a:hover,
@@ -232,8 +282,13 @@ a {
     font-size: 0.74rem;
     letter-spacing: 0.02em;
   }
-  .signin::before {
-    margin-right: 0.7rem;
+}
+
+/* The narrowest phones draw in a little more. */
+@media (max-width: 379.98px) {
+  .beam-in.offers-signin,
+  .beam-in.offers-signin nav {
+    gap: 0.5rem;
   }
 }
 
