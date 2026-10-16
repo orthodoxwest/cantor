@@ -146,6 +146,56 @@ test("a take of a chant the reader may not see is heard without its score", asyn
   await expect.poll(() => page.locator("#audio").evaluate((a: HTMLAudioElement) => a.currentTime)).toBeCloseTo(Math.max(0, band.from_s - 0.2), 1);
 });
 
+test("one signed in puts their name to their comment", async ({ page }) => {
+  const sent = await sentTake(page);
+  await serve(page, sent, { comments: [] });
+  const named: unknown[] = [];
+  await page.route("**/api/me", (route) => {
+    if (route.request().method() === "PUT") {
+      named.push(route.request().postDataJSON());
+      return route.fulfill({ json: { id: "director", email: null, name: "Fr. Director" } });
+    }
+    return route.fulfill({ json: { id: "director", email: null, name: null } });
+  });
+  await page.route(`**/api/takes/${ID}/comments`, (route) =>
+    route.fulfill({ status: 201, json: { id: 3, ...route.request().postDataJSON(), by: "known", name: "Fr. Director", created_at: "2026-10-16T19:05:00.000Z" } }),
+  );
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#sign-line")).toBeHidden();
+  await page.getByLabel("Your name").fill("  Fr.   Director ");
+  await page.locator("#body").fill("Breathe before the turn.");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("#comments li").first()).toHaveText(/^Note \d+ · Fr\. Director \(signed in\) · .*Breathe before the turn\.$/s);
+  expect(named).toEqual([{ name: "Fr. Director" }]);
+  await expect(page.locator("#comments li .named bdi")).toHaveText("Fr. Director");
+  // The name is kept, so the next comment does not give it again.
+  await page.locator("#body").fill("And here.");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("#comments li")).toHaveCount(2);
+  expect(named).toHaveLength(1);
+  // A name the site refuses keeps the comment back, and says why.
+  await page.unroute("**/api/me");
+  await page.route("**/api/me", (route) =>
+    route.request().method() === "PUT" ? route.fulfill({ status: 400, json: { error: "that name cannot be used" } }) : route.fulfill({ json: { id: "director", email: null, name: null } }),
+  );
+  await page.getByLabel("Your name").fill("You");
+  await page.locator("#body").fill("Third.");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("#status")).toHaveText("The comment could not be posted: that name cannot be used");
+  await expect(page.locator("#comments li")).toHaveCount(2);
+  await expect(page.locator("#body")).toHaveValue("Third.");
+});
+
+test("one not signed in is offered to sign in and come back", async ({ page }) => {
+  const sent = await sentTake(page);
+  await serve(page, sent);
+  await page.route("**/api/me", (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }));
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#name-line")).toBeHidden();
+  await expect(page.locator("#sign-line")).toHaveText("Sign in to put your name to your comments.");
+  await expect(page.locator("#sign-link")).toHaveAttribute("href", `/signin?next=${encodeURIComponent(`/take/${ID}`)}`);
+});
+
 test("the singer may remove a comment from their take", async ({ page }) => {
   const sent = await sentTake(page);
   await serve(page, sent, { mine: true });
@@ -156,6 +206,9 @@ test("the singer may remove a comment from their take", async ({ page }) => {
   });
   await page.goto(`/take/${ID}`);
   await expect(page.locator("#kicker")).toHaveText(/^Your take · /);
+  // The singer is signed in, and writes as the singer.
+  await expect(page.locator("#name-line")).toBeHidden();
+  await expect(page.locator("#sign-line")).toBeHidden();
   await expect(page.locator("#comments li").first()).toHaveText(/^Note 2 · You · .*Remove.*Is this one sharp\?$/s);
   await page.getByRole("button", { name: "Remove the comment on note 2" }).click();
   await expect(page.locator("#comments li")).toHaveText("No comments yet.");

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import pkg from "../package.json";
 import { identity } from "./identity";
-import takes from "./takes";
+import { nameFrom } from "./people";
+import takes, { bounded } from "./takes";
 
 interface ChantRow {
   slug: string;
@@ -78,7 +79,38 @@ app.get("/api/pointing/:psalm", async (c) => {
 app.get("/api/me", async (c) => {
   const user = await identity(c.req.raw.headers, c.env);
   c.header("Cache-Control", "private, no-store");
-  return user ? c.json(user) : c.json({ error: "unauthorized" }, 401);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  // Who is signed in does not wait on their name: without it they are still signed in.
+  const named = await c.env.DB.prepare("SELECT name FROM people WHERE user_id = ?")
+    .bind(user.id)
+    .first<{ name: string }>()
+    .catch(() => null);
+  return c.json({ ...user, name: named?.name ?? null });
+});
+
+// The name a signed-in person gives, shown beside the comments they write from now on; empty
+// forgets it.
+app.put("/api/me", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.json({ error: "forbidden" }, 403);
+  const user = await identity(c.req.raw.headers, c.env);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const raw = await bounded(c.req.raw, 4096);
+  if (!raw) return c.json({ error: "too large" }, 413);
+  const sent = await raw
+    .text()
+    .then((text) => JSON.parse(text) as { name?: unknown } | null)
+    .catch(() => null);
+  const name = nameFrom(sent?.name);
+  if (name === null) return c.json({ error: "that name cannot be used" }, 400);
+  if (!name) await c.env.DB.prepare("DELETE FROM people WHERE user_id = ?").bind(user.id).run();
+  else
+    await c.env.DB.prepare(
+      "INSERT INTO people (user_id, name) VALUES (?1, ?2) ON CONFLICT (user_id) DO UPDATE SET name = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    )
+      .bind(user.id, name)
+      .run();
+  return c.json({ ...user, name: name || null });
 });
 
 // Signing in: Access covers this path, so reaching it means the visitor has signed in; it sends

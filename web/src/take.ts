@@ -21,6 +21,8 @@ interface Comment {
   body: string;
   /** The singer, someone signed in, or a reader the site did not know. */
   by: "singer" | "known" | "reader";
+  /** The name a signed-in writer gave, if any. */
+  name: string | null;
   created_at: string;
 }
 
@@ -56,12 +58,28 @@ async function load(): Promise<Take | null> {
   return (await res.json()) as Take;
 }
 
-const [take] = await Promise.all([load().catch((error: unknown) => error as Error), init()]);
+/** Who is reading, when signed in, with the name they gave. */
+interface Me {
+  id: string;
+  name: string | null;
+}
+
+async function whoAmI(): Promise<Me | null> {
+  try {
+    const res = await fetch("/api/me", { redirect: "manual" });
+    const me = res.ok ? ((await res.json()) as Partial<Me>) : null;
+    return typeof me?.id === "string" ? { id: me.id, name: typeof me.name === "string" ? me.name : null } : null;
+  } catch {
+    return null;
+  }
+}
+
+const [take, me] = await Promise.all([load().catch((error: unknown) => error as Error), whoAmI(), init()]);
 if (take instanceof Error) say(`The take could not be loaded: ${take.message}`, true);
 else if (!take) say("There is no take at this link. It may have been copied short.", true);
-else show(take);
+else show(take, me);
 
-function show(take: Take): void {
+function show(take: Take, me: Me | null): void {
   const sung = new Date(take.created_at).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
   byId("kicker").textContent = `${take.mine ? "Your take" : "A take"} · ${sung}`;
   byId("title").textContent = take.title ?? "A take";
@@ -226,7 +244,18 @@ function show(take: Take): void {
 
   // The comments, in the order of the notes.
   const list = byId<HTMLOListElement>("comments");
-  const who = (c: Comment) => (c.by === "singer" ? (take.mine ? "You" : "The singer") : "A reader");
+  /** Who wrote `c`: a name a writer gave is set apart, in its own direction, and marked as given
+   * by one signed in, so it cannot pass for the page's own words. */
+  const who = (c: Comment): Node => {
+    if (c.by === "singer") return document.createTextNode(take.mine ? "You" : "The singer");
+    if (c.by !== "known" || !c.name) return document.createTextNode("A reader");
+    const span = document.createElement("span");
+    span.className = "named";
+    const name = document.createElement("bdi");
+    name.textContent = c.name;
+    span.append(name, " (signed in)");
+    return span;
+  };
   function drawComments(): void {
     const sorted = [...comments].sort((a, b) => a.note - b.note || a.id - b.id);
     list.replaceChildren(
@@ -241,7 +270,7 @@ function show(take: Take): void {
         note.textContent = `Note ${c.note + 1}`;
         note.addEventListener("click", () => choose(c.note));
         const when = new Date(c.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-        head.append(note, ` · ${who(c)} · ${when}`);
+        head.append(note, " · ", who(c), ` · ${when}`);
         // The singer may take any comment off their take.
         if (take.mine) {
           const remove = document.createElement("button");
@@ -283,6 +312,26 @@ function show(take: Take): void {
     }
   }
 
+  // One signed in, not the singer, puts their name to their comments; one not signed in is
+  // offered to sign in, and comes back here.
+  const nameInput = byId<HTMLInputElement>("name");
+  if (me && !take.mine) {
+    byId("name-line").hidden = false;
+    nameInput.value = me.name ?? "";
+  } else if (!me) {
+    byId("sign-line").hidden = false;
+    byId<HTMLAnchorElement>("sign-link").href = `/signin?next=${encodeURIComponent(location.pathname)}`;
+  }
+
+  /** Keeps the name given, when it changed. */
+  async function keepName(): Promise<void> {
+    const name = nameInput.value.replace(/\s+/g, " ").trim();
+    if (!me || take.mine || name === (me.name ?? "")) return;
+    const res = await fetch("/api/me", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (!res.ok) throw new Error(res.status === 400 ? "that name cannot be used" : `the site answered ${res.status}`);
+    me.name = name || null;
+  }
+
   const form = byId<HTMLFormElement>("comment");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -292,6 +341,7 @@ function show(take: Take): void {
     const post = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
     post.disabled = true;
     try {
+      await keepName();
       const res = await fetch(`/api/takes/${take.id}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

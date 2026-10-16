@@ -235,8 +235,25 @@ describe("comments", () => {
       [0, "Thank you.", "known"],
       [0, "Will do.", "singer"],
     ]);
+    // No name is given for the singer or a reader, and no id or email for anyone.
+    expect(take.comments.every((c) => !("author_id" in c))).toBe(true);
     const row = await env.DB.prepare("SELECT author_id FROM take_comments WHERE body = 'Will do.'").first();
     expect(row).toEqual({ author_id: "singer" });
+  });
+
+  it("names a signed-in writer by the name they gave when they wrote", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    await env.DB.prepare("INSERT INTO people (user_id, name) VALUES ('director', 'Fr. Director'), ('singer', 'The singer''s own')").run();
+    expect(await (await comment(id, { note: 0, body: "Breathe here." }, { "X-Dev-User": "director" })).json()).toMatchObject({ by: "known", name: "Fr. Director" });
+    await comment(id, { note: 0, body: "Thanks." }, { "X-Dev-User": "singer" });
+    await comment(id, { note: 0, body: "Nice." });
+    await env.DB.prepare("UPDATE people SET name = 'Fr. D.' WHERE user_id = 'director'").run();
+    const take = await (await get(`/api/takes/${id}`)).json<{ comments: Array<{ by: string; name: string | null }> }>();
+    expect(take.comments.map((c) => [c.by, c.name])).toEqual([
+      ["known", "Fr. Director"],
+      ["singer", null],
+      ["reader", null],
+    ]);
   });
 
   it("refuses a comment from another site, on no take, or that is not one", async () => {

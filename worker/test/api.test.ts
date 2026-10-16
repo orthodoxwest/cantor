@@ -88,11 +88,27 @@ describe("api", () => {
   it("names the dev user from the header", async () => {
     const res = await get("/api/me", { "X-Dev-User": "student" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: "student", email: null });
+    expect(await res.json()).toEqual({ id: "student", email: null, name: null });
   });
 
   it("rejects a request without identity", async () => {
     expect((await get("/api/me")).status).toBe(401);
+  });
+
+  it("keeps the name a signed-in person gives, and forgets it when emptied", async () => {
+    const put = (name: unknown, headers: Record<string, string> = {}) =>
+      app.request("/api/me", { method: "PUT", body: JSON.stringify({ name }), headers: { Origin: "http://localhost", "X-Dev-User": "director", ...headers } }, env);
+    expect(await (await put("  Choir   director ")).json()).toEqual({ id: "director", email: null, name: "Choir director" });
+    expect(await (await get("/api/me", { "X-Dev-User": "director" })).json()).toEqual({ id: "director", email: null, name: "Choir director" });
+    expect((await put("Someone", { Origin: "https://evil.example" })).status).toBe(403);
+    expect((await put("Someone", { "X-Dev-User": "" })).status).toBe(401);
+    for (const bad of [3, null, "x".repeat(61), "a\u0000b", "a\u202eb", "a\u200fb", "e\u0301\u0301\u0301\u0301", "You", " the  SINGER! ", "A reader", "Ｙｏｕ", "...", "A-reader", "The_singer", "Y o u", "Yo\u200du", "You\u3164", "\u3164", "You · 3 Oct", "a\u0308\u0301\u0301\u0301"])
+      expect([bad, (await put(bad)).status]).toEqual([bad, 400]);
+    // Names written with joiners, and in any script, are kept as given.
+    for (const good of ["\u0645\u06cc\u200c\u0631\u0632\u0627", "Fr. Ñuño", "Y".repeat(60), "ကျော်ဇော", "ज़िंदगी", "יִשָּׂשכָר", "Nguyễn"]) expect(await (await put(good)).json()).toMatchObject({ name: good });
+    expect((await app.request("/api/me", { method: "PUT", body: JSON.stringify({ name: "x".repeat(5000) }), headers: { Origin: "http://localhost", "X-Dev-User": "director" } }, env)).status).toBe(413);
+    expect(await (await put("")).json()).toMatchObject({ name: null });
+    expect(await (await get("/api/me", { "X-Dev-User": "director" })).json()).toMatchObject({ name: null });
   });
 
   describe("outside dev", () => {
@@ -131,14 +147,14 @@ describe("api", () => {
       const jwt = await token(good());
       const res = await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
+      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com", name: null });
       expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
     });
 
     it("names the caller from the Access cookie where no header is added", async () => {
       const jwt = await token(good());
       const res = await get("/api/me", { Cookie: `theme=dark; CF_Authorization=${jwt}` }, prod);
-      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
+      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com", name: null });
       const list = await get("/api/chants", { Cookie: `CF_Authorization=${jwt}` }, prod);
       expect((await list.json<{ slug: string }[]>()).map((r) => r.slug)).toContain("private-test");
       expect((await get("/api/chants/private-test", { Cookie: `CF_Authorization=${jwt}` }, prod)).status).toBe(200);
