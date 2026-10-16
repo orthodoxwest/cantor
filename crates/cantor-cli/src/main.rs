@@ -272,6 +272,11 @@ fn take_cmd(args: &[String]) -> Result<(), String> {
     let shift = pad.len() as f32 / rate;
     file.lead_in_s += shift;
     file.onset_s = file.onset_s.map(|t| t + shift);
+    for band in &mut file.ribbon {
+        band.from_s += shift;
+        band.to_s += shift;
+        band.trace.iter_mut().for_each(|p| p.0 += shift);
+    }
     wav::write_mono_16(&out, &samples, rate)?;
     println!("{}", serde_json::to_string(&file).map_err(|e| e.to_string())?);
     Ok(())

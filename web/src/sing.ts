@@ -5,6 +5,7 @@ import { Listener } from "./listen";
 import { describePitch } from "./notes";
 import { SAMPLE } from "./sample";
 import { Score } from "./score";
+import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { neutralTable, VoiceTable } from "./singer";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -18,6 +19,65 @@ const voiceUrl = params.get("voice");
 await init();
 const score = new Score(byId("score"), new Chant(SAMPLE));
 const cursor = new Cursor(score);
+
+// After a take (for now only through `__cantor.show`, until a take is timed against the
+// chant): the ribbon under the staff, the singer's key, and the note it is re-based on.
+const result = byId<HTMLElement>("result");
+const keyText = byId<HTMLParagraphElement>("key");
+const baseLine = byId<HTMLParagraphElement>("base");
+const baseText = byId<HTMLSpanElement>("base-text");
+let shown: Judged | null = null;
+let base: number | null = null;
+
+function drawResult(): void {
+  if (!shown) {
+    score.showStrips(null);
+    result.hidden = true;
+    return;
+  }
+  const judged = shown;
+  const key = judged.verdict.key_cents;
+  result.hidden = false;
+  if (key === null) {
+    score.showStrips(null);
+    keyText.textContent = "Too little was heard to show.";
+    baseLine.hidden = true;
+    return;
+  }
+  const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
+  score.showStrips((timeline, top) => drawRibbon(timeline.notes, judged.ribbon, top, from, base));
+  keyText.textContent = `Your key: ${describeKey(key)}.`;
+  baseLine.hidden = base === null;
+  if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
+}
+
+/** Shows a judged take, or clears it. */
+function showResult(judged: Judged | null): void {
+  shown = judged;
+  base = null;
+  drawResult();
+}
+
+// Tapping a heard note's band re-bases the ribbon on it; tapping it again goes back.
+function rebase(target: EventTarget | null, keyboard: boolean): void {
+  const band = (target as Element | null)?.closest<SVGGElement>("[data-band]");
+  if (!band || !shown || band.classList.contains("unheard")) return;
+  const index = Number(band.dataset.band);
+  base = base === index ? null : index;
+  drawResult();
+  // The strips were drawn again; keep a keyboard's place on the band.
+  if (keyboard) score.host.querySelector<SVGGElement>(`[data-band="${index}"]`)?.focus();
+}
+score.host.addEventListener("click", (e) => rebase(e.target, false));
+score.host.addEventListener("keydown", (e) => {
+  if ((e.key !== "Enter" && e.key !== " ") || !(e.target as Element).closest("[data-band]")) return;
+  e.preventDefault();
+  rebase(e.target, true);
+});
+byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
+  base = null;
+  drawResult();
+});
 
 const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
@@ -45,6 +105,7 @@ listenButton.addEventListener("click", async () => {
     return;
   }
   listenButton.setAttribute("aria-pressed", "true");
+  showResult(null);
   try {
     await listener.start();
   } catch (error) {
@@ -79,6 +140,7 @@ if (!guide) {
   playButton.addEventListener("click", () => {
     if (guide.playing) return guide.stop();
     status.textContent = "";
+    showResult(null);
     playButton.setAttribute("aria-pressed", "true");
     void guide.play();
   });
@@ -87,13 +149,22 @@ if (!guide) {
 if (test) {
   (window as Window & { __cantor?: unknown }).__cantor = {
     frames: listener.frames,
-    timeline: score.timeline,
+    get timeline() {
+      return score.timeline;
+    },
     visited: guide?.visited ?? [],
     get chunks() {
       return guide?.chunks ?? [];
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
     heard: () => listener.heard,
-    judge: (gabc: string, pulse: number, offset: number) => listener.judge(gabc, pulse, offset),
+    // Shows the last take judged against `gabc` (put on the page if it is not there), as
+    // the after-take view will once a take is timed against the chant; returns the JSON.
+    show: async (gabc: string, pulse: number, offset: number) => {
+      if (gabc !== score.source) score.setChant(new Chant(gabc));
+      const json = await listener.judge(gabc, pulse, offset);
+      showResult(JSON.parse(json) as Judged);
+      return json;
+    },
   };
 }

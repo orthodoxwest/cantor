@@ -823,6 +823,8 @@ pub struct TakeFile {
     pub onset_s: Option<f32>,
     pub report: cantor_core::Report,
     pub verdict: Verdict,
+    /// The take note by note, as the page draws it.
+    pub ribbon: Vec<cantor_core::Band>,
 }
 
 /// Take `index` of `suite`, as `ear` hears it in `cantor eval`, and its samples at `rate`.
@@ -858,6 +860,7 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
             pulse_s: spec.pulse_s,
             lead_in_s: spec.lead_in_s,
             onset_s,
+            ribbon: cantor_core::ribbon(&judged.notes, &judged.frames, &judged.report, &judged.verdict),
             report: judged.report,
             verdict: judged.verdict,
         },
@@ -1045,8 +1048,35 @@ mod tests {
                 assert!(heard <= 0.02, "{at}: heard {heard} apart");
                 assert!(key <= 10.0, "{at}: key {key} cents apart");
                 assert_eq!(marks(&got.verdict), marks(&want.verdict), "{at}");
+                // Note by note, the ribbon the page draws is the eval's.
+                assert_eq!(got.ribbon.len(), want.ribbon.len(), "{at}");
+                let (mut apart, mut both) = (0, 0);
+                for (g, w) in got.ribbon.iter().zip(&want.ribbon) {
+                    match (g.cents, w.cents) {
+                        (Some(a), Some(b)) => {
+                            both += 1;
+                            assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} {a} vs {b}", g.index);
+                            let (a, b) = (trace_median(&g.trace), trace_median(&w.trace));
+                            assert!((a - b).abs() <= BAND_CENTS, "{at}: note {} trace {a} vs {b}", g.index);
+                        }
+                        (None, None) => {}
+                        _ => apart += 1,
+                    }
+                }
+                assert!(both > 0, "{at}");
+                assert!(apart <= want.ribbon.len().div_ceil(50), "{at}: {apart} notes heard by one ear only");
             }
         }
+    }
+
+    /// How far a note's band may be from the eval's wherever the frames fall, in cents; the
+    /// browser test (`ear.spec.ts`) allows a little more for the browser's capture.
+    const BAND_CENTS: f32 = 20.0;
+
+    fn trace_median(trace: &[(f32, f32)]) -> f32 {
+        let mut values: Vec<f32> = trace.iter().map(|p| p.1).collect();
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
     }
 
     #[test]

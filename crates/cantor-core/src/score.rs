@@ -81,9 +81,13 @@ pub fn score(notes: &[Note], frames: &[Frame]) -> Report {
     }
 }
 
+/// The sustained part of `note`, in seconds: what is scored of it.
+pub fn sustained(note: &Note) -> (f32, f32) {
+    (note.start_s + SKIP_HEAD * note.dur_s, note.start_s + (1.0 - SKIP_TAIL) * note.dur_s)
+}
+
 fn score_note(index: usize, note: &Note, frames: &[Frame]) -> NoteResult {
-    let from = note.start_s + SKIP_HEAD * note.dur_s;
-    let to = note.start_s + (1.0 - SKIP_TAIL) * note.dur_s;
+    let (from, to) = sustained(note);
     let sustained = frames.iter().filter(|f| f.t >= from && f.t < to);
     let count = sustained.clone().count();
     let masked_frames = sustained.clone().filter(|f| f.masked).count();

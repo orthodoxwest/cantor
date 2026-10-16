@@ -102,11 +102,11 @@ export class Guide {
     const note = noteAtTime(timeline, t);
     if (note) {
       if (this.visited[this.visited.length - 1] !== note.id) this.visited.push(note.id);
-      this.cursor.show(note.cx, timeline.lines[note.line]!, note.id);
+      this.cursor.show(note.cx, this.score.line(note.line), note.id);
       return true;
     }
     const pause = timeline.pauses.find((p) => t >= p.start && t < p.start + p.duration);
-    if (pause?.bar) this.cursor.show(pause.bar.cx, timeline.lines[pause.bar.line]!, null);
+    if (pause?.bar) this.cursor.show(pause.bar.cx, this.score.line(pause.bar.line), null);
     return true;
   }
 }

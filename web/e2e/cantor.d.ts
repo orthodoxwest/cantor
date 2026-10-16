@@ -10,7 +10,7 @@ declare global {
       chunks: Array<[number, number, number]>;
       voice: "neutral" | "recorded" | "none";
       heard: () => Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; busy: number; stopMs: number }> | undefined;
-      judge: (gabc: string, pulse: number, offset: number) => Promise<string>;
+      show: (gabc: string, pulse: number, offset: number) => Promise<string>;
     };
   }
 }
