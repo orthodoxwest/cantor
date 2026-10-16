@@ -59,7 +59,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      - run: cargo build -p cantor-wasm --target wasm32-unknown-unknown --profile wasm
+      - run: cargo build -p cantor-wasm -p cantor-ear --target wasm32-unknown-unknown --profile wasm
       - run: cargo run -q -p cantor-cli -- eval
       - if: ${{ !cancelled() }}
         run: cargo run -q -p cantor-cli -- eval --nsdf-only

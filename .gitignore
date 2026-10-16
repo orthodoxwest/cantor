@@ -9,5 +9,7 @@ playwright-report/
 *.local
 .DS_Store
 web/e2e/fixtures/*.wav
+web/e2e/fixtures/*.json
 web/public/cantor.wasm
+web/public/ear.wasm
 *.cvox

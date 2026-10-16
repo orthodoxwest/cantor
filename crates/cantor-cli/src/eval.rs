@@ -38,7 +38,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cantor_core::score::fold;
-use cantor_core::synth::cue_span;
+use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -812,6 +812,58 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
     })
 }
 
+/// A suite's take as `cantor take` gives it: the chant and timing to judge it by, and what
+/// `cantor eval` heard, so another ear can be checked against the eval.
+#[derive(Serialize)]
+pub struct TakeFile {
+    pub gabc: String,
+    pub pulse_s: f32,
+    /// When the first note starts, and when the take first sounds, in seconds.
+    pub lead_in_s: f32,
+    pub onset_s: Option<f32>,
+    pub report: cantor_core::Report,
+    pub verdict: Verdict,
+}
+
+/// Take `index` of `suite`, as `ear` hears it in `cantor eval`, and its samples at `rate`.
+/// Takes with a guide are refused: the guide's bleed is measured from samples the app plays,
+/// which a file alone does not carry.
+pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Result<(Vec<f32>, TakeFile), String> {
+    let suites = load_suites(&root.join("evals/suites"))?;
+    let found = suites
+        .iter()
+        .find(|s| s.name == suite)
+        .ok_or_else(|| format!("no suite named {suite}"))?;
+    let spec = found
+        .takes
+        .get(index)
+        .ok_or_else(|| format!("{suite} has {} takes", found.takes.len()))?;
+    if spec.profile.guide != GuideMode::None {
+        return Err(format!("{suite} {index} plays a guide"));
+    }
+    let judged = run_take(root, ear, None, spec, format!("{suite}-{index}"))?;
+    let path = root.join(&spec.gabc);
+    let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let take = render_take(&judged.notes, &spec.profile, SAMPLE_RATE, spec.seed);
+    let samples = if rate == SAMPLE_RATE {
+        take.samples
+    } else {
+        cantor_swift::resample(&take.samples, SAMPLE_RATE, rate)
+    };
+    let onset_s = cantor_ear::onset(&samples, rate);
+    Ok((
+        samples,
+        TakeFile {
+            gabc,
+            pulse_s: spec.pulse_s,
+            lead_in_s: spec.lead_in_s,
+            onset_s,
+            report: judged.report,
+            verdict: judged.verdict,
+        },
+    ))
+}
+
 fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
     let mut out = Vec::new();
     for path in json_files(dir)? {
@@ -932,6 +984,37 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The page's ear, run natively on the take `ear.spec.ts` plays, at the rates a browser
+    /// runs at, with its frames falling at quarter hops against the notes as the page's might:
+    /// it hears and marks the take as the eval does, within the e2e test's tolerances.
+    #[test]
+    fn the_browser_ear_hears_a_take_as_the_eval_does_wherever_its_frames_fall() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ear = Ear::new(true).expect("ear");
+        let marks = |v: &Verdict| v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>();
+        for rate in [44_100.0, 48_000.0] {
+            let (samples, want) = take(&root, &ear, "student-notes", 0, rate).expect("take");
+            assert!(!want.verdict.marks.is_empty());
+            let hop = (cantor_core::pitch::DEFAULT_HOP_S * rate).round() as usize;
+            for quarter in 0..4 {
+                let mut padded = vec![0.0; quarter * hop / 4];
+                padded.extend(&samples);
+                let mut listening = cantor_core::Listening::new(rate);
+                listening.push(&padded);
+                let (padded, frames) = listening.finish(None, None);
+                let onset = cantor_ear::onset(&padded, rate).expect("sound");
+                let offset = want.lead_in_s + onset - want.onset_s.expect("sound");
+                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &frames);
+                let at = format!("{rate} Hz, {quarter}/4 hop");
+                let heard = (got.report.heard_fraction - want.report.heard_fraction).abs();
+                let key = (got.verdict.key_cents.expect("key") - want.verdict.key_cents.expect("key")).abs();
+                assert!(heard <= 0.02, "{at}: heard {heard} apart");
+                assert!(key <= 10.0, "{at}: key {key} cents apart");
+                assert_eq!(marks(&got.verdict), marks(&want.verdict), "{at}");
+            }
+        }
+    }
 
     #[test]
     fn every_suite_loads() {

@@ -21,14 +21,27 @@ const cursor = new Cursor(score);
 
 const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
-const listener = new Listener((frame) => {
-  const text = frame.midi === null ? "–" : describePitch(frame.midi);
-  if (readout.textContent !== text) readout.textContent = text;
-});
+const status = byId<HTMLParagraphElement>("status");
+const failedListening = (error: unknown) =>
+  (status.textContent = `Listening failed: ${error instanceof Error ? error.message : String(error)}`);
+const listener = new Listener(
+  (frame) => {
+    const text = frame.midi === null ? "–" : describePitch(frame.midi);
+    if (readout.textContent !== text) readout.textContent = text;
+  },
+  (error) => {
+    listenButton.setAttribute("aria-pressed", "false");
+    failedListening(error);
+  },
+);
 listenButton.addEventListener("click", async () => {
   if (listener.listening) {
     listener.stop();
     listenButton.setAttribute("aria-pressed", "false");
+    listener.heard?.then(
+      (h) => (status.textContent = `Heard ${h.seconds.toFixed(1)} s.`),
+      failedListening,
+    );
     return;
   }
   listenButton.setAttribute("aria-pressed", "true");
@@ -43,7 +56,6 @@ listenButton.addEventListener("click", async () => {
 // Play (disabled in the page) waits for the voice; without one the guide stays off and
 // listening still works.
 const playButton = byId<HTMLButtonElement>("play");
-const status = byId<HTMLParagraphElement>("status");
 const failed = (error: unknown) => {
   console.error("guide voice:", error);
   return undefined;
@@ -81,5 +93,7 @@ if (test) {
       return guide?.chunks ?? [];
     },
     voice: recorded ? "recorded" : table ? "neutral" : "none",
+    heard: () => listener.heard,
+    judge: (gabc: string, pulse: number, offset: number) => listener.judge(gabc, pulse, offset),
   };
 }

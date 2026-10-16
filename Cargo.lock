@@ -87,6 +87,7 @@ version = "0.0.1"
 dependencies = [
  "cantor-core",
  "cantor-crepe",
+ "cantor-ear",
  "cantor-swift",
  "claxon",
  "hound",
@@ -109,6 +110,15 @@ dependencies = [
  "cantor-core",
  "cantor-swift",
  "tract-onnx",
+]
+
+[[package]]
+name = "cantor-ear"
+version = "0.0.1"
+dependencies = [
+ "cantor-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

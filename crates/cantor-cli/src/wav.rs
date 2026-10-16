@@ -45,6 +45,23 @@ fn read_flac(path: &Path) -> Result<(Vec<f32>, f32), String> {
     Ok((samples, info.sample_rate as f32))
 }
 
+/// Writes `samples` to `path` as a 16-bit mono WAV file, the format a browser's fake
+/// microphone reads.
+pub fn write_mono_16(path: &Path, samples: &[f32], sample_rate: f32) -> Result<(), String> {
+    let err = |e: hound::Error| format!("{}: {e}", path.display());
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: sample_rate.round() as u32,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).map_err(err)?;
+    for &s in samples {
+        writer.write_sample((s.clamp(-1.0, 1.0) * 32_767.0).round() as i16).map_err(err)?;
+    }
+    writer.finalize().map_err(err)
+}
+
 /// Writes `samples` to `path` as a 32-bit float mono WAV file.
 pub fn write_mono(path: &Path, samples: &[f32], sample_rate: f32) -> Result<(), String> {
     let err = |e: hound::Error| format!("{}: {e}", path.display());
