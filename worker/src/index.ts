@@ -54,7 +54,15 @@ app.get("/api/chants/:slug", async (c) => {
     : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
   const { recording, ...chant } = hidden;
-  return c.json(recording === null ? chant : { ...chant, recording: JSON.parse(recording) as unknown });
+  // A recording that does not parse is left out, and the chant still served.
+  const parsed = (() => {
+    try {
+      return recording === null ? null : (JSON.parse(recording) as unknown);
+    } catch {
+      return null;
+    }
+  })();
+  return c.json(parsed === null ? chant : { ...chant, recording: parsed });
 });
 
 interface PointingRow {

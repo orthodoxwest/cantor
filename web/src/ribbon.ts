@@ -5,8 +5,8 @@
 // ribbon.rs); the page only draws them, re-based on a note when the singer taps it. Where the
 // chant has an aligned recording, its trace is drawn under the singer's, each measured from its
 // own key, so the two compare as sung, wherever each was pitched. The ribbon itself draws no
-// verdict: no zone of what counts as in tune, no colours; the core's
-// marks are drawn by marks.ts, on the notes in the engraving.
+// verdict: no zone of what counts as in tune, no colours; the core's marks are drawn by
+// marks.ts, on the notes in the engraving.
 import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
@@ -88,8 +88,10 @@ export function drawRibbon(
   recorded: readonly Band[] = [],
 ): string {
   const at = places(notes);
-  const sung = new Map(recorded.map((b) => [b.index, b]));
-  const recordedBase = baseIndex === null ? 0 : (sung.get(baseIndex)?.cents ?? 0);
+  // Re-based on a note the recording has no value for, the recording has no base to be drawn
+  // from, so it is not drawn.
+  const recordedBase = baseIndex === null ? 0 : (recorded.find((b) => b.index === baseIndex)?.cents ?? null);
+  const sung = new Map(recordedBase === null ? [] : recorded.map((b) => [b.index, b]));
   const out: string[] = [];
   for (const band of bands) {
     const p = at[band.index];
@@ -116,7 +118,7 @@ export function drawRibbon(
       const points = b.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - by, top))}`).join(" ");
       out.push(`<polyline class="${cls}" points="${points}"/>`);
     };
-    trace(sung.get(band.index), recordedBase, "band-recorded");
+    trace(sung.get(band.index), recordedBase ?? 0, "band-recorded");
     trace(band, base, "band-trace");
     out.push("</g>");
   }

@@ -88,7 +88,7 @@
 }
 .ribbon .band-recorded {
   fill: none;
-  stroke: color-mix(in srgb, currentColor 30%, transparent);
+  stroke: color-mix(in srgb, currentColor 45%, transparent);
   stroke-width: 4;
   stroke-linejoin: round;
   stroke-linecap: round;

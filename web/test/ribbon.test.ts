@@ -87,11 +87,14 @@ describe("ribbon", () => {
     // Across the band the singer's is drawn in (86 to 115, less 2 each side), whatever the
     // recording's times.
     expect(drawn[0]!.map((p) => p[0])).toEqual([88, 113]);
-    // Re-based on note 1: the singer's trace by the singer's 50, the recording's by its -20.
+    // Re-based on the first note: the singer's trace by the singer's 50, the recording's by its -20.
     const rebased = lines(drawRibbon(notes, bands, () => 0, 50, 0, undefined, recorded), "band-recorded");
     expect(rebased[0]!.map((p) => p[1])).toEqual([yOf(0, 0), yOf(0, 0)]);
     expect(rebased[1]!.map((p) => p[1])).toEqual([yOf(30, 0), yOf(30, 0)].map((y) => Number(y.toFixed(1))));
     expect(drawRibbon(notes, bands, () => 0)).not.toContain("band-recorded");
+    // Re-based on a note the recording has no value for, the recording is not drawn.
+    const missed = [recorded[0]!, { ...recorded[1]!, cents: null }];
+    expect(drawRibbon(notes, bands, () => 0, 0, 1, undefined, missed)).not.toContain("band-recorded");
   });
 
   it("names the key as a transposition", () => {
