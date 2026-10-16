@@ -18,10 +18,13 @@
     }
   ],
   // Production value; .dev.vars and the test config override it with "dev". Outside dev, only a
-  // Cloudflare Access token for this team and application names a caller: set ACCESS_TEAM
-  // ("https://<team>.cloudflareaccess.com") and ACCESS_AUD (the application's audience tag)
-  // here (neither is secret); while either is empty, nobody is signed in.
-  "vars": { "ENV": "prod", "ACCESS_TEAM": "", "ACCESS_AUD": "" },
+  // Cloudflare Access token for this team and application names a caller (neither value is
+  // secret); while either is empty, nobody is signed in.
+  "vars": {
+    "ENV": "prod",
+    "ACCESS_TEAM": "https://odd-sound-2cc5.cloudflareaccess.com",
+    "ACCESS_AUD": "8d88c4c5e22059269fe76a28f29ce5811131e23095dc2b9a9e599b50187f0c75"
+  },
   // Student takes; the bucket exists on the account.
   "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }],
   "workers_dev": true

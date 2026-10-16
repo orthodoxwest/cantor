@@ -1,22 +1,8 @@
+/* The psalm pointer, on the shared sheet: marks in rubric, rules in gold. */
 .pointer {
-  --ink: CanvasText;
-  --muted: color-mix(in srgb, CanvasText 60%, Canvas);
-  --rule: color-mix(in srgb, CanvasText 18%, Canvas);
-  --unsure: #b7791f;
-  --sounding: color-mix(in srgb, var(--accent) 22%, Canvas);
-  background: Canvas;
-  color: var(--ink);
-}
-.pointer main {
-  max-width: 46rem;
-}
-.pointer header h1 {
-  font: 600 2rem/1.1 "EB Garamond", Georgia, serif;
-  margin: 0 0 0.4rem;
-}
-.lede {
-  color: var(--muted);
-  margin: 0 0 1.25rem;
+  --ink: var(--text);
+  --rule: var(--gold-line);
+  --sounding: var(--cur);
 }
 .pointer .controls,
 .toolbar {
@@ -33,11 +19,6 @@
 }
 .pointer label[hidden] {
   display: none;
-}
-.pointer select,
-.pointer button,
-.pointer textarea {
-  font: inherit;
 }
 .range {
   display: inline-flex;
@@ -72,7 +53,7 @@
   display: none !important;
 }
 .own textarea {
-  font: 1.05rem/1.5 "EB Garamond", Georgia, serif;
+  font: 1.05rem/1.5 var(--serif);
   color: var(--ink);
   padding: 0.5rem;
   width: 100%;
@@ -85,8 +66,8 @@
   border-bottom: 1px solid var(--rule);
 }
 .tone-line figcaption {
-  font: italic 1.05rem "EB Garamond", Georgia, serif;
-  color: var(--accent);
+  font: italic 1.05rem var(--serif);
+  color: var(--rubric);
 }
 #tone-score svg {
   display: block;
@@ -111,25 +92,16 @@
 .print-title {
   display: none;
 }
-.toolbar button[aria-pressed="true"] {
-  outline: 2px solid var(--accent);
-}
 #check {
   color: var(--unsure);
 }
-.status {
-  min-height: 1.4em;
-  margin: 0 0 1rem;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-.status.error {
-  color: var(--accent);
+.pointer .status {
+  margin: 0.25rem 0 1rem;
 }
 
 /* The verses, as a pointed psalter prints them. */
 .verses {
-  font: 1.25rem/1.9 "EB Garamond", Georgia, serif;
+  font: 1.25rem/1.9 var(--serif);
 }
 .verse {
   display: grid;
@@ -139,7 +111,7 @@
 .verse .num {
   all: unset;
   cursor: pointer;
-  color: var(--accent);
+  color: var(--rubric);
   font-size: 0.85rem;
   text-align: right;
   padding: 0.35rem 0.6rem 0 0;
@@ -151,24 +123,24 @@
   font-size: 0.6rem;
 }
 .verse .num:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--rubric);
 }
 .mark {
-  color: var(--accent);
+  color: var(--rubric);
 }
 .mark.point,
 .mark.held {
   font-weight: 600;
 }
 .rubric {
-  color: var(--accent);
+  color: var(--rubric);
   font-style: italic;
 }
 .syl.drop {
   font-style: italic;
 }
 .cad {
-  text-decoration: underline 1.5px var(--accent);
+  text-decoration: underline 1.5px var(--rubric);
   text-underline-offset: 0.28em;
 }
 .cad.unsure {
@@ -183,7 +155,7 @@
   border-radius: 3px;
 }
 .acc:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--rubric);
   outline-offset: 2px;
 }
 .acc.dragging {
@@ -191,7 +163,7 @@
   opacity: 0.5;
 }
 .syl.target {
-  background: color-mix(in srgb, var(--accent) 25%, Canvas);
+  background: color-mix(in srgb, var(--rubric) 22%, var(--bg));
   border-radius: 3px;
   font-weight: 600;
 }
@@ -209,12 +181,31 @@
 }
 
 @media print {
+  /* Ink on paper, whatever the screen's theme. */
+  /* Three :roots, to outrank the dark theme's selectors in style.css whatever the order. */
+  :root:root:root {
+    --bg: #fff;
+    --page-material: none;
+    --accent: #6b3a1f;
+    --text: #000;
+    --muted: #444;
+    --rubric: #8b1a1a;
+    --titulus: #93412c;
+    --gold-line: #c9ac72;
+    --unsure: #a8650a;
+    --cur: transparent;
+    color-scheme: light;
+  }
+  .pointer main {
+    padding-bottom: 0;
+  }
   .print-title {
     display: block;
-    font: 600 1.4rem "EB Garamond", Georgia, serif;
+    font: 600 1.4rem var(--serif);
     margin: 0 0 0.5rem;
   }
-  .pointer header,
+  .beam,
+  .pointer .head,
   .pointer .controls,
   .toolbar,
   .status,
@@ -223,7 +214,7 @@
     display: none !important;
   }
   .verse .num {
-    color: var(--accent);
+    color: var(--rubric);
   }
   .cad {
     text-decoration: none;

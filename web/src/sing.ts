@@ -2,10 +2,10 @@ import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { Listener } from "./listen";
+import { kicker, library, chant as findChant } from "./library";
 import { describePitch } from "./notes";
-import { SAMPLE } from "./sample";
-import { Score } from "./score";
 import { drawMarks } from "./marks";
+import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
@@ -20,7 +20,19 @@ const test = params.get("test") === "1";
 const voiceUrl = params.get("voice");
 
 await init();
-const score = new Score(byId("score"), new Chant(SAMPLE));
+// ?chant=SLUG picks a chant from the library; the first route's chant otherwise.
+const DEFAULT = "lumen-gentium";
+const piece = findChant(params.get("chant") ?? DEFAULT) ?? findChant(DEFAULT)!;
+byId("kicker").textContent = ["Practice", kicker(piece)].filter(Boolean).join(" · ");
+byId("title").textContent = piece.title;
+document.title = `${piece.title} · Practice · Cantor`;
+const picker = byId<HTMLSelectElement>("chant");
+for (const c of library()) picker.add(new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c === piece));
+picker.addEventListener("change", () => {
+  params.set("chant", picker.value);
+  location.search = params.toString();
+});
+const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
 // After a scored take: the ribbon under the staff, the core's marks on the notes, the singer's key, the
@@ -112,11 +124,11 @@ byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
 const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
 const status = byId<HTMLParagraphElement>("status");
-/** Shows `text` in the status line: as a warning, or quietly when it is `news` and nothing
+/** Shows `text` in the status line: as an error, or quietly when it is `news` and nothing
  * has gone wrong. */
 function setStatus(text: string, news = false): void {
   status.textContent = text;
-  status.classList.toggle("news", news);
+  status.classList.toggle("error", !news && text !== "");
 }
 /** What the status said of the last take heard. */
 let heardLine = "";
@@ -165,7 +177,7 @@ const guide =
   table &&
   new Guide(score, cursor, {
     table,
-    gabc: SAMPLE,
+    gabc: piece.gabc,
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
     onError: (message) => setStatus(taking ? "The guide voice failed, so the take was stopped." : message),

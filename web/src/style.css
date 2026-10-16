@@ -1,135 +1,409 @@
+/* The shared look, after the Office app's "Nave" (light) and "Apse" (dark) themes: limewash
+   ivory, oak ink, rubric red, red-ochre tituli, gold hairlines, EB Garamond throughout. */
 :root {
-  --accent: #a3211c;
-  color-scheme: light dark;
-  /* What scrolls into view stays clear of the mark's words at the foot of the window. */
-  scroll-padding-bottom: 6rem;
+  --bg: #faf3e9;
+  --surface: #f6eddf;
+  --text: #241c17;
+  --muted: #6b5d54;
+  --border: #dccfc3;
+  --rubric: #8b1a1a;
+  --titulus: #93412c;
+  --lining: #a85a48;
+  --gold: #9a7328;
+  --gold-line: #c9ac72;
+  --oak: #3f372f;
+  --accent: #6b3a1f;
+  --wash: rgba(107, 58, 31, 0.07);
+  --pressed: rgba(107, 58, 31, 0.12);
+  --cur: rgba(154, 115, 40, 0.16);
+  --trace: #1f5fa8;
+  --unsure: #a8650a;
+  --primary-bg: var(--oak);
+  --primary-line: var(--oak);
+  --primary-ink: var(--bg);
+  --primary-hover: var(--accent);
+  --page-material:
+    radial-gradient(ellipse at 14% 2%, rgba(139, 80, 61, 0.038), transparent 43%),
+    radial-gradient(ellipse at 88% 27%, rgba(190, 127, 104, 0.026), transparent 46%);
+  --serif: "EB Garamond", Garamond, Georgia, "Times New Roman", serif;
+  --measure: 44rem;
+  --gutter: 1.25rem;
+  --tap: 44px;
+  --neuma-rubric: var(--rubric);
+  color-scheme: light;
+  /* What scrolls into view stays clear of the bar and the mark's words above it. */
+  scroll-padding-bottom: 10rem;
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121c28;
+    --surface: #172232;
+    --text: #ddd6c3;
+    --muted: #9aa4b0;
+    --border: #2a3648;
+    --rubric: #d47070;
+    --titulus: #d8bc74;
+    --lining: #cf8c6a;
+    --gold: #d8bc74;
+    --gold-line: #6a5c3a;
+    --oak: #ddd6c3;
+    --accent: #d0b06a;
+    --wash: rgba(208, 176, 106, 0.08);
+    --pressed: rgba(208, 176, 106, 0.14);
+    --cur: rgba(216, 188, 116, 0.18);
+    --trace: #8ab8f0;
+    --unsure: #e2a656;
+    --primary-bg: rgba(216, 188, 116, 0.07);
+    --primary-line: rgba(216, 188, 116, 0.6);
+    --primary-ink: var(--gold);
+    --primary-hover: rgba(216, 188, 116, 0.16);
+    --page-material: radial-gradient(ellipse at 20% 0%, rgba(216, 188, 116, 0.05), transparent 50%);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121c28;
+  --surface: #172232;
+  --text: #ddd6c3;
+  --muted: #9aa4b0;
+  --border: #2a3648;
+  --rubric: #d47070;
+  --titulus: #d8bc74;
+  --lining: #cf8c6a;
+  --gold: #d8bc74;
+  --gold-line: #6a5c3a;
+  --oak: #ddd6c3;
+  --accent: #d0b06a;
+  --wash: rgba(208, 176, 106, 0.08);
+  --pressed: rgba(208, 176, 106, 0.14);
+  --cur: rgba(216, 188, 116, 0.18);
+  --trace: #8ab8f0;
+  --unsure: #e2a656;
+  --primary-bg: rgba(216, 188, 116, 0.07);
+  --primary-line: rgba(216, 188, 116, 0.6);
+  --primary-ink: var(--gold);
+  --primary-hover: rgba(216, 188, 116, 0.16);
+  --page-material: radial-gradient(ellipse at 20% 0%, rgba(216, 188, 116, 0.05), transparent 50%);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
 body {
   margin: 0;
-  padding: 1.5rem 1rem;
-  font: 16px/1.4 system-ui, sans-serif;
 }
-main {
-  max-width: 56rem;
-  margin: 0 auto;
+body {
+  background: var(--page-material), var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--serif);
+  font-size: 1.1875rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
 }
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-  margin-bottom: 1.5rem;
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  font-weight: 500;
+  margin: 0;
 }
-.controls button {
+p {
+  text-wrap: pretty;
+}
+[hidden] {
+  display: none !important;
+}
+button,
+input,
+select,
+textarea {
   font: inherit;
-  padding: 0.4rem 1rem;
-  white-space: nowrap;
-}
-.controls button[aria-pressed="true"] {
-  outline: 2px solid var(--accent);
-}
-#readout {
-  font-variant-numeric: tabular-nums;
-  min-width: 7rem;
-}
-.mode {
-  margin: -0.5rem 0 1rem;
-  color: color-mix(in srgb, currentColor 70%, transparent);
-  font-size: 0.9rem;
-}
-.mode label {
-  white-space: nowrap;
-}
-.status {
-  min-height: 1.4em;
-  margin: -0.75rem 0 1rem;
-  color: var(--accent);
-}
-.status.news {
   color: inherit;
 }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 0.15em;
+  text-decoration-thickness: 1px;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The top beam: a small-caps brand and the pages, on a gold hairline. */
+.beam {
+  border-bottom: 1px solid var(--gold-line);
+  padding-inline: var(--gutter);
+  padding-block: calc(0.7rem + env(safe-area-inset-top, 0px)) 0.7rem;
+}
+.beam-in {
+  max-width: var(--measure);
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+.brand,
+.beam nav a {
+  font-size: 0.82rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.brand {
+  color: var(--text);
+}
+.brand .cross {
+  color: var(--lining);
+  margin-right: 0.35rem;
+}
+.beam nav {
+  display: flex;
+  gap: 1.25rem;
+}
+.beam nav a {
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  padding-block: 0.75rem;
+  margin-block: -0.75rem;
+}
+.beam nav a[aria-current="page"] {
+  color: var(--text);
+  box-shadow: inset 0 -1px var(--rubric);
+}
+@media (hover: hover) {
+  .beam nav a:hover {
+    color: var(--text);
+  }
+}
+/* On a phone the brand keeps only its cross. */
+@media (max-width: 479.98px) {
+  .brand {
+    font-size: 0;
+    letter-spacing: 0;
+  }
+  .brand .cross {
+    font-size: 0.95rem;
+    margin: 0;
+  }
+  .beam nav {
+    gap: 1rem;
+  }
+}
+
+main {
+  max-width: calc(var(--measure) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding-inline: var(--gutter);
+  /* Room under the last line for the bar, two rows high on a narrow phone. */
+  padding-block: 1.75rem calc(9rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* A page's head: a red-ochre titulus, the title in rubric, an italic lede. */
+.titulus {
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--titulus);
+  margin: 0 0 0.3rem;
+}
+.title {
+  font-size: 2rem;
+  line-height: 1.15;
+  color: var(--rubric);
+  margin-bottom: 0.4rem;
+}
+.title .incipit {
+  font-style: italic;
+  color: var(--muted);
+  font-size: 0.72em;
+  margin-left: 0.2em;
+}
+.lede {
+  font-size: 1.06rem;
+  color: var(--muted);
+  font-style: italic;
+  margin: 0 0 1.25rem;
+  max-width: 36rem;
+}
+.rule {
+  border: 0;
+  border-top: 1px solid var(--gold-line);
+  margin: 1.4rem 0;
+}
+
+/* Controls in the Office's manner. */
+.btn,
+.chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0.6rem 1.1rem;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.btn:active {
+  background: var(--pressed);
+}
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn.primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-line);
+  color: var(--primary-ink);
+  min-width: 7rem;
+}
+.btn[aria-pressed="true"] {
+  background: var(--pressed);
+  border-color: var(--rubric);
+}
+.btn.primary[aria-pressed="true"] {
+  background: var(--primary-hover);
+  color: var(--primary-ink);
+}
+@media (hover: hover) {
+  .btn:not([disabled]):hover {
+    background: var(--wash);
+    border-color: var(--gold-line);
+  }
+  .btn.primary:not([disabled]):hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-line);
+  }
+}
+select,
+input[type="number"],
+input[type="search"],
+input[type="text"],
+textarea {
+  font-family: var(--serif);
+  font-size: 1.02rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.35rem 0.55rem;
+  min-height: 2.4rem;
+}
+select:hover,
+input:hover,
+textarea:hover {
+  border-color: var(--gold-line);
+}
+label {
+  color: var(--muted);
+}
+input[type="checkbox"] {
+  accent-color: var(--rubric);
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.status {
+  min-height: 1.4em;
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-style: italic;
+}
+.status.error {
+  color: var(--rubric);
+  font-style: normal;
+}
+
+/* An engraved score: rubric initial and marks, staff lines a shade of the ink. */
 .score {
   position: relative;
+  color: var(--text);
+  line-height: 0;
 }
 .score svg {
   display: block;
   max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.score .neuma-initial,
+.score .neuma-lyric.mark,
+.score .neuma-rubric {
+  fill: var(--rubric);
+}
+.score .neuma-staff,
+.score .neuma-bar {
+  fill: color-mix(in srgb, var(--text) 58%, var(--bg));
 }
 .score .cantor-current {
-  fill: var(--accent);
+  fill: var(--rubric);
 }
 .cursor {
   position: absolute;
   width: 2px;
   margin-left: -1px;
-  background: var(--accent);
+  background: var(--rubric);
   opacity: 0.6;
   pointer-events: none;
 }
-.cursor[hidden] {
-  display: none;
-}
-.ribbon .band-hit {
-  fill: transparent;
-}
-.ribbon .band:not(.unheard) {
-  cursor: pointer;
-}
-.ribbon .band:focus {
-  outline: none;
-}
-.ribbon .band:focus-visible .band-hit {
-  stroke: currentColor;
-  stroke-width: 1.5;
-}
-.ribbon .band-target {
-  stroke: color-mix(in srgb, currentColor 45%, transparent);
-  stroke-width: 1;
-}
-.ribbon .unheard .band-target {
-  stroke-dasharray: 2 3;
-}
-.ribbon .band-trace {
-  fill: none;
-  stroke: #1f5fa8;
-  stroke: light-dark(#1f5fa8, #8ab8f0);
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-.marks .mark-hit {
-  fill: transparent;
-}
-.marks .mark-ring {
-  fill: transparent;
-  stroke: #b8452f;
-  stroke: light-dark(#b8452f, #ef8a73);
-  stroke-width: 1.5;
-}
-.marks .mark {
-  cursor: pointer;
-}
-.marks .mark[aria-expanded="true"] .mark-ring {
-  stroke-width: 2.5;
-}
-.marks .mark:focus {
-  outline: none;
-}
-.marks .mark:focus-visible .mark-ring {
-  stroke-dasharray: 3 2;
-}
-.why:empty {
-  padding: 0;
-  border: 0;
-}
-.why {
-  position: sticky;
+
+/* The bar of a page's main actions, fixed at the foot. */
+.bar {
+  position: fixed;
+  left: 0;
+  right: 0;
   bottom: 0;
-  margin: 0;
-  padding: 0.5rem 0;
-  background: Canvas;
-  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  z-index: 5;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--gold-line);
+  padding-inline: var(--gutter);
+  padding-block: 0.6rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
 }
-.result p {
-  margin: 0.5rem 0;
+.bar-in {
+  max-width: var(--measure);
+  margin: 0 auto;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.bar .spacer {
+  flex: 1;
+}
+
+.colophon {
+  margin-top: 3rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--gold-line);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--muted);
 }
