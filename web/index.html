@@ -3,20 +3,73 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>cantor</title>
+    <title>Psalm pointer</title>
+    <meta name="description" content="Point an English psalm for any Gregorian tone, adjust the accents, hear it sung and take it away." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital@0;1&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap" />
     <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/pointer.css" />
   </head>
-  <body>
+  <body class="pointer">
     <main>
-      <div class="controls">
-        <button id="play" type="button">Play</button>
-        <button id="listen" type="button">Listen</button>
-        <output id="readout" aria-live="polite">–</output>
+      <header>
+        <h1>Psalm pointer</h1>
+        <p class="lede">
+          Choose a psalm and a tone. Each half-verse's cadence is underlined, its accents in bold:
+          drag an accent, or focus it and use the arrow keys, to move it.
+        </p>
+      </header>
+      <p id="print-title" class="print-title"></p>
+
+      <div class="controls" role="group" aria-label="Psalm and tone">
+        <label>Psalm <select id="psalm"></select></label>
+        <label>Tone <select id="tone"></select></label>
+        <label class="check"><input type="checkbox" id="gloria" checked /> Gloria Patri</label>
       </div>
-      <div id="score" class="score"></div>
+      <label id="own-label" class="own" hidden>
+        Your text, one verse per line with the mediant marked <code>*</code> (pointing marks are kept)
+        <textarea id="own" rows="8" spellcheck="false"></textarea>
+      </label>
+
+      <figure class="tone-line">
+        <figcaption id="tone-label"></figcaption>
+        <div id="tone-score"></div>
+      </figure>
+
+      <div class="toolbar" role="toolbar" aria-label="Playback">
+        <button id="play" type="button" aria-pressed="false">Play</button>
+        <label>Speed
+          <select id="speed">
+            <option value="0.36">Slow</option>
+            <option value="0.27" selected>Steady</option>
+            <option value="0.2">Brisk</option>
+          </select>
+        </label>
+        <label>Pitch
+          <select id="pitch"></select>
+        </label>
+        <span class="spacer"></span>
+        <button id="undo" type="button" disabled>Undo</button>
+        <button id="check" type="button" hidden></button>
+      </div>
+      <p id="status" class="status" aria-live="polite"></p>
+
+      <div id="verses" class="verses"></div>
+
+      <div class="toolbar export" role="toolbar" aria-label="Export">
+        <span class="label">Export</span>
+        <button id="copy" type="button">Copy text</button>
+        <button id="download-text" type="button">Text</button>
+        <button id="download-gabc" type="button">GABC</button>
+        <button id="download-svg" type="button">SVG</button>
+        <button id="print" type="button">Print</button>
+      </div>
+
+      <details id="notation">
+        <summary>Notation</summary>
+        <div id="score" class="score"></div>
+      </details>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/pointer.ts"></script>
   </body>
 </html>

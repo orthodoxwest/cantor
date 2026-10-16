@@ -1,0 +1,611 @@
+// The psalm pointer: a psalm (or typed text) pointed for a tone, its accents moved by hand,
+// sung in the guide voice, and exported as text, GABC or SVG.
+import { Chant, type PsalmDisplay, type TimelineNote, init, psalm, psalmDisplay, toneLabel, toneNames } from "neuma";
+import { type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
+import { Player } from "./player";
+import { decode, encode } from "./share";
+
+interface PsalterEntry {
+  id: string;
+  number: number;
+  part?: string;
+  first: number;
+  incipit: string;
+  verses: string[];
+}
+
+const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+// ?test=1 pins the follower to the page's clock, which tests can fake.
+const test = new URLSearchParams(location.search).get("test") === "1";
+
+const [{ psalms }] = await Promise.all([
+  import("../../content/psalter.json") as Promise<{ psalms: PsalterEntry[] }>,
+  init(),
+]);
+const psalter = new Map(psalms.map((p) => [p.id, p]));
+
+const els = {
+  psalm: byId<HTMLSelectElement>("psalm"),
+  tone: byId<HTMLSelectElement>("tone"),
+  gloria: byId<HTMLInputElement>("gloria"),
+  ownLabel: byId<HTMLLabelElement>("own-label"),
+  own: byId<HTMLTextAreaElement>("own"),
+  toneLabel: byId<HTMLElement>("tone-label"),
+  toneScore: byId<HTMLDivElement>("tone-score"),
+  play: byId<HTMLButtonElement>("play"),
+  speed: byId<HTMLSelectElement>("speed"),
+  pitch: byId<HTMLSelectElement>("pitch"),
+  undo: byId<HTMLButtonElement>("undo"),
+  check: byId<HTMLButtonElement>("check"),
+  status: byId<HTMLParagraphElement>("status"),
+  verses: byId<HTMLDivElement>("verses"),
+  notation: byId<HTMLDetailsElement>("notation"),
+  score: byId<HTMLDivElement>("score"),
+};
+
+const OWN = "own";
+const DEFAULT = { psalm: "23", tone: "8.G" };
+
+// ---- state -------------------------------------------------------------------------------
+
+interface Snapshot {
+  tone: string;
+  gloria: boolean;
+  text: string;
+  unsure: Set<HalfKey>;
+}
+
+const state = {
+  psalm: DEFAULT.psalm,
+  tone: DEFAULT.tone,
+  gloria: true,
+  transpose: 0,
+  /** Typed text, for the "own" psalm. */
+  own: "",
+  /** The pointed text as shown. */
+  text: "",
+  /** What pointing the source gives, to tell an edited text from it. */
+  auto: "",
+  /** Halves the pointer was unsure of, not since edited. */
+  unsure: new Set<HalfKey>(),
+  display: undefined as PsalmDisplay | undefined,
+};
+const undoStack: Snapshot[] = [];
+
+/** Text as the pointer reads it: precomposed accents, plain spaces. */
+const clean = (text: string) =>
+  text
+    .normalize("NFC")
+    .replace(/⁠/g, "")
+    .replace(/ /g, " ")
+    .replace(/\r\n?/g, "\n");
+
+function sourceText(): string {
+  if (state.psalm === OWN) {
+    const own = clean(state.own).trim();
+    return state.gloria ? [own, ...psalmText([], 1, true).split("\n")].filter(Boolean).join("\n") : own;
+  }
+  const entry = psalter.get(state.psalm) ?? psalter.get(DEFAULT.psalm)!;
+  return psalmText(entry.verses, entry.first, state.gloria);
+}
+
+/** Points the source afresh for the tone, dropping hand edits. */
+function repoint(): void {
+  const { text, unsure } = pointText(sourceText(), state.tone);
+  state.auto = state.text = text;
+  state.unsure = new Set(unsure);
+}
+
+function snapshot(): Snapshot {
+  return { tone: state.tone, gloria: state.gloria, text: state.text, unsure: new Set(state.unsure) };
+}
+
+function pushUndo(): void {
+  undoStack.push(snapshot());
+  if (undoStack.length > 100) undoStack.shift();
+  els.undo.disabled = false;
+}
+
+// ---- controls ------------------------------------------------------------------------------
+
+function title(entry: PsalterEntry): string {
+  const range = entry.part ? ` (${entry.part}: ${entry.first}–${entry.first + entry.verses.length - 1})` : "";
+  return `Psalm ${entry.number}${range}`;
+}
+
+for (const entry of psalms) els.psalm.add(new Option(`${title(entry)} · ${entry.incipit}`, entry.id));
+els.psalm.add(new Option("Your own text…", OWN));
+for (const name of toneNames()) els.tone.add(new Option(toneLabel(name), name));
+for (let s = -7; s <= 7; s++) {
+  const label = s === 0 ? "As written" : `${s > 0 ? "+" : "−"}${Math.abs(s)} semitone${Math.abs(s) === 1 ? "" : "s"}`;
+  els.pitch.add(new Option(label, String(s)));
+}
+
+function syncControls(): void {
+  els.psalm.value = state.psalm;
+  els.tone.value = state.tone;
+  els.gloria.checked = state.gloria;
+  els.pitch.value = String(state.transpose);
+  els.ownLabel.hidden = state.psalm !== OWN;
+  if (state.psalm === OWN && els.own.value !== state.own) els.own.value = state.own;
+}
+
+els.psalm.addEventListener("change", () => {
+  const previous = state.psalm;
+  state.psalm = els.psalm.value;
+  if (state.psalm === OWN && !state.own) {
+    const entry = psalter.get(previous);
+    if (entry) state.own = psalmText(entry.verses, entry.first, false);
+  }
+  undoStack.length = 0;
+  els.undo.disabled = true;
+  repoint();
+  refresh({ tone: false });
+});
+
+els.tone.addEventListener("change", () => {
+  pushUndo();
+  state.tone = els.tone.value;
+  repoint();
+  refresh({ tone: true });
+});
+
+els.gloria.addEventListener("change", () => {
+  pushUndo();
+  state.gloria = els.gloria.checked;
+  repoint();
+  refresh({ tone: false });
+});
+
+els.pitch.addEventListener("change", () => {
+  state.transpose = Number(els.pitch.value);
+  saveHash();
+});
+
+let ownTimer = 0;
+els.own.addEventListener("input", () => {
+  clearTimeout(ownTimer);
+  ownTimer = window.setTimeout(() => {
+    state.own = els.own.value;
+    repoint();
+    refresh({ tone: false });
+  }, 300);
+});
+
+els.undo.addEventListener("click", undo);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z" && !(e.target instanceof HTMLTextAreaElement)) {
+    e.preventDefault();
+    undo();
+  }
+});
+
+function undo(): void {
+  const last = undoStack.pop();
+  els.undo.disabled = undoStack.length === 0;
+  if (!last) return;
+  const toneChanged = last.tone !== state.tone;
+  state.tone = last.tone;
+  state.gloria = last.gloria;
+  state.text = last.text;
+  state.unsure = last.unsure;
+  state.auto = pointText(sourceText(), state.tone).text;
+  refresh({ tone: toneChanged });
+}
+
+// ---- the tone line and the verses ---------------------------------------------------------
+
+let toneChant: Chant | undefined;
+function drawTone(): void {
+  toneChant?.free();
+  toneChant = Chant.fromTone(state.tone, { initial: 0 });
+  els.toneLabel.textContent = toneLabel(state.tone);
+  const width = Math.min(els.toneScore.clientWidth || 600, 720);
+  els.toneScore.innerHTML = toneChant.layout(width, { scale: 6, prefix: "tone" }).svg;
+}
+
+/** Each syllable's element by its start in the text. */
+let syllables = new Map<number, HTMLElement>();
+
+const CADENCE = new Set(["preparatory", "accent", "ending"]);
+
+function drawVerses(): void {
+  const display = psalmDisplay(state.text, state.tone);
+  state.display = display;
+  syllables = new Map();
+  const frag = document.createDocumentFragment();
+  display.verses.forEach((verse, v) => {
+    const p = document.createElement("p");
+    p.className = "verse";
+    p.dataset.verse = String(v);
+    const num = document.createElement("button");
+    num.type = "button";
+    num.className = "num";
+    num.textContent = verse.number === null ? "" : String(verse.number);
+    num.title = "Sing this verse";
+    num.setAttribute("aria-label", `Sing verse ${verse.number ?? v + 1}`);
+    p.append(num);
+    const line = document.createElement("span");
+    line.className = "line";
+    p.append(line);
+    const runs = verse.runs;
+    const inCadence = (i: number) => {
+      const r = runs[i];
+      return r?.kind === "syllable" && r.part !== "flex" && CADENCE.has(r.role) ? r.part : null;
+    };
+    runs.forEach((run, i) => {
+      if (run.kind === "syllable") {
+        const span = document.createElement("span");
+        span.className = "syl";
+        span.textContent = run.text;
+        span.dataset.start = String(run.sourceUtf16Start);
+        span.dataset.end = String(run.sourceUtf16End);
+        span.dataset.part = run.part;
+        if (run.flexDrop) span.classList.add("drop");
+        const part = inCadence(i);
+        if (part) {
+          span.classList.add("cad");
+          if (state.unsure.has(halfKey(v, part as Half))) span.classList.add("unsure");
+          if (run.accent) {
+            span.classList.add("acc");
+            span.tabIndex = 0;
+            span.setAttribute("role", "slider");
+            span.setAttribute("aria-label", `Accent on “${run.text}”, verse ${verse.number ?? v + 1}`);
+            span.setAttribute("aria-valuetext", run.text);
+            span.title = "Drag, or use the arrow keys, to move this accent";
+          }
+        }
+        syllables.set(run.sourceUtf16Start, span);
+        line.append(span);
+        return;
+      }
+      if (run.kind === "text") {
+        // A space inside a cadence carries its underline.
+        const before = inCadence(i - 1);
+        if (before && before === inCadence(i + 1)) {
+          const gap = document.createElement("span");
+          gap.className = "cad gap";
+          if (state.unsure.has(halfKey(v, before as Half))) gap.classList.add("unsure");
+          gap.textContent = run.text;
+          line.append(gap);
+        } else line.append(run.text);
+        return;
+      }
+      const mark = document.createElement("span");
+      mark.className = `mark ${run.kind}`;
+      mark.textContent = run.text;
+      line.append(mark);
+    });
+    frag.append(p);
+  });
+  els.verses.replaceChildren(frag);
+}
+
+function updateStatus(): void {
+  const display = state.display!;
+  const errors = display.diagnostics.filter((d) => d.severity === "error");
+  const verses = display.verses.filter((v) => v.number !== null).length;
+  const parts = [toneLabel(state.tone), `${verses} verse${verses === 1 ? "" : "s"}${state.gloria ? " and the Gloria" : ""}`];
+  if (state.text !== state.auto) parts.push("pointing edited");
+  els.status.textContent = parts.join(" · ") + (errors.length ? ` · ${errors[0]!.message}` : "");
+  els.status.classList.toggle("error", errors.length > 0);
+  const n = state.unsure.size;
+  els.check.hidden = n === 0;
+  els.check.textContent = `${n} to check`;
+  els.check.title = "Half-verses the pointer was less sure of: go to the next";
+  byId("print-title").textContent = `${heading()} · ${toneLabel(state.tone)}`;
+}
+
+function refresh({ tone }: { tone: boolean }): void {
+  player.stop();
+  syncControls();
+  if (tone || !toneChant) drawTone();
+  drawVerses();
+  updateStatus();
+  invalidateScore();
+  saveHash();
+}
+
+// ---- moving accents -----------------------------------------------------------------------
+
+interface Drag {
+  from: HTMLElement;
+  pointer: number;
+  target: HTMLElement | null;
+}
+let drag: Drag | null = null;
+
+const halfOf = (el: HTMLElement) => ({
+  verse: Number(el.closest<HTMLElement>(".verse")!.dataset.verse),
+  part: el.dataset.part as Half,
+});
+
+/** The syllables of one half, in order. */
+function halfSyllables(verse: number, part: Half): HTMLElement[] {
+  return [...els.verses.querySelectorAll<HTMLElement>(`.verse[data-verse="${verse}"] .syl[data-part="${part}"]`)];
+}
+
+const span = (el: HTMLElement) => ({ start: Number(el.dataset.start), end: Number(el.dataset.end) });
+
+/** Moves the accent on `from` to `to`, a syllable of the same half. Returns the accent's new index. */
+function move(from: HTMLElement, to: HTMLElement): number | null {
+  if (from === to || to.classList.contains("acc")) return null;
+  const { verse, part } = halfOf(from);
+  const accents = halfSyllables(verse, part)
+    .filter((el) => el.classList.contains("acc"))
+    .map((el) => (el === from ? to : el))
+    .map(span)
+    .sort((a, b) => a.start - b.start);
+  const moved = accents.findIndex((a) => a.start === span(to).start);
+  let text: string;
+  try {
+    text = moveAccents(state.text, state.tone, verse, part, accents);
+  } catch (error) {
+    els.status.textContent = error instanceof Error ? error.message : String(error);
+    return null;
+  }
+  pushUndo();
+  state.text = text;
+  state.unsure.delete(halfKey(verse, part));
+  refresh({ tone: false });
+  return moved;
+}
+
+function focusAccent(verse: number, part: Half, index: number): void {
+  halfSyllables(verse, part)
+    .filter((el) => el.classList.contains("acc"))
+    [index]?.focus();
+}
+
+els.verses.addEventListener("pointerdown", (e) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>(".acc");
+  if (!el || e.button !== 0) return;
+  e.preventDefault();
+  el.focus();
+  el.setPointerCapture(e.pointerId);
+  el.classList.add("dragging");
+  drag = { from: el, pointer: e.pointerId, target: null };
+});
+
+els.verses.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.pointer) return;
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const to = under instanceof HTMLElement ? under.closest<HTMLElement>(".syl") : null;
+  const { verse, part } = halfOf(drag.from);
+  const ok = to && !to.classList.contains("acc") && halfOf(to).verse === verse && halfOf(to).part === part;
+  const target = ok ? to : null;
+  if (target === drag.target) return;
+  drag.target?.classList.remove("target");
+  target?.classList.add("target");
+  drag.target = target;
+});
+
+function endDrag(commit: boolean): void {
+  if (!drag) return;
+  const { from, target } = drag;
+  drag = null;
+  from.classList.remove("dragging");
+  target?.classList.remove("target");
+  if (!commit || !target) return;
+  const { verse, part } = halfOf(from);
+  const index = move(from, target);
+  if (index !== null) focusAccent(verse, part, index);
+}
+
+els.verses.addEventListener("pointerup", () => endDrag(true));
+els.verses.addEventListener("pointercancel", () => endDrag(false));
+
+els.verses.addEventListener("keydown", (e) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>(".acc");
+  if (!el || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  e.preventDefault();
+  const { verse, part } = halfOf(el);
+  const half = halfSyllables(verse, part);
+  const step = e.key === "ArrowLeft" ? -1 : 1;
+  let i = half.indexOf(el) + step;
+  while (half[i]?.classList.contains("acc")) i += step;
+  const to = half[i];
+  if (!to) return;
+  const index = move(el, to);
+  if (index !== null) focusAccent(verse, part, index);
+});
+
+els.check.addEventListener("click", () => {
+  const all = [...els.verses.querySelectorAll<HTMLElement>(".acc.unsure")];
+  if (!all.length) return;
+  const active = document.activeElement as HTMLElement | null;
+  const after = all.find((el) => active && active.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const next = after ?? all[0]!;
+  next.scrollIntoView({ block: "center", behavior: "smooth" });
+  next.focus({ preventScroll: true });
+});
+
+// ---- the engraved psalm, for singing and export -------------------------------------------
+
+let scoreChant: { chant: Chant; tone: string; text: string } | undefined;
+
+function engraved(): Chant {
+  if (scoreChant && scoreChant.tone === state.tone && scoreChant.text === state.text) return scoreChant.chant;
+  if (scoreChant && scoreChant.tone === state.tone) scoreChant.chant.update(state.text);
+  else {
+    scoreChant?.chant.free();
+    scoreChant = { chant: Chant.fromPsalm(state.text, state.tone, { initial: 0 }), tone: state.tone, text: "" };
+  }
+  scoreChant.text = state.text;
+  return scoreChant.chant;
+}
+
+function invalidateScore(): void {
+  if (els.notation.open) drawScore();
+}
+
+function drawScore(): void {
+  els.score.innerHTML = engraved().layout(els.score.clientWidth || 800).svg;
+}
+
+els.notation.addEventListener("toggle", () => {
+  if (els.notation.open) drawScore();
+});
+
+// ---- singing ------------------------------------------------------------------------------
+
+const player = new Player();
+let sounding: HTMLElement | null = null;
+
+function sing(verse: number | null): void {
+  const chant = engraved();
+  const setting = chant.psalm!;
+  const notes = chant.layout(800).timeline().notes;
+  const run = verse === null ? notes : notes.filter((n) => setting.notes[n.id]?.verse === verse);
+  els.play.setAttribute("aria-pressed", "true");
+  els.play.textContent = "Stop";
+  void player.play(run, {
+    pulse: Number(els.speed.value),
+    transpose: state.transpose,
+    clock: test ? () => performance.now() / 1000 : undefined,
+    onNote: follow,
+    onStop: () => {
+      els.play.setAttribute("aria-pressed", "false");
+      els.play.textContent = "Play";
+    },
+  });
+}
+
+function follow(note: TimelineNote | null): void {
+  const el = note ? (syllables.get(note.sourceUtf16Start) ?? null) : null;
+  if (el === sounding) return;
+  sounding?.classList.remove("sounding");
+  el?.classList.add("sounding");
+  sounding = el;
+  if (el) {
+    const box = el.getBoundingClientRect();
+    if (box.top < 0 || box.bottom > window.innerHeight) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  if (test && el) visited.push(Number(el.dataset.start));
+}
+const visited: number[] = [];
+
+els.play.addEventListener("click", () => {
+  if (player.playing) return player.stop();
+  visited.length = 0;
+  sing(null);
+});
+
+els.verses.addEventListener("click", (e) => {
+  const num = (e.target as HTMLElement).closest<HTMLElement>(".num");
+  if (!num) return;
+  visited.length = 0;
+  sing(Number(num.closest<HTMLElement>(".verse")!.dataset.verse));
+});
+
+// ---- export -------------------------------------------------------------------------------
+
+function heading(): string {
+  if (state.psalm === OWN) return "Psalm";
+  const entry = psalter.get(state.psalm)!;
+  return `${title(entry)} · ${entry.incipit}`;
+}
+
+function filename(ext: string): string {
+  const base = state.psalm === OWN ? "psalm" : `psalm-${state.psalm}`;
+  return `${base}-tone-${state.tone.replace(/[^\w]+/g, "")}.${ext}`;
+}
+
+function download(name: string, type: string, body: string): void {
+  const url = URL.createObjectURL(new Blob([body], { type }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+byId("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(state.text + "\n");
+    els.status.textContent = "Copied the pointed text.";
+  } catch {
+    els.status.textContent = "The browser would not copy; use the Text download instead.";
+  }
+});
+
+byId("download-text").addEventListener("click", () =>
+  download(filename("txt"), "text/plain;charset=utf-8", `${heading()}\n${toneLabel(state.tone)}\n\n${state.text}\n`),
+);
+
+byId("download-gabc").addEventListener("click", () => {
+  const { gabc } = psalm(state.text, state.tone);
+  const header = `name:${heading().replace(/;/g, ",")};\nmode:${state.tone};\n`;
+  download(filename("gabc"), "text/plain;charset=utf-8", header + gabc.replace(/^\s*/, ""));
+});
+
+byId("download-svg").addEventListener("click", () => {
+  const svg = engraved().layout(900).svg;
+  download(filename("svg"), "image/svg+xml", `<?xml version="1.0" encoding="UTF-8"?>\n${svg}\n`);
+});
+
+byId("print").addEventListener("click", () => window.print());
+
+// ---- the address --------------------------------------------------------------------------
+
+let hashTimer = 0;
+let lastHash = "";
+function saveHash(): void {
+  clearTimeout(hashTimer);
+  hashTimer = window.setTimeout(async () => {
+    const hash = await encode({
+      psalm: state.psalm,
+      tone: state.tone,
+      gloria: state.gloria,
+      transpose: state.transpose,
+      text: state.psalm === OWN || state.text !== state.auto ? state.text : undefined,
+    });
+    if (hash === location.hash) return;
+    lastHash = hash;
+    history.replaceState(null, "", hash);
+  }, 200);
+}
+
+async function load(hash: string): Promise<void> {
+  const shared = await decode(hash);
+  const tones = new Set(toneNames());
+  state.psalm = shared && (shared.psalm === OWN || psalter.has(shared.psalm)) ? shared.psalm : DEFAULT.psalm;
+  state.tone = shared && tones.has(shared.tone) ? shared.tone : DEFAULT.tone;
+  state.gloria = shared?.gloria ?? true;
+  state.transpose = shared?.transpose ?? 0;
+  undoStack.length = 0;
+  els.undo.disabled = true;
+  if (state.psalm === OWN) {
+    // Typed text travels as its pointing, which pointing again keeps.
+    const text = clean(shared?.text ?? "");
+    state.own = state.gloria ? text.split("\n").slice(0, -2).join("\n") : text;
+  }
+  repoint();
+  if (shared?.text !== undefined && state.psalm !== OWN) {
+    const auto = state.text;
+    state.text = clean(shared.text);
+    // A half still as the pointer left it stays flagged.
+    const lines = state.text.split("\n");
+    const autoLines = auto.split("\n");
+    for (const key of [...state.unsure]) {
+      const [v, part] = key.split(":") as [string, Half];
+      const side = (line: string | undefined) => line?.split("*")[part === "mediant" ? 0 : 1];
+      if (side(lines[Number(v)]) !== side(autoLines[Number(v)])) state.unsure.delete(key);
+    }
+  }
+  refresh({ tone: true });
+}
+
+window.addEventListener("hashchange", () => {
+  if (location.hash !== lastHash) void load(location.hash);
+});
+
+await load(location.hash);
+
+if (test) {
+  (window as Window & { __pointer?: unknown }).__pointer = {
+    state,
+    visited,
+    shared: () => decode(location.hash),
+  };
+}
