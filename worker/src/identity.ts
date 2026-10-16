@@ -87,9 +87,12 @@ async function fetchKeys(team: string, now: number): Promise<boolean> {
   const keys = new Map<string, CryptoKey>();
   for (const jwk of jwks ?? []) {
     if (!jwk.kid || jwk.kty !== "RSA") continue;
-    keys.set(jwk.kid, await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]));
+    // A key this check cannot use is passed over, not the whole set.
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]).catch(() => null);
+    if (key) keys.set(jwk.kid, key);
   }
-  teams.set(team, { keys, fetched: now });
+  // A slower fetch that began earlier never replaces keys fetched since.
+  if (now >= (teams.get(team)?.fetched ?? -Infinity)) teams.set(team, { keys, fetched: now });
   return true;
 }
 
