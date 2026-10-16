@@ -22,7 +22,7 @@
   // ("https://<team>.cloudflareaccess.com") and ACCESS_AUD (the application's audience tag)
   // here (neither is secret); while either is empty, nobody is signed in.
   "vars": { "ENV": "prod", "ACCESS_TEAM": "", "ACCESS_AUD": "" },
-  // Takes will live in R2 once it is enabled on the account:
-  // "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }]
+  // Student takes; the bucket exists on the account.
+  "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }],
   "workers_dev": true
 }
