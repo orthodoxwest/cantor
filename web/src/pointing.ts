@@ -140,11 +140,13 @@ export function moveAccents(
     const wordStart = at === halfStart || head.at(-1) === " ";
     return head + (wordStart ? "· " : "·") + tail;
   };
-  // Each accent must land on the syllable asked for. An accent can join syllables the
-  // syllabifier had apart ("Is·ráel"): refuse rather than put it elsewhere.
+  // Each accent must land on the syllable asked for, or on its first part where the display
+  // runs the rest of a word after an in-word `·` together ("Is·rael": "rael", sung "ra-el").
+  // An accent can also join syllables the syllabifier had apart ("Is·ráel"): refuse rather
+  // than put it elsewhere.
   const lands = (result: string): boolean => {
     const got = accentedSyllables(result, tone, verse, part);
-    return got.length === wanted.length && got.every((g, i) => wanted[i] === g);
+    return got.length === wanted.length && got.every((g, i) => wanted[i]!.startsWith(g));
   };
   // Without the hand's splits the syllabifier splits each word whole; with them, the cadence
   // keeps the hand's syllables.
