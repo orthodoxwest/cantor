@@ -216,6 +216,19 @@ test("the singer may remove a comment from their take", async ({ page }) => {
   await expect(page.locator(".pin")).toHaveCount(0);
 });
 
+test("a take stopped short is commented on only where it was judged", async ({ page }) => {
+  const sent = await sentTake(page);
+  const { judged } = sent.record;
+  await serve(page, sent, { comments: [], judged: { verdict: { key_cents: 0, marks: [] }, ribbon: judged.ribbon.slice(0, 2), told: [], summary: judged.summary } });
+  await page.goto(`/take/${ID}`);
+  await expect(page.locator("#key")).toHaveText("The singer's key: as written. The take was stopped, and judged through note 2.");
+  await expect(page.locator("[data-band]")).toHaveCount(2);
+  await expect(page.locator("#note")).toHaveAttribute("max", "2");
+  await page.getByRole("button", { name: "Comment on note 2", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("button", { name: "Comment on note 2", exact: true })).toBeFocused();
+});
+
 test("a link that names no take says so", async ({ page }) => {
   await page.route(`**/api/takes/${"C".repeat(32)}`, (route) => route.fulfill({ status: 404, json: { error: "not found" } }));
   await page.goto(`/take/${"C".repeat(32)}`);

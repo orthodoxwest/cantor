@@ -18,7 +18,7 @@ interface Exports {
   ear_stop(): number;
   ear_onset(): number;
   ear_entry(due: number): number;
-  ear_judge(gabcLen: number, pulse: number, offset: number): number;
+  ear_judge(gabcLen: number, pulse: number, offset: number, through: number): number;
 }
 
 /** A tracked frame: its centre in seconds of the audio context's clock, the pitch heard (as a
@@ -38,7 +38,7 @@ const FRAME_FIELDS = 4;
 export type ToEar =
   | { type: "start"; id: number; sampleRate: number; audio: MessagePort }
   | { type: "entry"; id: number; due: number }
-  | { type: "judge"; id: number; gabc: string; pulse: number; offset: number }
+  | { type: "judge"; id: number; gabc: string; pulse: number; offset: number; through: number }
   | { type: "audio"; id: number };
 
 /** When a take's first note starts, in seconds of the take, as cantor-core's entry.rs times
@@ -231,7 +231,7 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       const gabc = new TextEncoder().encode(message.gabc);
       const at = ear.ear_bytes(gabc.length);
       new Uint8Array(ear.memory.buffer, at, gabc.length).set(gabc);
-      const len = check(ear, ear.ear_judge(gabc.length, message.pulse, message.offset));
+      const len = check(ear, ear.ear_judge(gabc.length, message.pulse, message.offset, message.through));
       post({ type: "judged", id: message.id, json: output(ear, len) });
     }
   } catch (error) {

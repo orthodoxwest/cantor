@@ -62,9 +62,8 @@
       </p>
       <p id="loop" class="loop"><span id="loop-text" aria-live="polite">Tap a phrase or a bar on the score to play it over and over.</span> <button id="unloop" class="btn" type="button" hidden>Whole chant</button></p>
       <p id="status" class="status" role="status"></p>
-      <div id="score" class="score"></div>
-      <p id="why" class="why" aria-live="polite"></p>
-      <section id="result" class="result" hidden>
+      <section id="result" class="result lead" hidden>
+        <p id="cut" hidden></p>
         <p id="summary"></p>
         <p id="key"></p>
         <p id="recorded" hidden>The broad grey line under yours is a recording of this chant.</p>
@@ -74,6 +73,8 @@
           <span id="sent" aria-live="polite"></span>
         </p>
       </section>
+      <div id="score" class="score"></div>
+      <p id="why" class="why" aria-live="polite"></p>
     </main>
 
     <div class="bar">

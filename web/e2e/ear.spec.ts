@@ -193,6 +193,10 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   // The take is judged when the chant is over, with nothing pressed.
   await expect(page.locator("#key")).toHaveText(/^Your key: /, { timeout: (seconds + 30) * 1000 });
   await expect(take).toHaveText("Sing a take");
+  // The result comes into view above the score.
+  await expect(page.locator("#result")).toBeInViewport();
+  await expect(page.locator("#cut")).toBeHidden();
+  await expect(page.locator("#status")).toHaveText("");
   await expect(page.locator(".mode")).toBeVisible();
   await expect(page.locator("#find")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
@@ -223,6 +227,32 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   await expect(page.locator(".mark-ring")).toHaveCount(0);
   await expect(page.locator("#result")).toBeHidden();
   await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.locator("#status")).toHaveText("The take was stopped.");
+  await expect(page.locator("#status")).toHaveText("The take was stopped before the chant began.");
   await expect(take).toHaveText("Sing a take");
+});
+
+test("Stop during the chant ends the take there and shows what was sung", async ({ page }) => {
+  const want = readTake();
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/sing.html?test=1");
+  await page.waitForFunction(() => window.__cantor);
+  await page.evaluate(([gabc, pulse]) => window.__cantor.practise(gabc, pulse), [want.gabc, want.pulse_s] as const);
+  const take = page.getByRole("button", { name: "Sing a take" });
+  await take.click();
+  // Some way into the chant, the singer stops.
+  await expect(page.locator("#readout")).toHaveText(/^[A-G]♯?\d$/, { timeout: 15_000 });
+  await expect.poll(() => page.evaluate(() => window.__cantor.visited.length), { timeout: 30_000 }).toBeGreaterThan(12);
+  await page.getByRole("button", { name: "Stop" }).click();
+  // What was sung is judged and shown, with where it stopped.
+  await expect(page.locator("#cut")).toHaveText(/^You stopped the take at note \d+ of \d+, so it is judged through note \d+, where the last phrase you sang through ended\.$/, { timeout: 30_000 });
+  await expect(page.locator("#key")).toHaveText(/^Your key: /);
+  // Only the notes to the end of the last phrase finished have bands, none past the note stopped at.
+  const [, at, through] = /note (\d+) of \d+, so it is judged through note (\d+)/.exec((await page.locator("#cut").textContent())!)!.map(Number);
+  expect(through).toBeLessThanOrEqual(at!);
+  await expect(page.locator("[data-band]")).toHaveCount(through!);
+  await expect(page.locator("#result")).toBeInViewport();
+  await expect(page.locator("#status")).toHaveText("");
+  await expect(take).toBeEnabled();
+  await expect(page.locator("#readout")).toHaveText("–");
 });
