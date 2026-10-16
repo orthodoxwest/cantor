@@ -235,6 +235,46 @@ test("a loop is not shown beside a take's result, even one too short to draw", a
   expect(await fillOf(ids[3]!)).toBe(await fillOf(ids[0]!));
 });
 
+test("your take plays back against the score with the cursor, and stops for Play", async ({ page }) => {
+  await open(page);
+  const hear = page.getByRole("button", { name: "Your take" });
+  await expect(hear).toBeHidden();
+  // Two seconds heard from the microphone, judged as a two-note chant from 0.2 s.
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const gabc = "(c4) A(h) men.(h) (::)";
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(hear).toBeVisible();
+  await hear.click();
+  await expect(hear).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  // It ends by itself, having marked both notes in turn.
+  await expect(hear).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  expect(await page.evaluate(() => window.__cantor.replayed.visited)).toEqual(ids);
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  // Play stops it.
+  await hear.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.replayed.playing)).toBe(true);
+  await page.getByRole("button", { name: "Play" }).click();
+  expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
+  await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
+  // Play clears the take, and with it the way to hear it.
+  await expect(hear).toBeHidden();
+  // Start note pressed while the take's audio is still being fetched stops it before it sounds.
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(page.locator("#note")).toBeEnabled();
+  await page.evaluate(() => {
+    document.getElementById("hear")!.click();
+    document.getElementById("note")!.click();
+  });
+  await page.waitForTimeout(1000);
+  expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
+  await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
+});
+
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());

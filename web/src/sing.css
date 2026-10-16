@@ -250,10 +250,15 @@ main:has(#result:not([hidden])) #loop {
     min-width: 0;
     font-size: 1rem;
   }
-  /* Outside a take the readout has nothing to say, and in one Start note and Drone are off,
-     so each gives the other its room. */
+}
+/* Outside a take the readout has nothing to say, and in one Start note and Drone are off;
+   beside a take shown, Your take has their room, unless the drone sounds. So on a narrow screen
+   the bar keeps to one row. */
+@media (max-width: 699.98px) {
   body:not(.taking) #readout,
   body:not(.taking) .bar .spacer,
+  body:has(#hear:not([hidden])) #note,
+  body:has(#hear:not([hidden])) #drone:not([aria-pressed="true"]),
   body.taking #note,
   body.taking #drone {
     display: none;
