@@ -8,7 +8,7 @@
 
 use std::cell::RefCell;
 
-use cantor_core::{Frame, Listening, Note, Report, Verdict, judge, notes_from_gabc, score};
+use cantor_core::{Band, Frame, Listening, Note, Report, Verdict, judge, notes_from_gabc, ribbon, score};
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
 
@@ -87,6 +87,8 @@ pub struct Judged {
     pub notes: Vec<Note>,
     pub report: Report,
     pub verdict: Verdict,
+    /// The take note by note, as the page draws it.
+    pub ribbon: Vec<Band>,
 }
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
@@ -98,7 +100,13 @@ pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame]) -> 
     }
     let report = score(&notes, frames);
     let verdict = judge(&notes, &report);
-    Judged { notes, report, verdict }
+    let ribbon = ribbon(&notes, frames, &report, &verdict);
+    Judged {
+        notes,
+        report,
+        verdict,
+        ribbon,
+    }
 }
 
 /// The time of the first sample at least [`ONSET_PEAK`], in seconds.

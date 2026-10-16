@@ -54,3 +54,27 @@ main {
 .cursor[hidden] {
   display: none;
 }
+.ribbon .band-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.ribbon .band-zone {
+  fill: color-mix(in srgb, currentColor 7%, transparent);
+}
+.ribbon .band-target {
+  stroke: color-mix(in srgb, currentColor 35%, transparent);
+  stroke-width: 1;
+}
+.ribbon .unheard .band-target {
+  stroke-dasharray: 2 3;
+}
+.ribbon .band-trace {
+  fill: none;
+  stroke: #1f5fa8;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.result p {
+  margin: 0.5rem 0;
+}

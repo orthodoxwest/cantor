@@ -12,6 +12,8 @@ import { readTake, TAKE_WAV, takeSeconds } from "./fixtures/take.mjs";
 const HEARD_TOLERANCE = 0.02;
 /** And the key, in cents. */
 const KEY_TOLERANCE_CENTS = 10;
+/** And each note's value on the ribbon, in cents from the key, where both heard it. */
+const BAND_TOLERANCE_CENTS = 20;
 
 test.use({
   launchOptions: {
@@ -42,7 +44,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await expect(page.locator("#status")).toHaveText(/^Heard /);
   const offset = want.lead_in_s + heard!.onset! - want.onset_s;
   const got = JSON.parse(
-    await page.evaluate(([gabc, pulse, offset]) => window.__cantor.judge(gabc, pulse, offset), [
+    await page.evaluate(([gabc, pulse, offset]) => window.__cantor.show(gabc, pulse, offset), [
       want.gabc,
       want.pulse_s,
       offset,
@@ -61,6 +63,22 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
     seconds: heard!.seconds,
   };
   console.log(`ear: ${JSON.stringify(summary)}`);
+  // The ribbon the page draws is the core's, note for note, and agrees with the eval's.
+  const drawn = await page.locator("[data-band]").evaluateAll((els) =>
+    els.map((el) => {
+      const cents = (el as SVGGElement).dataset.cents;
+      return cents ? Number(cents) : null;
+    }),
+  );
+  const wanted: Array<number | null> = want.ribbon.map((b: { cents: number | null }) => b.cents);
+  expect(drawn).toHaveLength(wanted.length);
+  expect(drawn).toEqual(got.ribbon.map((b: { cents: number | null }) => (b.cents === null ? null : Number(b.cents.toFixed(1)))));
+  const both = wanted.flatMap((w, i) => (w !== null && drawn[i] !== null ? [Math.abs(w - drawn[i]!)] : []));
+  const apart = wanted.filter((w, i) => (w === null) !== (drawn[i] === null)).length;
+  console.log(`ribbon: ${JSON.stringify({ notes: wanted.length, both: both.length, apart, worst: Math.max(...both).toFixed(1) })}`);
+  expect(apart).toBeLessThanOrEqual(Math.ceil(HEARD_TOLERANCE * wanted.length));
+  expect(Math.max(...both)).toBeLessThanOrEqual(BAND_TOLERANCE_CENTS);
+  await expect(page.locator("#key")).toHaveText(/^Your key: /);
   await info.attach("ear.json", { body: JSON.stringify(summary, null, 2), contentType: "application/json" });
   await info.attach("page.png", { body: await page.screenshot(), contentType: "image/png" });
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
