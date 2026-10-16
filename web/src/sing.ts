@@ -1,7 +1,7 @@
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
-import { Listener } from "./listen";
+import { type Entry, Listener } from "./listen";
 import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
 import { kicker, library, chant as findChant } from "./library";
 import { describePitch, noteName } from "./notes";
@@ -11,7 +11,7 @@ import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
-import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
+import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
 void offerSignIn();
 
@@ -238,7 +238,7 @@ const LEAD = 1.5;
 const TAIL = ONSET_WINDOW + 0.5;
 /** How the last take was timed, in seconds of the take: when its first note was due, when the
  * singer first sounded, and the first note's start it was judged by. */
-let timing: { due: number; sound: number | null; at: number } | null = null;
+let timing: Entry | null = null;
 
 function showMode(): void {
   const worn = headphonesBox.checked;
@@ -364,10 +364,8 @@ async function takeScored(): Promise<void> {
     // input's; the cursor is seen at once.
     const output = worn ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0;
     const due = started.origin + started.first - heard.startedAt + listener.inputLatency + output;
-    const sound = firstSound(listener.frames, heard.startedAt, heard.onset, due - ONSET_EARLY);
-    const at = firstNoteAt(due, sound);
-    timing = { due, sound, at };
-    const json = await listener.judge(score.source, guide.pulse, at - started.first);
+    timing = await listener.entry(due);
+    const json = await listener.judge(score.source, guide.pulse, timing.at - started.first);
     if (going()) showResult(JSON.parse(json) as Judged);
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -15,6 +15,7 @@ interface Exports {
   ear_frames(): number;
   ear_stop(): number;
   ear_onset(): number;
+  ear_entry(due: number): number;
   ear_judge(gabcLen: number, pulse: number, offset: number): number;
 }
 
@@ -34,17 +35,27 @@ const FRAME_FIELDS = 4;
 /** What the page sends, each request numbered by `id`. */
 export type ToEar =
   | { type: "start"; id: number; sampleRate: number; audio: MessagePort }
+  | { type: "entry"; id: number; due: number }
   | { type: "judge"; id: number; gabc: string; pulse: number; offset: number };
+
+/** When a take's first note starts, in seconds of the take, as cantor-core's entry.rs times
+ * it: when it was due, the singer's first sound near it (null when none), and the start the
+ * take is judged by, which is the sound when there is one and when it was due otherwise. */
+export interface Entry {
+  due: number;
+  sound: number | null;
+  at: number;
+}
 
 /** What the worklet sends: a block of the take with the context time of its first sample, or
  * the take's end. */
 export type Block = { t: number; samples: Float32Array } | { end: true };
 
 /** What the ear sends back: frames as they are tracked; then the take heard (its length and
- * rate, frame count, first sound in seconds from its start, its first sample's time on the
- * audio clock (null when none came), the share of its length spent
- * hearing it as it came, and the milliseconds spent finishing it); then, when asked, the take
- * judged. Each answer, or the error in its place, carries the `id` of the request it answers. */
+ * rate, frame count, first loud sample in seconds from its start, its first sample's time on
+ * the audio clock (null when none came), the share of its length spent
+ * hearing it as it came, and the milliseconds spent finishing it); then, when asked, when its
+ * first note starts, and the take judged. Each answer, or the error in its place, carries the `id` of the request it answers. */
 export type FromEar =
   | { type: "frames"; frames: Frame[] }
   | {
@@ -58,6 +69,7 @@ export type FromEar =
       busy: number;
       stopMs: number;
     }
+  | { type: "entry"; id: number; entry: Entry }
   | { type: "judged"; id: number; json: string }
   | { type: "error"; id: number; message: string };
 
@@ -187,6 +199,9 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
           failed(take.id, error);
         }
       };
+    } else if (message.type === "entry") {
+      const len = check(ear, ear.ear_entry(message.due));
+      post({ type: "entry", id: message.id, entry: JSON.parse(output(ear, len)) as Entry });
     } else {
       const gabc = new TextEncoder().encode(message.gabc);
       const at = ear.ear_bytes(gabc.length);
