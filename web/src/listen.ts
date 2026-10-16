@@ -2,7 +2,7 @@
 // the ear tracks it as it comes, its frames return here for the live trace, and it hears the
 // whole take when it stops.
 import { audioContext } from "./audio";
-import type { Frame, FromEar, ToEar } from "./ear/worker";
+import type { Frame, FromEar, Pending, ToEar } from "./ear/worker";
 
 export type { Frame };
 
@@ -12,33 +12,54 @@ export type Heard = Extract<FromEar, { type: "heard" }>;
 /** The ear's worker; one serves every take. */
 class Ear {
   private worker = new Worker(new URL("./ear/worker.ts", import.meta.url), { type: "module" });
-  private waiting: Array<(m: Exclude<FromEar, { type: "frames" }>) => void> = [];
+  /** What waits on the worker: at most one take heard and one judging. */
+  private waiting: { [K in Pending]?: { resolve: (m: Extract<FromEar, { type: K }>) => void; reject: (e: Error) => void } } = {};
 
   constructor(onFrames: (frames: Frame[]) => void) {
     this.worker.onmessage = (e: MessageEvent<FromEar>) => {
-      if (e.data.type === "frames") onFrames(e.data.frames);
-      else this.waiting.shift()?.(e.data);
+      const m = e.data;
+      if (m.type === "frames") return onFrames(m.frames);
+      if (m.type === "error") {
+        if (m.for) this.settle(m.for)?.reject(new Error(m.message));
+        else console.error("ear:", m.message);
+        return;
+      }
+      if (m.type === "heard") this.settle("heard")?.resolve(m);
+      else this.settle("judged")?.resolve(m);
+    };
+    // The worker failed to load or run: nothing it was asked will be answered.
+    this.worker.onerror = (e) => {
+      for (const kind of ["heard", "judged"] as const) this.settle(kind)?.reject(new Error(e.message || "the ear failed"));
     };
   }
 
-  private next<T extends "heard" | "judged">(type: T): Promise<Extract<FromEar, { type: T }>> {
-    return new Promise((resolve, reject) =>
-      this.waiting.push((m) => (m.type === type ? resolve(m as Extract<FromEar, { type: T }>) : reject(new Error(m.type === "error" ? m.message : m.type)))),
-    );
+  private settle<K extends Pending>(kind: K) {
+    const waiter = this.waiting[kind];
+    delete this.waiting[kind];
+    return waiter;
+  }
+
+  private wait<K extends Pending>(kind: K): Promise<Extract<FromEar, { type: K }>> {
+    this.settle(kind)?.reject(new Error(`superseded by another ${kind === "heard" ? "take" : "judging"}`));
+    return new Promise((resolve, reject) => {
+      (this.waiting as Record<K, unknown>)[kind] = { resolve, reject };
+    });
   }
 
   /** Starts a take at `sampleRate` heard through `audio`; resolves when the take has ended
    * and been heard. */
   start(sampleRate: number, audio: MessagePort): Promise<Heard> {
+    const heard = this.wait("heard");
     this.worker.postMessage({ type: "start", sampleRate, audio } satisfies ToEar, [audio]);
-    return this.next("heard");
+    return heard;
   }
 
   /** The last take scored and judged against `gabc`'s notes, `pulse` seconds a pulse, the
    * first starting `offset` seconds into the take, as JSON. */
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
+    const judged = this.wait("judged");
     this.worker.postMessage({ type: "judge", gabc, pulse, offset } satisfies ToEar);
-    return (await this.next("judged")).json;
+    return (await judged).json;
   }
 }
 
@@ -58,15 +79,17 @@ export class Listener {
 
   constructor(private readonly onFrame: (frame: Frame) => void) {}
 
-  /** The last take judged; see `Ear.judge`. */
-  judge(gabc: string, pulse: number, offset: number): Promise<string> {
-    if (!this.ear) return Promise.reject(new Error("nothing heard"));
+  /** The last take judged once it has been heard; see `Ear.judge`. */
+  async judge(gabc: string, pulse: number, offset: number): Promise<string> {
+    if (!this.ear || !this.heard) throw new Error("nothing heard");
+    await this.heard;
     return this.ear.judge(gabc, pulse, offset);
   }
 
   async start(): Promise<void> {
     if (this.listening) return;
     this.listening = true;
+    this.heard = undefined;
     const ctx = await audioContext();
     this.module ??= ctx.audioWorklet.addModule(WORKLET_URL);
     await this.module;

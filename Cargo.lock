@@ -87,6 +87,7 @@ version = "0.0.1"
 dependencies = [
  "cantor-core",
  "cantor-crepe",
+ "cantor-ear",
  "cantor-swift",
  "claxon",
  "hound",

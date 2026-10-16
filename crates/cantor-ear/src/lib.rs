@@ -16,14 +16,10 @@ const ONSET_PEAK: f32 = 1e-3;
 /// Numbers a frame is sent to the page as, by [`ear_frames`].
 pub const FRAME_FIELDS: usize = 4;
 
-/// A take being heard, or heard.
+/// A take being heard, or heard: its frames and its first sound.
 enum Take {
     Hearing(Listening),
-    Heard {
-        samples: Vec<f32>,
-        sample_rate: f32,
-        frames: Vec<Frame>,
-    },
+    Heard { frames: Vec<Frame>, onset: Option<f32> },
 }
 
 thread_local! {
@@ -34,28 +30,24 @@ thread_local! {
     static TAKE: RefCell<Option<Take>> = const { RefCell::new(None) };
 }
 
-/// The take scored and judged, as `ear_judge` leaves it.
+/// A take scored and judged against a chant's notes, as `ear_judge` leaves it as JSON.
 #[derive(Serialize)]
-pub struct Judged<'a> {
-    pub notes: &'a [Note],
+pub struct Judged {
+    pub notes: Vec<Note>,
     pub report: Report,
     pub verdict: Verdict,
 }
 
-/// `notes` from `gabc` at `pulse_s` a pulse, `offset_s` later, scored and judged on `frames`.
-pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame]) -> String {
+/// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
+/// judged on its `frames`.
+pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame]) -> Judged {
     let mut notes = notes_from_gabc(gabc, pulse_s);
     for n in &mut notes {
         n.start_s += offset_s;
     }
     let report = score(&notes, frames);
     let verdict = judge(&notes, &report);
-    serde_json::to_string(&Judged {
-        notes: &notes,
-        report,
-        verdict,
-    })
-    .unwrap_or_default()
+    Judged { notes, report, verdict }
 }
 
 /// The time of the first sample at least [`ONSET_PEAK`], in seconds.
@@ -150,24 +142,30 @@ pub extern "C" fn ear_frames() -> *const f32 {
 }
 
 /// Ends the take and listens to it: how many frames it has, or -1 with the error in the
-/// output buffer.
+/// output buffer. Only the frames and the first sound are kept.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_stop() -> i32 {
-    let Some(Take::Hearing(listening)) = TAKE.with(|t| t.borrow_mut().take()) else {
-        return fail("no take started".into());
-    };
-    let sample_rate = listening.sample_rate();
-    let (samples, frames) = listening.finish(None, None);
-    let n = frames.len() as i32;
-    TAKE.with(|t| {
-        *t.borrow_mut() = Some(Take::Heard {
-            samples,
-            sample_rate,
+    let heard = TAKE.with(|t| {
+        let mut t = t.borrow_mut();
+        let listening = match t.take() {
+            Some(Take::Hearing(listening)) => listening,
+            heard => {
+                // Stopped twice: the take heard stays to be judged.
+                *t = heard;
+                return Err("no take started".to_string());
+            }
+        };
+        let sample_rate = listening.sample_rate();
+        let (samples, frames) = listening.finish(None, None);
+        let n = frames.len() as i32;
+        *t = Some(Take::Heard {
             frames,
-        })
+            onset: onset(&samples, sample_rate),
+        });
+        Ok(n)
     });
-    n
+    heard.unwrap_or_else(fail)
 }
 
 /// The heard take's first sound in seconds, or -1 when it has none.
@@ -175,7 +173,7 @@ pub extern "C" fn ear_stop() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_onset() -> f32 {
     TAKE.with(|t| match t.borrow().as_ref() {
-        Some(Take::Heard { samples, sample_rate, .. }) => onset(samples, *sample_rate).unwrap_or(-1.0),
+        Some(Take::Heard { onset, .. }) => onset.unwrap_or(-1.0),
         _ => -1.0,
     })
 }
@@ -191,16 +189,16 @@ pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32) -> i32 {
         String::from_utf8_lossy(&b[..(gabc_len as usize).min(b.len())]).into_owned()
     });
     let json = TAKE.with(|t| match t.borrow().as_ref() {
-        Some(Take::Heard { frames, .. }) => Some(judge_gabc(&gabc, pulse_s, offset_s, frames)),
-        _ => None,
+        Some(Take::Heard { frames, .. }) => serde_json::to_string(&judge_gabc(&gabc, pulse_s, offset_s, frames)).map_err(|e| e.to_string()),
+        _ => Err("no take heard".to_string()),
     });
     match json {
-        Some(json) => {
+        Ok(json) => {
             let n = json.len() as i32;
             OUTPUT.with(|o| *o.borrow_mut() = json.into_bytes());
             n
         }
-        None => fail("no take heard".into()),
+        Err(e) => fail(e),
     }
 }
 
@@ -257,7 +255,9 @@ mod tests {
         let len = ear_judge(bytes.len() as u32, 0.5, 1.0);
         assert_eq!(len, ear_output_len() as i32);
         let json = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
-        assert_eq!(json, judge_gabc(gabc, 0.5, 1.0, &whole));
+        assert_eq!(json, serde_json::to_string(&judge_gabc(gabc, 0.5, 1.0, &whole)).unwrap());
+        assert_eq!(ear_stop(), -1, "a take stops once");
+        assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
     }
 

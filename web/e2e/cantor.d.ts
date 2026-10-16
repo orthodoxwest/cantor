@@ -9,7 +9,7 @@ declare global {
       visited: number[];
       chunks: Array<[number, number, number]>;
       voice: "neutral" | "recorded" | "none";
-      heard: () => Promise<{ seconds: number; frames: number; onset: number | null; msPerFrame: number; stopMs: number }> | undefined;
+      heard: () => Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; msPerFrame: number; stopMs: number }> | undefined;
       judge: (gabc: string, pulse: number, offset: number) => Promise<string>;
     };
   }

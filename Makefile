@@ -1,6 +1,6 @@
 .PHONY: setup neuma check test e2e eval oracle wasm content
 
-# Everything a fresh clone needs: the neuma browser module, Rust's wasm target and cantor.wasm,
+# Everything a fresh clone needs: the neuma browser module, Rust's wasm target, cantor.wasm and ear.wasm,
 # npm packages, Playwright's browser.
 setup: neuma
 	rustup target add wasm32-unknown-unknown

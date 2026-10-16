@@ -5,7 +5,10 @@ import { expect, test } from "@playwright/test";
 import { readTake, TAKE_WAV, takeSeconds } from "./fixtures/take.mjs";
 
 /** How far the page's heard fraction may stray from the eval's: the take is resampled from
- * the eval's 16 kHz to the page's 48 kHz, where the tracker's frames fall elsewhere. */
+ * the eval's 16 kHz to the page's rate (44.1 or 48 kHz), where the tracker's frames are
+ * longer and fall elsewhere against the notes. `cantor-cli`'s
+ * `the_browser_ear_hears_a_take_as_the_eval_does_wherever_its_frames_fall` holds the same
+ * tolerances, and the same marks, at both rates wherever the frames fall. */
 const HEARD_TOLERANCE = 0.02;
 /** And the key, in cents. */
 const KEY_TOLERANCE_CENTS = 10;
@@ -34,7 +37,8 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(await page.evaluate(() => window.__cantor.frames.filter((f) => f.midi !== null).length)).toBeGreaterThan(100);
   await page.getByRole("button", { name: "Listen" }).click();
   const heard = await page.evaluate(() => window.__cantor.heard());
-  expect(heard?.onset).not.toBeNull();
+  expect(heard).toBeDefined();
+  expect(heard!.onset).not.toBeNull();
   await expect(page.locator("#status")).toHaveText(/^Heard /);
   const offset = want.lead_in_s + heard!.onset! - want.onset_s;
   const got = JSON.parse(
@@ -50,6 +54,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
     heard: [want.report.heard_fraction, got.report.heard_fraction],
     marks: [marks(want.verdict), marks(got.verdict)],
     key: [want.verdict.key_cents, got.verdict.key_cents],
+    sampleRate: heard!.sampleRate,
     msPerFrame: Number(heard!.msPerFrame.toFixed(3)),
     stopMs: Number(heard!.stopMs.toFixed(1)),
     frames: heard!.frames,
@@ -61,6 +66,4 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
-  // The ear keeps pace: a frame every 30 ms costs well under 30 ms.
-  expect(heard!.msPerFrame).toBeLessThan(10);
 });

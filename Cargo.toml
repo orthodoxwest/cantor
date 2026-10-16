@@ -13,6 +13,7 @@ publish = false
 [workspace.dependencies]
 cantor-core = { path = "crates/cantor-core" }
 cantor-crepe = { path = "crates/cantor-crepe" }
+cantor-ear = { path = "crates/cantor-ear" }
 cantor-swift = { path = "crates/cantor-swift" }
 # neuma is pinned by revision; scripts/neuma.sh builds the matching browser module.
 neuma = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
