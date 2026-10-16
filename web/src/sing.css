@@ -290,3 +290,45 @@ main:has(#result:not([hidden])) #loop {
 #cut {
   color: var(--muted);
 }
+/* The core's marks in words, in the order sung (sing.ts listMarks); each opens its ring. */
+.marked {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+.marked button {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.35rem 0 0.35rem 1.4rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+/* A ring like the one on the note. */
+.marked button::before {
+  content: "";
+  position: absolute;
+  left: 0.15rem;
+  top: 0.75rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 1.5px solid #b8452f;
+  border-color: light-dark(#b8452f, #ef8a73);
+}
+.marked button[aria-expanded="true"]::before {
+  border-width: 2.5px;
+}
+.marked button[aria-expanded="true"] .where {
+  text-decoration: underline;
+}
+.marked .where {
+  font-weight: 500;
+}

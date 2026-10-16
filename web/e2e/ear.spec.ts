@@ -151,6 +151,25 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await page.keyboard.press("Enter");
   await expect(page.locator("#why")).toHaveText("");
   await expect(page.locator("#status")).toHaveText("");
+  // The marks are written out too, in the order sung, each opening its ring on the score.
+  const listed = page.locator("#marked button");
+  await expect(listed).toHaveCount(got.verdict.marks.length);
+  const order = got.verdict.marks.map((m: Marked, k: number) => ({ m, k })).sort((a: { m: Marked }, b: { m: Marked }) => a.m.first - b.m.first);
+  for (const [i, { m, k }] of order.entries()) {
+    const at = m.first === m.last ? `Note ${m.first + 1}` : `Notes ${m.first + 1} to ${m.last + 1}`;
+    await expect(listed.nth(i)).toHaveText(new RegExp(`^${at}(, “[^”]+”)?: `));
+    expect((await listed.nth(i).textContent())!.endsWith(`: ${got.told[k]}`)).toBe(true);
+  }
+  const { k: second } = order[1]!;
+  await listed.nth(1).click();
+  await expect(page.locator("#why")).toHaveText(got.told[second]);
+  await expect(page.locator(`[data-mark="${second}"]`)).toHaveAttribute("aria-expanded", "true");
+  await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "true");
+  await expect(listed.nth(1)).toBeFocused();
+  await expect(page.locator(`[data-mark="${second}"]`)).toBeInViewport();
+  await listed.nth(1).click();
+  await expect(page.locator("#why")).toHaveText("");
+  await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "false");
   // A new take clears the last one's view, the words of a mark left open with it.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).toHaveText(got.told[0]);
