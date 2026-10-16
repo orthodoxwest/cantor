@@ -5,17 +5,6 @@
   display: grid;
   gap: 0.85rem;
 }
-.search input {
-  width: 100%;
-  min-height: var(--tap);
-  padding: 0.5rem 0.85rem;
-  font-size: 1.0625rem;
-}
-.search input::placeholder {
-  color: var(--muted);
-  font-style: italic;
-  opacity: 1;
-}
 .kinds {
   display: flex;
   flex-wrap: wrap;

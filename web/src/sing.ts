@@ -3,7 +3,7 @@ import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { type Entry, Listener } from "./listen";
 import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
-import { kicker, library, chant as findChant } from "./library";
+import { escape, finds, highlight, kicker, library, chant as findChant, terms, type LibraryChant } from "./library";
 import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
@@ -34,19 +34,95 @@ if (!found && asked !== DEFAULT) byId("status").textContent = "That chant is not
 byId("kicker").textContent = ["Practice", kicker({ kind: piece.kind, mode: piece.mode })].filter(Boolean).join(" · ");
 byId("title").textContent = piece.title;
 document.title = `${piece.title} · Practice · Cantor`;
-const picker = byId<HTMLSelectElement>("chant");
-picker.add(new Option(`${piece.title}${piece.name ? ` (${piece.name})` : ""}`, piece.slug, true, true));
-// The rest of the library joins the picker when it comes.
-void library().then(
-  (all) => {
-    picker.replaceChildren(...all.map((c) => new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c.slug === piece.slug)));
-    if (picker.value !== piece.slug) picker.add(new Option(piece.title, piece.slug, true, true), 0);
-  },
-  () => {},
-);
-picker.addEventListener("change", () => {
-  params.set("chant", picker.value);
-  location.search = params.toString();
+
+// Another chant is found by its words as they are typed: a few of the library's chants, each a
+// link to practise it.
+const find = byId<HTMLInputElement>("find");
+const foundList = byId<HTMLOListElement>("found");
+const foundNote = byId<HTMLSpanElement>("found-note");
+/** Matches listed at a time; more words narrow them. */
+const FOUND = 8;
+let everything: LibraryChant[] | null = null;
+let reaching = false;
+let unreachable = false;
+
+/** Fetches the library once it is wanted, and again after a failure. */
+function reach(): void {
+  if (everything || reaching) return;
+  reaching = true;
+  unreachable = false;
+  void library()
+    .then(
+      (all) => (everything = all),
+      () => (unreachable = true),
+    )
+    .finally(() => {
+      reaching = false;
+      drawFound();
+    });
+}
+
+/** The address of `slug`'s practice, keeping the rest of this one's. */
+function practice(slug: string): string {
+  const next = new URLSearchParams(params);
+  next.set("chant", slug);
+  return `/sing?${next}`;
+}
+
+function drawFound(): void {
+  const q = find.value.trim();
+  const ts = find.disabled ? [] : terms(q);
+  const matches = ts.length && everything ? everything.filter((c) => finds(c, ts)) : [];
+  foundList.innerHTML = matches
+    .slice(0, FOUND)
+    .map(
+      (c) => `<li><a href="${escape(practice(c.slug))}"${c.slug === piece.slug ? ' aria-current="page"' : ""}>
+  <span class="name">${highlight(c.title, ts)}${c.name ? ` <span class="latin">${highlight(c.name, ts)}</span>` : ""}</span>
+  <span class="kicker">${escape(kicker(c))}</span></a></li>`,
+    )
+    .join("");
+  foundList.hidden = !matches.length;
+  let note = "";
+  if (!ts.length) note = "";
+  else if (!everything) note = unreachable ? "The library could not be reached." : "Searching…";
+  else if (!matches.length) note = `Nothing matches “${q}”.`;
+  else if (matches.length > FOUND) note = `${FOUND} of ${matches.length}; another word narrows them.`;
+  else note = matches.length === 1 ? "1 chant" : `${matches.length} chants`;
+  foundNote.textContent = note;
+}
+find.addEventListener("focus", reach);
+find.addEventListener("input", () => {
+  reach();
+  drawFound();
+});
+const links = () => [...foundList.querySelectorAll<HTMLAnchorElement>("a")];
+find.addEventListener("keydown", (e) => {
+  // Enter practises the first match (not the Enter that ends an input method's composing, which
+  // Safari sends as key code 229), the down arrow goes into the list, Escape clears.
+  if (e.key === "Escape" && find.value) {
+    e.preventDefault();
+    find.value = "";
+    drawFound();
+    return;
+  }
+  const first = links()[0];
+  if (!first) return;
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    location.assign(first.href);
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    first.focus();
+  }
+});
+foundList.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") return find.focus();
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const all = links();
+  const at = all.indexOf(document.activeElement as HTMLAnchorElement);
+  if (at < 0) return;
+  e.preventDefault();
+  (all[at + (e.key === "ArrowDown" ? 1 : -1)] ?? (e.key === "ArrowUp" ? find : all[at]!)).focus();
 });
 const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
@@ -120,11 +196,17 @@ function offerSend(take: ToSend): void {
   });
 }
 
+/** Keeps the page on this chant, or lets another be found. */
+function holdChant(on: boolean): void {
+  find.disabled = on;
+  drawFound();
+}
+
 /** Holds a new take and the chant while the take being sent is read from the ear, which
  * keeps only the last take, or lets them go. */
 function holdTake(on: boolean): void {
   takeButton.disabled = on || !guide;
-  picker.disabled = on;
+  holdChant(on);
 }
 
 sendButton.addEventListener("click", () => {
@@ -445,7 +527,8 @@ async function takeScored(): Promise<void> {
   guide.stop();
   stopPitch();
   listener.stop();
-  playButton.disabled = noteButton.disabled = picker.disabled = headphonesBox.disabled = true;
+  playButton.disabled = noteButton.disabled = headphonesBox.disabled = true;
+  holdChant(true);
   takeButton.textContent = "Stop";
   readout.textContent = "–";
   readout.setAttribute("aria-live", "off");
@@ -529,7 +612,8 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   readout.setAttribute("aria-live", "polite");
-  picker.disabled = headphonesBox.disabled = false;
+  headphonesBox.disabled = false;
+  holdChant(false);
   modeLine.hidden = !guide;
   void detect();
 }

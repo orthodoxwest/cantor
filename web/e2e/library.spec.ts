@@ -38,10 +38,23 @@ test("the library lists, filters and opens a piece, and practises it", async ({ 
 test("the practice page sings the chant the address names", async ({ page }) => {
   await page.goto("/sing?chant=ubi-caritas");
   await expect(page.locator("#title")).toHaveText("Where charity and love are");
-  await expect(page.locator("#chant")).toHaveValue("ubi-caritas");
-  await page.locator("#chant").selectOption("mandatum-novum");
+  const find = page.getByPlaceholder("Find another chant");
+  await find.fill("new commandment");
+  const found = page.locator("#found a");
+  await expect(found.first()).toContainText("A new commandment give I unto you");
+  expect(await found.count()).toBeLessThan(5);
+  await found.first().click();
   await expect(page).toHaveURL(/chant=mandatum-novum/);
   await expect(page.locator("#title")).toHaveText("A new commandment give I unto you");
+  // Enter takes the first match; a search that finds nothing says so.
+  await find.fill("ubi caritas");
+  await expect(found.first()).toBeVisible();
+  await find.press("Enter");
+  await expect(page).toHaveURL(/chant=ubi-caritas/);
+  await find.fill("zzzz");
+  await expect(page.locator("#found-note")).toHaveText("Nothing matches “zzzz”.");
+  await expect(page.locator("#found")).toBeHidden();
+  await expect(page.getByRole("link", { name: "Browse the library" })).toHaveAttribute("href", "/library");
 });
 
 test("every page has the same pages in its header", async ({ page }) => {

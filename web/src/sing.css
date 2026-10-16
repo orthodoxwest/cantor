@@ -1,14 +1,71 @@
 /* The practice page: the score, the singer's ribbon after a take, and the bar of actions. */
+/* Finding another chant: the field, a few matches under it, the way to the library. */
 .pick {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
+  max-width: 32rem;
   margin: 0 0 1rem;
 }
-.pick select {
-  flex: 1;
-  min-width: 0;
-  max-width: 28rem;
+.found {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--gold-line);
+}
+.found li {
+  border-bottom: 1px solid var(--border);
+}
+.found a {
+  display: block;
+  min-height: var(--tap);
+  padding: 0.55rem 0.25rem;
+  color: inherit;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .found a:hover .name {
+    color: var(--rubric);
+  }
+}
+.found .name {
+  display: block;
+  font-size: 1.08rem;
+  line-height: 1.3;
+}
+.found .latin {
+  font-size: 0.86em;
+  font-style: italic;
+  color: var(--muted);
+}
+.found .kicker {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--titulus);
+}
+.found [aria-current] .name::after {
+  content: " · open now";
+  font-size: 0.8em;
+  font-style: italic;
+  color: var(--muted);
+}
+.found mark {
+  background: var(--cur);
+  color: inherit;
+  border-radius: 2px;
+}
+.found-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+.found-note span {
+  font-style: italic;
+}
+.found-note a {
+  margin-left: auto;
 }
 /* How a take will be scored, and why. */
 .mode {

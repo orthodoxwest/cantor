@@ -415,6 +415,19 @@ input[type="checkbox"] {
   height: 1.05rem;
 }
 
+/* A search field, the library's and the practice page's: after the fields' look, which it overrides. */
+.search input[type="search"] {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.5rem 0.85rem;
+  font-size: 1.0625rem;
+}
+.search input::placeholder {
+  color: var(--muted);
+  font-style: italic;
+  opacity: 1;
+}
+
 .status {
   min-height: 1.4em;
   margin: 0 0 1rem;
