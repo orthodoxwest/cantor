@@ -1,0 +1,72 @@
+{
+  "name": "expert-bleed",
+  "gate": "expert",
+  "pulse_s": 0.45,
+  "voice": "vowel",
+  "scoop_cents": 120,
+  "scoop_s": 0.08,
+  "vibrato_cents": 30,
+  "vibrato_hz": 5.5,
+  "wander_cents": 8,
+  "guide": "full",
+  "lead_in_s": 2.0,
+  "takes": [
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 31,
+      "key_cents": -1500,
+      "bleed_db": -30,
+      "bleed_delay_s": 0.02
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 32,
+      "key_cents": -1100,
+      "bleed_db": -20,
+      "bleed_delay_s": 0.08,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 33,
+      "key_cents": -800,
+      "bleed_db": -14,
+      "bleed_delay_s": 0.15,
+      "reverb_rt60_s": 1.5,
+      "reverb_wet": 0.4,
+      "phone": true,
+      "noise_rms": 0.005
+    },
+    {
+      "gabc": "content/chants/nunc-dimittis.gabc",
+      "seed": 34,
+      "key_cents": -900,
+      "bleed_db": -14,
+      "bleed_delay_s": 0.1,
+      "reverb_rt60_s": 0.8,
+      "reverb_wet": 0.3
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 35,
+      "key_cents": -1210,
+      "pulse_s": 0.5,
+      "bleed_db": -20,
+      "bleed_delay_s": 0.05,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 36,
+      "key_cents": -1300,
+      "guide": "cue",
+      "bleed_db": -6,
+      "bleed_delay_s": 0.1,
+      "reverb_rt60_s": 1.5,
+      "reverb_wet": 0.5,
+      "phone": true
+    }
+  ]
+}

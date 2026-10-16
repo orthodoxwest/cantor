@@ -1,0 +1,73 @@
+{
+  "name": "control-guide-only",
+  "gate": "silent",
+  "pulse_s": 0.45,
+  "singer_silent": true,
+  "guide": "full",
+  "lead_in_s": 2.0,
+  "takes": [
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 61,
+      "bleed_db": -6,
+      "bleed_delay_s": 0.1
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 62,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.15,
+      "reverb_rt60_s": 1.5,
+      "reverb_wet": 0.5,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 63,
+      "bleed_db": -20,
+      "bleed_delay_s": 0.05,
+      "reverb_rt60_s": 2.0,
+      "reverb_wet": 0.5,
+      "noise_rms": 0.005
+    },
+    {
+      "gabc": "content/chants/nunc-dimittis.gabc",
+      "seed": 64,
+      "bleed_db": 0,
+      "bleed_delay_s": 0.08,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 65,
+      "pulse_s": 0.5,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.2,
+      "phone": true
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 66,
+      "guide": "cue",
+      "bleed_db": -6,
+      "bleed_delay_s": 0.1
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 67,
+      "lead_in_s": 0.0,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.1
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 68,
+      "lead_in_s": 0.7,
+      "bleed_db": -6,
+      "bleed_delay_s": 0.1,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4
+    }
+  ]
+}

@@ -14,7 +14,8 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 
 ## Commands
 - `make setup` once per clone; `make check` before every push; CI runs the same.
-- `make eval` prints the scorecard against `evals/baseline.json`; `cantor eval --write-baseline` updates it in a deliberate commit.
+- `make eval` runs the listening gates (expert, student and guide-bleed controls; see `crates/cantor-cli/src/eval.rs`) and the scorecard against `evals/baseline.json`; `cantor eval --write-baseline` updates it in a deliberate commit. `make eval TAKES=../cantor-content/evals/takes` adds the real takes, which never enter this repository.
+- Until the gates pass on the real takes, the app shows pitch traces and no verdicts.
 - Outputs land in `out/`.
 
 ## Rules

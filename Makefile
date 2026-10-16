@@ -25,8 +25,9 @@ wasm:
 e2e:
 	npm run e2e
 
+# The listening gates; TAKES=../cantor-content/evals/takes adds the real takes.
 eval:
-	cargo run -q -p cantor-cli -- eval
+	cargo run -q -p cantor-cli -- eval $(if $(TAKES),--takes $(TAKES))
 
 content:
 	node content/build.mjs

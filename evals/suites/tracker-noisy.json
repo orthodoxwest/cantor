@@ -1,0 +1,11 @@
+{
+  "name": "tracker-noisy",
+  "gabc": "evals/chants/scale.gabc",
+  "pulse_s": 0.5,
+  "takes": [
+    {
+      "seed": 4,
+      "noise_rms": 0.04
+    }
+  ]
+}

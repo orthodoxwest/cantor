@@ -1,5 +1,6 @@
 //! Notes to sing from a GABC source, through neuma's timeline. Pitches are placed with the
-//! clef's do at middle C; time is one pulse per weight unit.
+//! clef's do at middle C; time is one pulse per weight unit, except that recitation (a run of
+//! single-note syllables on one pitch) moves at speech pace, [`RECITATION`] of a pulse.
 
 use neuma::Chant;
 
@@ -8,22 +9,48 @@ use crate::synth::Note;
 /// The MIDI-style note number of the clef's do.
 pub const DO_MIDI: f32 = 60.0;
 
+/// A recited note's length, in pulses.
+pub const RECITATION: f32 = 0.6;
+
 /// A layout width wide enough that line breaking never changes the timeline.
 const LAYOUT_WIDTH: f32 = 4000.0;
 
-/// The notes of `gabc` in singing order, each weight unit lasting `pulse_s` seconds.
+/// The notes of `gabc` in singing order, each weight unit lasting `pulse_s` seconds, with
+/// their verse, phrase and vowel.
 pub fn notes_from_gabc(gabc: &str, pulse_s: f32) -> Vec<Note> {
     let chant = Chant::new(gabc);
     let timeline = chant.layout(LAYOUT_WIDTH).timeline();
-    timeline
-        .notes
-        .iter()
-        .map(|n| Note {
+    let mut notes = Vec::with_capacity(timeline.notes.len());
+    // Recited notes are shortened, so each note starts where the last one ended plus the
+    // pause the timeline left between them.
+    let mut clock = 0.0f32;
+    let mut prev_end = 0.0f32;
+    let mut phrase = 0u32;
+    let mut pauses = timeline.pauses.iter().peekable();
+    for (i, n) in timeline.notes.iter().enumerate() {
+        // A mediant and the bar it sits at are two pauses but one phrase break.
+        let mut paused = false;
+        while pauses.next_if(|p| p.before_note as usize <= i).is_some() {
+            paused = true;
+        }
+        if paused && i > 0 {
+            phrase += 1;
+        }
+        let gap = if i == 0 { n.start } else { (n.start - prev_end).max(0.0) };
+        prev_end = n.start + n.duration;
+        let duration = if n.recitation { n.duration * RECITATION } else { n.duration };
+        clock += gap;
+        notes.push(Note {
             midi: DO_MIDI + n.semitones as f32,
-            start_s: n.start * pulse_s,
-            dur_s: n.duration * pulse_s,
-        })
-        .collect()
+            start_s: clock * pulse_s,
+            dur_s: duration * pulse_s,
+            verse: n.verse,
+            phrase,
+            vowel: n.vowel,
+        });
+        clock += duration;
+    }
+    notes
 }
 
 #[cfg(test)]
@@ -39,12 +66,34 @@ mod tests {
             assert!((n.start_s - 0.5 * i as f32).abs() < 1e-5, "note {i} starts at {}", n.start_s);
             assert!((n.dur_s - 0.5).abs() < 1e-5);
         }
+        assert_eq!(notes[1].vowel, Some('e'));
     }
 
     #[test]
-    fn a_bar_leaves_a_gap() {
+    fn a_bar_leaves_a_gap_and_starts_a_phrase() {
         let notes = notes_from_gabc("(c1) a(d) b(e) (:) c(f) (::)", 1.0);
         assert_eq!(notes.len(), 3);
         assert!(notes[2].start_s > notes[1].end_s() + 0.5, "{notes:?}");
+        assert_eq!(
+            notes.iter().map(|n| (n.verse, n.phrase)).collect::<Vec<_>>(),
+            [(0, 0), (0, 0), (1, 1)]
+        );
+    }
+
+    #[test]
+    fn recitation_moves_at_speech_pace() {
+        let notes = notes_from_gabc(
+            "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then(j) *(:) praise(j) him(j.) (::)",
+            1.0,
+        );
+        let durs: Vec<f32> = notes.iter().map(|n| n.dur_s).collect();
+        assert_eq!(durs[0], 1.0);
+        assert!((durs[3] - RECITATION).abs() < 1e-6, "{durs:?}");
+        for w in notes.windows(2) {
+            assert!(w[1].start_s >= w[0].end_s() - 1e-5, "{notes:?}");
+        }
+        // The mediant is a pause and a phrase, not a new verse.
+        assert_eq!((notes[7].verse, notes[7].phrase), (0, 0));
+        assert_eq!((notes[8].verse, notes[8].phrase), (0, 1));
     }
 }
