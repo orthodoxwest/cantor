@@ -66,7 +66,9 @@ const OFF_CENTS: f32 = 100.0;
 /// A cadence called off pitch is wrong when every note of it was planted within this; one
 /// with a note planted at least [`FLAGRANT_CENTS`] off must be called off.
 const CADENCE_CLEAR_CENTS: f32 = 50.0;
-/// The share of a good take's cadences the judge must rule on.
+/// The share of cadences the judge must rule on. One it does not rule on is not told either
+/// way (the page counts only those clearly heard), so it is not a cadence told wrong, but a
+/// judge that stopped ruling would tell nothing.
 const CADENCE_JUDGED_FLOOR: f32 = 0.8;
 /// A planted drift at least this large must be named, and one at most `STEADY_DRIFT` must not.
 const UNSTEADY_DRIFT: f32 = 90.0;
@@ -290,7 +292,7 @@ struct Metrics {
     /// Cadences called off pitch that were planted on it, or on pitch that were planted off.
     cadence_errors: u32,
     /// Cadences with a note planted flagrantly off, and the fraction of them called off (1
-    /// when there were none).
+    /// when there were none); the rest were not judged, as one called on is a cadence error.
     cadence_faults: u32,
     cadence_recall: f32,
     /// Takes given an outcome instead of a judgement.
@@ -444,8 +446,8 @@ impl Metrics {
                 need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
                 need(self.cadence_errors == 0, format!("{} cadences told wrong", self.cadence_errors));
                 need(
-                    self.cadence_recall >= RECALL_FLOOR,
-                    format!("cadence recall {:.3} < {RECALL_FLOOR}", self.cadence_recall),
+                    self.cadences_judged as f32 >= CADENCE_JUDGED_FLOOR * self.cadences as f32,
+                    format!("{} of {} cadences judged", self.cadences_judged, self.cadences),
                 );
             }
             Gate::Silent => {
