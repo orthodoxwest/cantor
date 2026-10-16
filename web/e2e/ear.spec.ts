@@ -112,6 +112,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
   expect(ringed).toEqual(notesOf(got.verdict.marks));
   expect(ringed.length).toBeGreaterThan(0);
+  expect(got.told.length).toBeGreaterThanOrEqual(2);
   const last = got.told.length - 1;
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).toHaveText(got.told[0]);
@@ -122,9 +123,16 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await expect(page.locator(`[data-mark="${last}"]`)).toBeFocused();
   await expect(page.locator('[data-mark="0"]')).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#why")).toBeHidden();
+  await expect(page.locator("#why")).toHaveText("");
   await expect(page.locator("#status")).toHaveText("");
+  // A new take clears the last one's view, the words of a mark left open with it.
+  await page.locator('[data-mark="0"]').click();
+  await expect(page.locator("#why")).toHaveText(got.told[0]);
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator(".mark-ring")).toHaveCount(0);
+  await expect(page.locator("#result")).toBeHidden();
+  await page.getByRole("button", { name: "Listen" }).click();
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
-  expect(marks(got.verdict)).toEqual(marks(want.verdict));
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
 });

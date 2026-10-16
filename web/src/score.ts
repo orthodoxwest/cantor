@@ -13,7 +13,8 @@ export interface Room {
 /** Draws the ribbon's strips, and anything over the engraving, given the room made. */
 export type Strips = (timeline: Timeline, room: Room) => string;
 
-/** The room above the first line while the strips are open. */
+/** The room above the first line while the strips are open, for a ring round a note at
+ * its top. */
 const HEADROOM = 8;
 
 export class Score {
@@ -65,9 +66,10 @@ export class Score {
     this.render();
   }
 
-  /** How far line `i` is drawn below where the page laid it out: the strips over it. */
+  /** How far line `i` is drawn below where the page laid it out: the room above the first
+   * line and the strips over it. */
   private shift(i: number): number {
-    return this.strips ? i * STRIP : 0;
+    return this.strips ? HEADROOM + i * STRIP : 0;
   }
 
   /** Line `i`'s box as drawn, below the strips over it. */
@@ -87,13 +89,14 @@ export class Score {
   private render(): void {
     const { head, defs, rest, lines } = this.page.svgParts;
     const gap = this.strips ? STRIP : 0;
-    // With the strips open, room above the first line for a ring round a note at its top.
-    const above = this.strips ? HEADROOM : 0;
-    const height = this.page.height + gap * lines.length + above;
+    const height = this.page.height + gap * lines.length + (this.strips ? HEADROOM : 0);
     let top = head
       .replace(/ height="[\d.]+"/, ` height="${height.toFixed(2)}"`)
-      .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 ${-above} $3 ${height.toFixed(2)}"`);
-    const engraving = [rest, ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + this.shift(i)).toFixed(2)})">${l.svg}</g>`)].join("");
+      .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 $2 $3 ${height.toFixed(2)}"`);
+    const engraving = [
+      this.strips ? `<g transform="translate(0 ${HEADROOM})">${rest}</g>` : rest,
+      ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + this.shift(i)).toFixed(2)})">${l.svg}</g>`),
+    ].join("");
     let body = engraving;
     if (this.strips) {
       // An image's children are hidden from assistive technology, so with the ribbon's

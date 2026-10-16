@@ -26,11 +26,11 @@ export interface Judged {
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */
-export const STRIP = 68;
+export const STRIP = 76;
 /** Cents from a band's centre to its edge; a trace beyond it is drawn at the edge. */
-export const RANGE_CENTS = 150;
+export const RANGE_CENTS = 200;
 /** The strip's margin above and below its bands. */
-const PAD = 10;
+const PAD = 8;
 /** The widest a band is drawn either side of its note, for a note alone on its line. */
 const LONE = 14;
 /** The narrowest a band is drawn, centred on its note (notes stacked in a neume overlap). */

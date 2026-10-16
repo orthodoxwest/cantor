@@ -33,20 +33,20 @@ let shown: Judged | null = null;
 let base: number | null = null;
 let open: number | null = null;
 
+/** Shows `text` as the words of the mark open, announcing it only when it changes. */
+function say(text: string): void {
+  if (why.textContent !== text) why.textContent = text;
+}
+
 function drawResult(): void {
-  if (!shown) {
-    score.showStrips(null);
-    result.hidden = true;
-    return;
-  }
   const judged = shown;
-  const key = judged.verdict.key_cents;
-  result.hidden = false;
-  if (key === null) {
+  const key = judged?.verdict.key_cents ?? null;
+  result.hidden = !judged;
+  if (!judged || key === null) {
     score.showStrips(null);
-    keyText.textContent = "Too little was heard to show.";
+    say("");
     baseLine.hidden = true;
-    why.hidden = true;
+    if (judged) keyText.textContent = "Too little was heard to show.";
     return;
   }
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
@@ -56,8 +56,7 @@ function drawResult(): void {
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
       drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base),
   );
-  why.hidden = open === null;
-  why.textContent = open === null ? "" : (judged.told[open] ?? "");
+  say(open === null ? "" : (judged.told[open] ?? ""));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
   baseLine.hidden = base === null;
   if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
@@ -68,8 +67,9 @@ function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
-  // The ribbon says what was heard; the length of the take is no longer news.
-  if (judged) status.textContent = "";
+  // The ribbon says what was heard; the length of the take is no longer news (anything else
+  // the status says stays).
+  if (judged && status.textContent === heardLine) status.textContent = "";
   drawResult();
 }
 
@@ -93,8 +93,10 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
     return false;
   }
   drawResult();
-  // The strips were drawn again; keep a keyboard's place.
-  if (keyboard) score.host.querySelector<SVGGElement>(again)?.focus();
+  // The strips were drawn again; keep a keyboard's place, and the mark in view above its words.
+  const now = score.host.querySelector<SVGGElement>(again);
+  if (keyboard) now?.focus();
+  if (mark && open !== null) now?.scrollIntoView({ block: "nearest" });
   return true;
 }
 score.host.addEventListener("click", (e) => tap(e.target, false));
@@ -109,6 +111,8 @@ byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
 const listenButton = byId<HTMLButtonElement>("listen");
 const readout = byId<HTMLOutputElement>("readout");
 const status = byId<HTMLParagraphElement>("status");
+/** What the status said of the last take heard. */
+let heardLine = "";
 const failedListening = (error: unknown) =>
   (status.textContent = `Listening failed: ${error instanceof Error ? error.message : String(error)}`);
 const listener = new Listener(
@@ -126,7 +130,7 @@ listenButton.addEventListener("click", async () => {
     listener.stop();
     listenButton.setAttribute("aria-pressed", "false");
     listener.heard?.then(
-      (h) => (status.textContent = `Heard ${h.seconds.toFixed(1)} s.`),
+      (h) => (status.textContent = heardLine = `Heard ${h.seconds.toFixed(1)} s.`),
       failedListening,
     );
     return;

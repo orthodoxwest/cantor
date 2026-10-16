@@ -1,6 +1,8 @@
 :root {
   --accent: #a3211c;
   color-scheme: light dark;
+  /* What scrolls into view stays clear of the mark's words at the foot of the window. */
+  scroll-padding-bottom: 6rem;
 }
 body {
   margin: 0;
@@ -102,6 +104,10 @@ main {
 }
 .marks .mark:focus-visible .mark-ring {
   stroke-dasharray: 3 2;
+}
+.why:empty {
+  padding: 0;
+  border: 0;
 }
 .why {
   position: sticky;
