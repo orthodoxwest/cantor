@@ -3,6 +3,13 @@ import type { Timeline } from "neuma";
 
 const PULSE = 0.5;
 
+/** Stops the fake clock flowing with real time, so that it moves only by `runFor`. A flowing
+ * clock catches up with real time whenever the page reads it inside a timer, and `runFor` then
+ * sets it back to the next timer's due time: on a slow machine the cursor could step back. */
+async function holdClock(page: Page): Promise<void> {
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+}
+
 /** Opens the practice page and waits until it has its voice (or has given up on one). */
 async function open(page: Page, query = ""): Promise<Timeline> {
   await page.goto(`/sing.html?test=1${query}`);
@@ -23,6 +30,7 @@ test("renders every note of the timeline", async ({ page }) => {
 test("play moves the cursor across every note", async ({ page }) => {
   await page.clock.install();
   const timeline = await open(page);
+  await holdClock(page);
   await page.getByRole("button", { name: "Play" }).click();
   await page.clock.runFor(PULSE * 1000);
   await expect(page.locator("#score .cantor-current")).toHaveCount(1);
@@ -101,6 +109,7 @@ test("drone holds the reciting note until pressed again, and never sounds in a t
 test("speed and pitch move the guide, the cursor, Start note and Drone, and stay in the address", async ({ page }) => {
   await page.clock.install();
   const timeline = await open(page);
+  await holdClock(page);
   const first = await page.evaluate(() => window.__cantor.timeline.notes[0]!.semitones);
   const drone = page.getByRole("button", { name: "Drone" });
   await drone.click();
@@ -156,6 +165,7 @@ test("speed and pitch move the guide, the cursor, Start note and Drone, and stay
 test("a phrase tapped plays over and over with the cursor, a bar loops the phrase it ends", async ({ page }) => {
   await page.clock.install();
   const timeline = await open(page);
+  await holdClock(page);
   // Lumen gentium: a mediant before note 3, a half bar before note 12, a double bar at the end.
   const ids = timeline.notes.map((n) => n.id);
   await page.locator(`#score [data-note~="${ids[5]}"]`).first().click();
