@@ -92,9 +92,10 @@ function show(take: Take): void {
   const cursor = score && new Cursor(score);
   const notes = (): readonly TimelineNote[] => score?.timeline.notes ?? [];
   let times: Timed[] = score ? timed(notes(), take.pulse) : [];
-  /** Where note `i` was due in the take, in seconds from its start: by the score when shown,
-   * else by the judged band. */
-  const startOf = (i: number): number | undefined => (score ? times[i]?.start : judged.ribbon.find((b) => b.index === i)?.from_s);
+  /** Where note `i` was due, in seconds of the take: by the score when shown, else where its
+   * judged band begins (already in seconds of the take). */
+  const startOf = (i: number): number | undefined =>
+    score ? (times[i] ? take.offset + times[i].start : undefined) : judged.ribbon.find((b) => b.index === i)?.from_s;
   /** The note chosen to comment on, and the mark whose words are shown. */
   let chosen: number | null = null;
   let open: number | null = null;
@@ -115,7 +116,6 @@ function show(take: Take): void {
     });
     times = timed(notes(), take.pulse);
     // The score was laid out afresh: the cursor stands again where the take is.
-    cursor?.hide();
     follow();
     why.textContent = open === null ? "" : (judged.told[open] ?? "");
   }
@@ -140,7 +140,7 @@ function show(take: Take): void {
     draw();
     const at = startOf(i);
     if (seek && at !== undefined) {
-      const to = Math.max(0, take.offset + at - 0.2);
+      const to = Math.max(0, at - 0.2);
       if (audio.readyState >= 1) audio.currentTime = to;
       else audio.addEventListener("loadedmetadata", () => (audio.currentTime = to), { once: true });
     }
@@ -187,7 +187,7 @@ function show(take: Take): void {
       // The arrows move the chosen note along the bands, one tab stop among them.
       const band = (e.target as Element | null)?.closest<SVGGElement>("[data-band]");
       const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-      if (!band || !step) return;
+      if (!band || !step || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       e.preventDefault();
       const to = Math.min(Math.max(Number(band.dataset.band) + step, 0), notes().length - 1);
       choose(to, false);
@@ -271,7 +271,8 @@ function show(take: Take): void {
     try {
       const res = await fetch(`/api/takes/${take.id}/comments/${c.id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) throw new Error(`the site answered ${res.status}`);
-      comments.splice(comments.indexOf(c), 1);
+      const k = comments.indexOf(c);
+      if (k >= 0) comments.splice(k, 1);
       say("");
       drawComments();
       draw();

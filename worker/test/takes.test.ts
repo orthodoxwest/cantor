@@ -165,7 +165,7 @@ describe("takes", () => {
     expect((await send({ audio: null })).status).toBe(400);
     expect((await send({ take: null })).status).toBe(400);
     expect((await send({ take: "{" })).status).toBe(400);
-    for (const over of [{ slug: "" }, { pulse: "fast" }, { seconds: Infinity }, { gabc: 3 }, { judged: { ribbon: [] } }, { judged: null }, ])
+    for (const over of [{ slug: "" }, { pulse: "fast" }, { seconds: Infinity }, { gabc: 3 }, { judged: { ribbon: [] } }, { judged: null }])
       expect((await send({ take: { ...record(), ...over } })).status).toBe(400);
     const judged = record().judged;
     for (const over of [
@@ -174,14 +174,25 @@ describe("takes", () => {
       { ribbon: [{ ...judged.ribbon[0]!, trace: [[1, "x"]] }] },
       { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, kind: "<script>" }] } },
       { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, first: 0.5 }] } },
+      { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, last: 1 }] } },
+      { verdict: { marks: judged.verdict.marks } },
+      { ribbon: [{ ...judged.ribbon[0]!, index: 9000 }] },
     ])
       expect((await send({ take: { ...record(), judged: { ...judged, ...over } } })).status).toBe(400);
     expect((await send({ audio: new Uint8Array(MAX_AUDIO + 1) })).status).toBe(413);
   });
 
   it("keeps only the record's own fields", async () => {
-    const { id } = await (await send({ take: { ...record(), owner: "someone else", mine: true } })).json<{ id: string }>();
+    const judged = record().judged;
+    const extra = {
+      ...judged,
+      verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, evil: "<script>" }] },
+      ribbon: [{ ...judged.ribbon[0]!, x: '"><script>' }],
+    };
+    const { id } = await (await send({ take: { ...record(), judged: extra, owner: "someone else", mine: true } })).json<{ id: string }>();
     const body = await (await get(`/api/takes/${id}`)).json<Record<string, unknown>>();
+    const { report: _, ...kept } = judged;
+    expect(body.judged).toEqual(kept);
     expect(body).not.toHaveProperty("owner");
     expect(body.mine).toBe(false);
   });
@@ -261,6 +272,12 @@ describe("comments", () => {
     expect((await remove({ "X-Dev-User": "singer", Origin: "https://evil.example" })).status).toBe(403);
     expect((await remove({ "X-Dev-User": "singer" })).status).toBe(204);
     expect((await remove({ "X-Dev-User": "singer" })).status).toBe(404);
+    // Only an id as the site gives one, and only of this take's comments.
+    const other = (await (await send()).json<{ id: string }>()).id;
+    const { id: theirs } = await (await comment(other, { note: 0, body: "Theirs." })).json<{ id: number }>();
+    for (const wrong of [`/api/takes/${id}/comments/${theirs}`, `/api/takes/${other}/comments/0x${theirs.toString(16)}`])
+      expect((await app.request(wrong, { method: "DELETE", headers: { Origin: ORIGIN, "X-Dev-User": "singer" } }, env)).status).toBe(404);
+    expect((await (await get(`/api/takes/${other}`)).json<{ comments: unknown[] }>()).comments).toHaveLength(1);
     expect((await (await get(`/api/takes/${id}`)).json<{ comments: unknown[] }>()).comments).toEqual([]);
   });
 });

@@ -55,7 +55,20 @@ async function serve(page: Page, sent: Sent, over: Record<string, unknown> = {})
       },
     }),
   );
-  await page.route(`**/api/takes/${ID}/audio`, (route) => route.fulfill({ body: sent.wav, contentType: "audio/wav" }));
+  // The audio in ranges, as the Worker serves it, so the page may seek in it.
+  await page.route(`**/api/takes/${ID}/audio`, (route) => {
+    const size = sent.wav.length;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers()["range"] ?? "");
+    if (!range) return route.fulfill({ body: sent.wav, contentType: "audio/wav", headers: { "Accept-Ranges": "bytes" } });
+    const from = Number(range[1]);
+    const to = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    return route.fulfill({
+      status: 206,
+      body: sent.wav.subarray(from, to + 1),
+      contentType: "audio/wav",
+      headers: { "Accept-Ranges": "bytes", "Content-Range": `bytes ${from}-${to}/${size}` },
+    });
+  });
   await page.route(`**/api/takes/${ID}/comments`, (route) => {
     const body = route.request().postDataJSON() as { note: number; body: string };
     posted.push(body);
@@ -115,6 +128,11 @@ test("a take of a chant the reader may not see is heard without its score", asyn
   await expect(page.locator("#score")).toBeHidden();
   await expect(page.locator("#comments li")).toHaveText("No comments yet.");
   await expect(page.locator("#audio")).toHaveAttribute("src", `/api/takes/${ID}/audio`);
+  // Choosing a note puts the take where its band begins, its times being the take's own.
+  const band = (sent.record.judged.ribbon as Array<{ from_s: number }>)[1]!;
+  await page.locator("#note").fill("2");
+  await page.locator("#note").dispatchEvent("change");
+  await expect.poll(() => page.locator("#audio").evaluate((a: HTMLAudioElement) => a.currentTime)).toBeCloseTo(Math.max(0, band.from_s - 0.2), 1);
 });
 
 test("the singer may remove a comment from their take", async ({ page }) => {

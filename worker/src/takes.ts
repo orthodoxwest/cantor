@@ -80,7 +80,24 @@ export interface TakeRecord {
   /** The take's length in seconds. */
   seconds: number;
   /** The ear's `Judged`, as the core serialized it. */
-  judged: { verdict: { marks: unknown[] }; ribbon: unknown[]; told: string[]; summary: string[] };
+  judged: { verdict: { key_cents: number | null; marks: Mark[] }; ribbon: Band[]; told: string[]; summary: string[] };
+}
+
+/** One note of the ribbon (web ribbon.ts `Band`); its times are in seconds of the take. */
+interface Band {
+  index: number;
+  from_s: number;
+  to_s: number;
+  cents: number | null;
+  trace: Array<[number, number]>;
+}
+
+/** One of the judge's marks (web marks.ts `Mark`). */
+interface Mark {
+  kind: "note" | "verse" | "verse-missing";
+  first: number;
+  last: number;
+  cents: number | null;
 }
 
 const finite = (x: unknown, lo: number, hi: number): x is number => typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi;
@@ -89,39 +106,38 @@ const strings = (x: unknown): x is string[] => Array.isArray(x) && x.every((s) =
 const index = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 10_000;
 const centsOrNull = (x: unknown) => x === null || finite(x, -1e5, 1e5);
 
-/** Whether `bands` are the ribbon's bands as the page draws them (ribbon.ts `Band`). */
-function isRibbon(bands: unknown): bands is unknown[] {
-  return (
-    Array.isArray(bands) &&
-    bands.every((b: Record<string, unknown> | null) => {
-      if (typeof b !== "object" || b === null) return false;
-      const trace = b.trace;
-      return (
-        index(b.index) &&
-        finite(b.from_s, -1e4, 1e4) &&
-        finite(b.to_s, -1e4, 1e4) &&
-        centsOrNull(b.cents) &&
-        Array.isArray(trace) &&
-        trace.every((p: unknown) => Array.isArray(p) && p.length === 2 && finite(p[0], -1e4, 1e4) && finite(p[1], -1e5, 1e5))
-      );
-    })
-  );
+/** The ribbon's bands as the page draws them (ribbon.ts `Band`), one a note in order, rebuilt
+ * from the fields checked; null if any is not one. */
+function ribbonOf(bands: unknown): Band[] | null {
+  if (!Array.isArray(bands) || bands.length > 10_000) return null;
+  const out: Band[] = [];
+  for (const [i, b] of (bands as Array<Record<string, unknown> | null>).entries()) {
+    if (typeof b !== "object" || b === null || b.index !== i) return null;
+    const { from_s, to_s, cents, trace } = b;
+    if (!finite(from_s, -1e4, 1e4) || !finite(to_s, -1e4, 1e4) || !centsOrNull(cents) || !Array.isArray(trace)) return null;
+    const points: Array<[number, number]> = [];
+    for (const p of trace as unknown[]) {
+      if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], -1e4, 1e4) || !finite(p[1], -1e5, 1e5)) return null;
+      points.push([p[0], p[1]]);
+    }
+    out.push({ index: i, from_s, to_s, cents: cents as number | null, trace: points });
+  }
+  return out;
 }
 
-/** Whether `marks` are the judge's marks as the page draws them (marks.ts `Mark`). */
-function isMarks(marks: unknown): marks is unknown[] {
-  return (
-    Array.isArray(marks) &&
-    marks.every(
-      (m: Record<string, unknown> | null) =>
-        typeof m === "object" &&
-        m !== null &&
-        (m.kind === "note" || m.kind === "verse" || m.kind === "verse-missing") &&
-        index(m.first) &&
-        index(m.last) &&
-        centsOrNull(m.cents),
-    )
-  );
+/** The judge's marks as the page draws them (marks.ts `Mark`), each over notes of the take,
+ * rebuilt from the fields checked; null if any is not one. */
+function marksOf(marks: unknown, notes: number): Mark[] | null {
+  if (!Array.isArray(marks) || marks.length > notes + 1000) return null;
+  const out: Mark[] = [];
+  for (const m of marks as Array<Record<string, unknown> | null>) {
+    if (typeof m !== "object" || m === null) return null;
+    const { kind, first, last, cents } = m;
+    if (kind !== "note" && kind !== "verse" && kind !== "verse-missing") return null;
+    if (!index(first) || !index(last) || first > last || last >= notes || !centsOrNull(cents)) return null;
+    out.push({ kind, first, last, cents: cents as number | null });
+  }
+  return out;
 }
 
 /** The record in `raw`, if it is one; only the fields named are kept. */
@@ -137,7 +153,9 @@ export function parseRecord(raw: string): TakeRecord | null {
   const verdict = j?.verdict as Record<string, unknown> | null | undefined;
   if (!text(r.slug, 200) || !text(r.title, 300) || !text(r.gabc, 200_000)) return null;
   if (!finite(r.pulse, 0.05, 5) || !finite(r.offset, -60, 900) || !finite(r.seconds, 0.1, 900)) return null;
-  if (!j || !verdict || !isMarks(verdict.marks) || !centsOrNull(verdict.key_cents ?? null) || !isRibbon(j.ribbon)) return null;
+  const ribbon = ribbonOf(j?.ribbon);
+  const marks = ribbon && marksOf(verdict?.marks, ribbon.length);
+  if (!j || !verdict || !ribbon || !marks || !("key_cents" in verdict) || !centsOrNull(verdict.key_cents)) return null;
   if (!strings(j.told) || !strings(j.summary)) return null;
   return {
     slug: r.slug,
@@ -148,7 +166,7 @@ export function parseRecord(raw: string): TakeRecord | null {
     seconds: r.seconds,
     // The judge's verdict and what the page draws of it, and no more: the notes it was judged
     // against are the score's, which a reader not signed in may not be given.
-    judged: { verdict: verdict as TakeRecord["judged"]["verdict"], ribbon: j.ribbon, told: j.told, summary: j.summary },
+    judged: { verdict: { key_cents: verdict.key_cents as number | null, marks }, ribbon, told: j.told, summary: j.summary },
   };
 }
 
@@ -313,7 +331,9 @@ takes.delete("/:id/comments/:comment", async (c) => {
   const found = await row(c, id);
   if (!found) return c.json({ error: "not found" }, 404);
   if (found.user_id !== caller.who.id) return c.json({ error: "forbidden" }, 403);
-  const gone = await c.env.DB.prepare("DELETE FROM take_comments WHERE take_id = ? AND id = ?").bind(id, Number(c.req.param("comment"))).run();
+  const comment = c.req.param("comment");
+  if (!/^[1-9][0-9]{0,15}$/.test(comment)) return c.json({ error: "not found" }, 404);
+  const gone = await c.env.DB.prepare("DELETE FROM take_comments WHERE take_id = ? AND id = ?").bind(id, Number(comment)).run();
   return gone.meta.changes ? c.body(null, 204) : c.json({ error: "not found" }, 404);
 });
 
