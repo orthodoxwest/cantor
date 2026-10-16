@@ -452,7 +452,7 @@ impl Model {
     /// The column of frame `f` of `audio` (16 kHz, zero beyond it) into `out`: its bins in the
     /// three log spectrograms, [`COLUMN`] values.
     pub(crate) fn column(&self, audio: &[f32], f: usize, out: &mut [f32]) {
-        for (spectrum, bins) in self.spectra.iter().zip(out.chunks_exact_mut(BINS)) {
+        for (spectrum, bins) in self.spectra.iter().zip(out.as_chunks_mut::<BINS>().0) {
             spectrum.frame(audio, f, bins);
         }
     }
@@ -462,7 +462,7 @@ impl Model {
     pub(crate) fn spectrogram(&self, audio: &[f32]) -> Map {
         let frames = (audio.len() / HOP).max(1);
         let mut columns = vec![0.0; frames * COLUMN];
-        for (f, column) in columns.chunks_exact_mut(COLUMN).enumerate() {
+        for (f, column) in columns.as_chunks_mut::<COLUMN>().0.iter_mut().enumerate() {
             self.column(audio, f, column);
         }
         transposed(&columns)
@@ -564,7 +564,7 @@ impl Model {
 fn transposed(columns: &[f32]) -> Map {
     let frames = columns.len() / COLUMN;
     let mut data = vec![0.0; COLUMN * frames];
-    for (f, column) in columns.chunks_exact(COLUMN).enumerate() {
+    for (f, column) in columns.as_chunks::<COLUMN>().0.iter().enumerate() {
         for (row, v) in column.iter().enumerate() {
             data[row * frames + f] = *v;
         }

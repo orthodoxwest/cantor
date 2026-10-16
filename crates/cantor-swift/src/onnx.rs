@@ -25,11 +25,7 @@ impl Tensor {
         if self.raw.len() != count * N {
             return Err(format!("{} bytes for {count} values", self.raw.len()));
         }
-        Ok(self
-            .raw
-            .chunks_exact(N)
-            .map(|c| from(c.try_into().expect("chunks are N bytes")))
-            .collect())
+        Ok(self.raw.as_chunks::<N>().0.iter().map(|c| from(*c)).collect())
     }
 
     pub fn f32s(&self) -> Result<Vec<f32>, String> {
