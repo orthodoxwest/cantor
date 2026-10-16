@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 // The header's light-or-dark switch: the page follows the system until the reader chooses,
 // and remembers the choice. The script in each page's head applies it before the page is drawn;
@@ -29,12 +30,13 @@
   function follow() {
     const theme = stored();
     if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+    else delete root.dataset.theme;
     label();
   }
 
   label();
   dark.addEventListener("change", label);
-  addEventListener("storage", (e) => e.key === "theme" && follow());
+  addEventListener("storage", (e) => (e.key === "theme" || e.key === null) && follow());
   addEventListener("pageshow", (e) => e.persisted && follow());
   button?.addEventListener("click", () => {
     const theme = isDark() ? "light" : "dark";
