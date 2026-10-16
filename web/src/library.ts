@@ -1,6 +1,7 @@
 // The chant library, from the Worker's /api/chants: the public chants (content/chants, CC0),
 // and for a signed-in visitor the private ones too. Each chant's GABC is fetched when needed.
 import type { OfficePartKind } from "neuma";
+import type { Band } from "./ribbon";
 
 export interface LibraryChant {
   slug: string;
@@ -20,6 +21,9 @@ export interface LibraryChant {
 
 export interface FullChant extends LibraryChant {
   gabc: string;
+  /** An aligned recording of the chant, as the core's ribbon of it (`cantor recording`): only a
+   * private chant has one. */
+  recording?: Band[];
 }
 
 const ROMAN = ["", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii"];
@@ -90,8 +94,8 @@ export function chant(slug: string): Promise<FullChant | null> {
       .then(async (res) => {
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`the library answered ${res.status}`);
-        const row = (await res.json()) as Row & { gabc: string };
-        return { ...fromRow(row), gabc: row.gabc };
+        const row = (await res.json()) as Row & { gabc: string; recording?: Band[] };
+        return { ...fromRow(row), gabc: row.gabc, ...(row.recording ? { recording: row.recording } : {}) };
       })
       .catch((error: unknown) => {
         chants.delete(slug);

@@ -1,8 +1,9 @@
 //! The `cantor` command: offline work on takes. `pitch` tracks a WAV or FLAC file, `synth`
 //! renders a chant with planted faults, `sing` renders it with the guide voice, `diction`
 //! lists the vowels it would sing, `eval` runs the listening gates and the baseline, `take`
-//! writes one of their takes with what the eval heard, `swift-parity` holds SwiftF0's port to
-//! tract's run of the same model.
+//! writes one of their takes with what the eval heard, `recording` prints a real take's ribbon
+//! for the page to draw under the singer's, `swift-parity` holds SwiftF0's port to tract's run
+//! of the same model.
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +31,7 @@ const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor eval [--takes DIR] [--write-baseline] [--nsdf-only] [--oracle MODEL.onnx]
        cantor explain SUITE [--takes DIR] [--nsdf-only] [--oracle MODEL.onnx]
        cantor take SUITE INDEX [--rate HZ] [--pad SECONDS] [--nsdf-only] -o OUT.wav
+       cantor recording TAKE.json [--nsdf-only]
        cantor swift-parity [--takes DIR]
        cantor version
 
@@ -58,6 +60,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("eval") => return eval_cmd(rest),
         Some("explain") => return explain_cmd(rest),
         Some("take") => take_cmd(rest)?,
+        Some("recording") => recording_cmd(rest)?,
         Some("swift-parity") => return swift_parity_cmd(rest),
         Some("-h" | "--help") => println!("{USAGE}"),
         Some(other) => return Err(format!("unknown command: {other}\n{USAGE}")),
@@ -279,6 +282,24 @@ fn take_cmd(args: &[String]) -> Result<(), String> {
     }
     wav::write_mono_16(&out, &samples, rate)?;
     println!("{}", serde_json::to_string(&file).map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+/// Prints the ribbon of a real take (a file as `--takes` reads them) as JSON, its times to
+/// the hundredth of a second and its cents to the tenth: an aligned recording's trace, which
+/// the page draws under the singer's when the chant is the recording's.
+fn recording_cmd(args: &[String]) -> Result<(), String> {
+    let (nsdf_only, args) = nsdf_only(args);
+    let [file] = &args[..] else { return Err(USAGE.into()) };
+    let mut bands = eval::recording(&Ear::new(nsdf_only)?, Path::new(file))?;
+    let round = |v: f32, by: f32| (v * by).round() / by;
+    for band in &mut bands {
+        band.from_s = round(band.from_s, 100.0);
+        band.to_s = round(band.to_s, 100.0);
+        band.cents = band.cents.map(|c| round(c, 10.0));
+        band.trace.iter_mut().for_each(|p| *p = (round(p.0, 100.0), round(p.1, 10.0)));
+    }
+    println!("{}", serde_json::to_string(&bands).map_err(|e| e.to_string())?);
     Ok(())
 }
 

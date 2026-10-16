@@ -1,4 +1,4 @@
-// Runs before each test file: the schema, then three chants (one private) and two made-up
+// Runs before each test file: the schema, then four chants (two private, one with a recording) and two made-up
 // pointings to read back.
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -11,7 +11,11 @@ await env.DB.batch([
   insert("chants").bind("ubi-caritas", "Where charity and love are", "Ubi caritas", "6", "antiphon", "test", "Where charity", "name:Ubi caritas;\n%%\n(c4) WHere(f) cha(gh)ri(hg)ty(h) (::)"),
   insert("chants").bind("crux-fidelis", "Faithful Cross", "Crux fidelis", "1", "hymn", "test", "Faithful Cross", "name:Crux fidelis;\n%%\n(c4) FAith(d)ful(e) Cross,(gh) (::)"),
   insert("private_chants").bind("private-test", "Booklet antiphon", "Test", "ii", "antiphon", "booklet", "Booklet", "name:Test;\n%%\n(c4) BOok(f) (::)"),
+  insert("private_chants").bind("private-sung", "Sung antiphon", null, "ii", "antiphon", "booklet", "Sung", "name:Sung;\n%%\n(c4) SUng(f) (::)"),
 ]);
+await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-sung'")
+  .bind('[{"index":0,"from_s":1.05,"to_s":1.5,"cents":-12.5,"trace":[[1.1,-10],[1.2,-14]]}]')
+  .run();
 
 const pointing = env.DB.prepare(
   "INSERT OR IGNORE INTO pointings (id, psalm, label, tone, nearest, match, section, verses) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

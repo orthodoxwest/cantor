@@ -33,13 +33,13 @@ app.get("/api/chants", async (c) => {
   return c.json(results);
 });
 
-// One chant with its GABC; a private one is not found by a stranger.
+// One chant with its GABC; a private one is not found by a stranger, and comes with its aligned
+// recording's ribbon when it has one.
 app.get("/api/chants/:slug", async (c) => {
-  const find = (table: "chants" | "private_chants") =>
-    c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM ${table} WHERE slug = ?`)
-      .bind(c.req.param("slug"))
-      .first<ChantRow & { gabc: string }>();
-  const row = await find("chants");
+  const slug = c.req.param("slug");
+  const row = await c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM chants WHERE slug = ?`)
+    .bind(slug)
+    .first<ChantRow & { gabc: string }>();
   if (row) {
     c.header("Cache-Control", "public, max-age=300");
     return c.json(row);
@@ -47,9 +47,14 @@ app.get("/api/chants/:slug", async (c) => {
   // From here the answer depends on who asks, found or not.
   c.header("Cache-Control", "private, no-store");
   c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
-  const hidden = (await identity(c.req.raw.headers, c.env)) ? await find("private_chants") : null;
+  const hidden = (await identity(c.req.raw.headers, c.env))
+    ? await c.env.DB.prepare(`SELECT ${CHANT}, gabc, recording FROM private_chants WHERE slug = ?`)
+        .bind(slug)
+        .first<ChantRow & { gabc: string; recording: string | null }>()
+    : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
-  return c.json(hidden);
+  const { recording, ...chant } = hidden;
+  return c.json(recording === null ? chant : { ...chant, recording: JSON.parse(recording) as unknown });
 });
 
 interface PointingRow {
