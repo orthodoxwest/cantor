@@ -21,9 +21,9 @@ const BIN0_CENTS: f32 = 1_997.379_4;
 const SPREAD: usize = 4;
 /// A frame is voiced when its strongest activation is at least this.
 pub const VOICED: f32 = 0.5;
-/// Changes when the same model's activations would decode to different labels, so caches of
-/// labels can key on it.
-pub const DECODER_VERSION: u32 = 1;
+/// Changes when the same model and audio would give different labels (the framing, the
+/// resampling, the decoding), so caches of labels can key on it.
+pub const LABELS_VERSION: u32 = 1;
 /// Frames whose audio peaks below this are digital silence, which the model never saw.
 const SILENCE_PEAK: f32 = 1e-3;
 
@@ -36,8 +36,13 @@ pub struct Crepe {
 impl Crepe {
     /// Loads the model `scripts/crepe.py` built.
     pub fn load(path: &Path) -> TractResult<Crepe> {
+        Crepe::read(&std::fs::read(path)?)
+    }
+
+    /// Loads the model from its bytes.
+    pub fn read(model: &[u8]) -> TractResult<Crepe> {
         let plan = tract_onnx::onnx()
-            .model_for_path(path)?
+            .model_for_read(&mut &model[..])?
             .with_input_fact(0, f32::fact([1, WINDOW]).into())?
             .into_optimized()?
             .into_runnable()?;

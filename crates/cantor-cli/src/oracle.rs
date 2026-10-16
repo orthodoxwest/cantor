@@ -1,9 +1,10 @@
 //! The offline oracle: CREPE's pitch for each note, read at a few points across the part the
-//! scorer judges, so the scorer's per-note pitch can be checked against a tracker that
-//! shares no tracker with it. Labels are cached under `out/oracle/` by a hash of the model,
-//! its decoder, the audio and the times asked for.
+//! scorer judges, so the scorer's per-note pitch can be checked against a tracker not
+//! its own. Labels are cached under `out/oracle/` by a hash of the model, the labelling's
+//! version, the audio and the times asked for.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cantor_core::score::{SKIP_HEAD, SKIP_TAIL};
 use cantor_core::{Frame, Note};
@@ -15,15 +16,15 @@ const POINTS_PER_NOTE: usize = 5;
 pub struct Oracle {
     crepe: Crepe,
     cache: PathBuf,
-    /// The model's bytes and decoder, hashed, which every cache key starts from.
+    /// The model's bytes and the labelling's version, hashed, which every cache key starts from.
     model_key: u64,
 }
 
 impl Oracle {
     pub fn load(model: &Path, cache: PathBuf) -> Result<Oracle, String> {
         let bytes = std::fs::read(model).map_err(|e| format!("{}: {e}", model.display()))?;
-        let model_key = fnv(FNV_OFFSET, bytes.iter().copied().chain(cantor_crepe::DECODER_VERSION.to_le_bytes()));
-        let crepe = Crepe::load(model).map_err(|e| format!("{}: {e}", model.display()))?;
+        let model_key = fnv(FNV_OFFSET, bytes.iter().copied().chain(cantor_crepe::LABELS_VERSION.to_le_bytes()));
+        let crepe = Crepe::read(&bytes).map_err(|e| format!("{}: {e}", model.display()))?;
         std::fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
         Ok(Oracle { crepe, cache, model_key })
     }
@@ -75,7 +76,9 @@ impl Oracle {
             .map_err(|e| format!("CREPE: {e}"))?;
         let text = serde_json::to_string(&midi).map_err(|e| e.to_string())?;
         // Written aside and renamed, so an interrupted run never leaves half a file to read.
-        let partial = self.cache.join(format!("{name}.{}.partial", std::process::id()));
+        static WRITES: AtomicU64 = AtomicU64::new(0);
+        let write = WRITES.fetch_add(1, Ordering::Relaxed);
+        let partial = self.cache.join(format!("{name}.{}.{write}.partial", std::process::id()));
         std::fs::write(&partial, text)
             .and_then(|()| std::fs::rename(&partial, &path))
             .map_err(|e| format!("{}: {e}", path.display()))?;

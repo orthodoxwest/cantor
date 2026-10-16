@@ -39,8 +39,8 @@ const VERSE_AGREE: f32 = 0.6;
 const VERSE_NOTE_CENTS: f32 = 100.0;
 /// A verse is silent when at least this share of its notes' frames were below the floor.
 const VERSE_SILENT: f32 = 0.8;
-/// Notes further than this from the drift line, out of tune by the take's own measure, are
-/// left out of its second fit.
+/// Notes further than this from the first drift line, the in-tune bound, are left out of its
+/// second fit.
 const DRIFT_OUTLIER_CENTS: f32 = IN_TUNE_CENTS;
 /// Pairs of notes closer in time than this are left out of the drift's slope.
 const DRIFT_MIN_DT_S: f32 = 0.5;
@@ -200,9 +200,7 @@ fn is_masked(r: &NoteResult) -> bool {
 /// candidate; the one with the most note duration within [`KEY_WINDOW_CENTS`] of it wins (the
 /// earliest on a tie), and the key is the median of the errors in its window, at the mean
 /// time of those notes. A later verse sung a tone high is then a verse off the key, whatever
-/// share of the take it is. Distances are octave-agnostic, as the errors are. A take scooping
-/// into short notes with a wide vibrato reads some tens of cents flat; reading each note past
-/// its scoop alone did not narrow that.
+/// share of the take it is. Distances are octave-agnostic, as the errors are.
 fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
     let heard_in = |pick: &dyn Fn(&Note) -> bool| -> Vec<(f32, f32, f32)> {
         results
@@ -249,7 +247,9 @@ fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
 /// than [`DRIFT_OUTLIER_CENTS`] from the first line, faults and verses sung that far off, and
 /// pairs the rest across verses too: within one verse a singer's slow wander can rise or fall
 /// by tens of cents, which the first line would carry across the take. A verse sung off by
-/// less than the cut tilts the line by up to its offset, short of [`DRIFT_CENTS`].
+/// less than the cut still tilts the line, in a two-verse take by about its offset or more,
+/// so a 45-cent step there can read as unsteady. A tone sinking in level steps between verses
+/// and flat within them leaves the cut after a step or two and is read by the verses before.
 fn drift_slope(notes: &[Note], errors: &[Option<f32>], t0: f32) -> f32 {
     let points: Vec<(u32, f32, f32)> = errors
         .iter()
