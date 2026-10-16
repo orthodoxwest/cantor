@@ -12,6 +12,7 @@ declare global {
       drone: number | null;
       drones: number;
       centre: number | null;
+      loop: [number, number] | null;
       sung: Array<{ midi: number; start: number; duration: number }>;
       voice: "neutral" | "recorded" | "none";
       heard: () =>

@@ -25,6 +25,8 @@ export interface GuideOptions {
 export interface PlayOptions {
   voice?: boolean;
   lead?: number;
+  /** The first and last note to play, by index; the whole chant when omitted. */
+  range?: readonly [number, number];
 }
 
 /** A play under way: when its pulse 0 falls on the audio clock, how long after that its
@@ -49,6 +51,8 @@ export class Guide {
   /** Counts plays, so a play stopped while it was starting does not go on. */
   private plays = 0;
   private times: Timed[] = [];
+  /** The last note of the play under way, by index. */
+  private last = 0;
   private end: ((finished: boolean) => void) | null = null;
 
   constructor(
@@ -80,7 +84,7 @@ export class Guide {
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves
    * once it has started, or with null if it did not. */
-  async play({ voice = true, lead = 0 }: PlayOptions = {}): Promise<Started | null> {
+  async play({ voice = true, lead = 0, range }: PlayOptions = {}): Promise<Started | null> {
     if (this.playing) return null;
     this.playing = true;
     const play = ++this.plays;
@@ -91,7 +95,12 @@ export class Guide {
       if (!this.playing || play !== this.plays) return null;
       const { table, gabc } = this.options;
       const onError = (error: unknown) => this.fail(play, error);
-      if (voice) singing = await sing(ctx, this.notes().map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError });
+      const all = this.notes();
+      const [from, to] = range ?? [0, all.length - 1];
+      // A run is sung from its first note, after the lead.
+      const base = all[from]?.start ?? 0;
+      const run = range ? all.slice(from, to + 1).map((n) => ({ ...n, start: n.start - base })) : all;
+      if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError });
     } catch (error) {
       this.fail(play, error);
       return null;
@@ -103,12 +112,15 @@ export class Guide {
     this.singing = singing;
     this.visited.length = 0;
     this.times = timed(this.score.timeline.notes, this.pulse);
-    const origin = (singing?.start ?? ctx.currentTime) + lead;
+    const [from, to] = range ?? [0, this.times.length - 1];
+    this.last = to;
+    const begins = this.times[from]?.start ?? 0;
+    // Pulse 0 of the chant, where it would fall were it sung from the start.
+    const origin = (singing?.start ?? ctx.currentTime) + lead - (range ? begins : 0);
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const zero = clock() + (origin - ctx.currentTime);
     const ended = new Promise<boolean>((resolve) => (this.end = resolve));
     // The cursor appears on the first note, after the lead.
-    const begins = this.times[0]?.start ?? 0;
     const step = (): boolean => {
       if (!this.playing) return false;
       const t = clock() - zero;
@@ -127,7 +139,7 @@ export class Guide {
     // A hidden page draws no frames, and the play still ends on time.
     this.timer = window.setInterval(step, 250);
     tick();
-    return { origin, first: this.times[0]?.start ?? 0, ended };
+    return { origin, first: begins, ended };
   }
 
   stop(): void {
@@ -156,7 +168,7 @@ export class Guide {
   /** Moves the cursor to `t` seconds into the chant; false once it is over. */
   private follow(t: number): boolean {
     const { timeline } = this.score;
-    const last = this.times.at(-1);
+    const last = this.times[this.last];
     if (!last || t >= last.start + last.duration) return false;
     const i = Math.max(noteAt(this.times, t), 0);
     const at = this.times[i]!;

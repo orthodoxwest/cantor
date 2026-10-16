@@ -12,6 +12,7 @@ import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { Drone, droneNote, modeNumber } from "./drone";
+import { tapLoop } from "./loop";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
@@ -297,7 +298,9 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   if (mark && open !== null) now?.scrollIntoView({ block: "nearest" });
   return true;
 }
-score.host.addEventListener("click", (e) => tap(e.target, false));
+score.host.addEventListener("click", (e) => {
+  if (!tap(e.target, false)) tapScore(e);
+});
 score.host.addEventListener("keydown", (e) => {
   if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) e.preventDefault();
 });
@@ -370,7 +373,10 @@ const guide =
     table,
     gabc: piece.gabc,
     clock: test ? () => performance.now() / 1000 : undefined,
-    onStop: () => playButton.setAttribute("aria-pressed", "false"),
+    // A loop between times round, or a play about to end, keeps Play pressed (see `play`).
+    onStop: () => {
+      if (playing === null) playButton.setAttribute("aria-pressed", "false");
+    },
     onError: (message) => setStatus(taking ? "The guide voice failed, so the take was stopped." : message),
   });
 // Start note sounds the opening notes a take without headphones is given (`cueNotes`), to
@@ -390,7 +396,7 @@ function stopPitch(): void {
 
 async function soundPitch(): Promise<void> {
   if (!guide || !table) return;
-  guide.stop();
+  stopPlay();
   stopPitch();
   const press = pitches;
   noteButton.setAttribute("aria-pressed", "true");
@@ -496,7 +502,7 @@ for (const select of [speedSelect, pitchSelect]) {
   select.addEventListener("change", () => {
     // What is sounding was set going at the old speed and pitch; Start note and a drone have
     // no speed.
-    guide?.stop();
+    stopPlay();
     if (select === pitchSelect) stopPitch();
     const retune = select === pitchSelect && droneButton.getAttribute("aria-pressed") === "true";
     applyTempo();
@@ -505,6 +511,97 @@ for (const select of [speedSelect, pitchSelect]) {
       void startDrone();
     }
   });
+}
+
+// A loop: tapping a note or its syllable plays its phrase, between divisions (loop.ts), over and
+// over, the cursor following; tapping another phrase stretches the loop to it, a bar loops the
+// phrase it ends, and a tap in the loop, or Whole chant, lets it go.
+const loopText = byId<HTMLSpanElement>("loop-text");
+const unloopButton = byId<HTMLButtonElement>("unloop");
+const loopStyle = document.head.appendChild(document.createElement("style"));
+let loop: [number, number] | null = null;
+/** Counts plays, so a loop stopped while it waits between times round does not go on. */
+let plays = 0;
+/** The play under way, looped or not, until Play stops it or it ends. */
+let playing: number | null = null;
+/** The pause between times round a loop, in pulses. */
+const BREATH = 2;
+
+function setLoop(next: [number, number] | null): void {
+  loop = next;
+  const [a, b] = next ?? [0, -1];
+  const ids = score.timeline.notes.slice(a, b + 1).map((n) => n.id);
+  // A rule rather than classes on the ink, so the run stays marked when the score is drawn again.
+  // Tinted lighter than the cursor's note, so it stands out within it, and only while the score
+  // is free: not in a take, nor beside a take's result.
+  const free = "body:not(.taking) main:not(:has(#result:not([hidden]))) #score";
+  loopStyle.textContent = ids.length
+    ? `${free} :is(${ids.map((id) => `[data-note~="${id}"]`).join(",")}):not(.cantor-current){fill:color-mix(in srgb, var(--rubric) 50%, var(--bg))}`
+    : "";
+  unloopButton.hidden = !next;
+  loopText.textContent = next
+    ? `Play goes over notes ${a + 1} to ${b + 1} until you stop it.`
+    : "Tap a phrase or a bar on the score to play it over and over.";
+}
+unloopButton.addEventListener("click", () => {
+  if (taking) return;
+  stopPlay();
+  setLoop(null);
+});
+
+/** The note a tap on the score means: a note's ink, a syllable's first note, or the last note
+ * before a bar tapped; -1 for none. */
+function tappedNote(e: MouseEvent): number {
+  const { notes, pauses } = score.timeline;
+  const el = e.target as Element | null;
+  const ink = el?.closest("[data-note]");
+  if (ink) {
+    const id = Number(ink.getAttribute("data-note")!.split(" ")[0]);
+    return notes.findIndex((n) => n.id === id);
+  }
+  const syllable = el?.closest("[data-syllable]");
+  if (syllable) return notes.findIndex((n) => n.syllable === Number(syllable.getAttribute("data-syllable")));
+  const box = score.host.getBoundingClientRect();
+  const x = e.clientX - box.left;
+  const y = e.clientY - box.top;
+  const bar = pauses.find((p) => {
+    if (!p.bar) return false;
+    const line = score.line(p.bar.line);
+    return Math.abs(x - p.bar.cx) <= 12 && y >= line.top && y <= line.bottom;
+  });
+  return bar ? bar.beforeNote - 1 : -1;
+}
+
+function tapScore(e: MouseEvent): void {
+  if (shown || taking || !guide) return;
+  const i = tappedNote(e);
+  if (i < 0) return;
+  stopPlay();
+  setLoop(tapLoop(loop, i, score.timeline.pauses, score.timeline.notes.length));
+}
+
+function stopPlay(): void {
+  plays++;
+  playing = null;
+  guide?.stop();
+  playButton.setAttribute("aria-pressed", "false");
+}
+
+/** Plays the chant, or the loop over and over, until it ends or is stopped. */
+async function play(): Promise<void> {
+  if (!guide) return;
+  const run = ++plays;
+  playing = run;
+  playButton.setAttribute("aria-pressed", "true");
+  do {
+    const started = await guide.play(loop ? { range: loop } : {});
+    if (playing !== run) return;
+    // Its onStop has let Play go; while the loop goes round it stays pressed.
+    playButton.setAttribute("aria-pressed", "true");
+    if (!started || !(await started.ended) || playing !== run || !loop) break;
+    await wait(BREATH * guide.pulse);
+  } while (playing === run && loop);
+  if (playing === run) stopPlay();
 }
 
 if (!guide) {
@@ -517,12 +614,11 @@ if (!guide) {
     void startDrone();
   });
   playButton.addEventListener("click", () => {
-    if (guide.playing) return guide.stop();
+    if (guide.playing || playing !== null) return stopPlay();
     stopPitch();
     setStatus("");
     showResult(null);
-    playButton.setAttribute("aria-pressed", "true");
-    void guide.play();
+    void play();
   });
   noteButton.addEventListener("click", () => {
     if (noteButton.getAttribute("aria-pressed") === "true") return stopPitch();
@@ -631,12 +727,12 @@ async function takeScored(): Promise<void> {
   document.body.classList.add("taking");
   timing = null;
   // Nothing else sounds or listens during a take.
-  guide.stop();
+  stopPlay();
   stopPitch();
   stopDrone(false);
   listener.stop();
   playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = true;
-  speedSelect.disabled = pitchSelect.disabled = true;
+  speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = true;
   holdChant(true);
   takeButton.textContent = "Stop";
   readout.textContent = "–";
@@ -710,7 +806,7 @@ function stopTake(): void {
   takes++;
   // The listener stops first, so its last frames do not reach the readout.
   listener.stop();
-  guide?.stop();
+  stopPlay();
   endTake();
 }
 
@@ -722,7 +818,7 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = droneButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   readout.setAttribute("aria-live", "polite");
-  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = false;
+  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = false;
   holdChant(false);
   modeLine.hidden = !guide;
   void detect();
@@ -754,6 +850,10 @@ if (test) {
     get drone() {
       return drone?.midi ?? null;
     },
+    /** The run looped, by note index, or null. */
+    get loop() {
+      return loop;
+    },
     /** Where the guide's voice is at home, as MIDI. */
     centre: table?.centre ?? null,
     /** The notes the guide sings, at the page's speed and pitch. */
@@ -774,7 +874,11 @@ if (test) {
     take: () => timing,
     // Puts `gabc` on the page at `pulse` seconds a pulse, for a take of another chant.
     practise: (gabc: string, pulse: number) => {
-      if (gabc !== score.source) score.setChant(new Chant(gabc));
+      if (gabc !== score.source) {
+        stopPlay();
+        setLoop(null);
+        score.setChant(new Chant(gabc));
+      }
       if (guide) guide.gabc = gabc;
       // Through the Speed select, as a singer would, adding the pulse to it if it is not there.
       if (![...speedSelect.options].some((o) => o.value === String(pulse))) speedSelect.add(new Option(`${pulse} s a pulse`, String(pulse)));
@@ -786,7 +890,11 @@ if (test) {
     // Shows the last take judged against `gabc` (put on the page if it is not there);
     // returns the JSON.
     show: async (gabc: string, pulse: number, offset: number) => {
-      if (gabc !== score.source) score.setChant(new Chant(gabc));
+      if (gabc !== score.source) {
+        stopPlay();
+        setLoop(null);
+        score.setChant(new Chant(gabc));
+      }
       const json = await listener.judge(gabc, pulse, offset);
       const judged = JSON.parse(json) as Judged;
       showResult(judged);

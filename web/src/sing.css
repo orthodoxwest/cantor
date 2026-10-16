@@ -92,6 +92,26 @@
 #do {
   color: var(--muted);
 }
+/* The run looped (loop.ts), and how to choose one. */
+.loop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+body:not(.taking) main:not(:has(#result:not([hidden]))) #score svg :is([data-note], [data-syllable]) {
+  cursor: pointer;
+}
+/* After a take the score's taps are the core's marks and bands'; Play clears them. */
+body.taking #loop {
+  display: none;
+}
+main:has(#result:not([hidden])) #loop {
+  display: none;
+}
 #score {
   margin: 0.5rem 0 1rem;
 }
