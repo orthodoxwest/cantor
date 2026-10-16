@@ -16,8 +16,8 @@ cantor-crepe = { path = "crates/cantor-crepe" }
 cantor-ear = { path = "crates/cantor-ear" }
 cantor-swift = { path = "crates/cantor-swift" }
 # neuma is pinned by revision; scripts/neuma.sh builds the matching browser module.
-neuma = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
-neuma-tones = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
+neuma = { git = "https://github.com/orthodoxwest/neuma", rev = "0fd4356bd870b387f35dd9666c513a76259f32e2" }
+neuma-tones = { git = "https://github.com/orthodoxwest/neuma", rev = "0fd4356bd870b387f35dd9666c513a76259f32e2" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hound = "3.5"
