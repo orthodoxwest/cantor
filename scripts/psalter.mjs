@@ -67,5 +67,6 @@ for (let n = 1; n <= 150; n++) {
 }
 
 const source = "Book of Common Prayer (1662), Coverdale psalter, via github.com/orthodoxwest/office";
-writeFileSync(out, JSON.stringify({ source, psalms }, null, 0).replace(/\},\{"id"/g, '},\n{"id"') + "\n");
+const rights = "Public domain outside the United Kingdom; there, the Book of Common Prayer is Crown copyright.";
+writeFileSync(out, JSON.stringify({ source, rights, psalms }, null, 0).replace(/\},\{"id"/g, '},\n{"id"') + "\n");
 console.log(`${psalms.length} psalms and parts -> content/psalter.json`);

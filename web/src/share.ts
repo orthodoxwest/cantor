@@ -8,6 +8,10 @@ export interface Shared {
   gloria: boolean;
   /** Semitones. */
   transpose: number;
+  /** The verses sung, by number, or null for the whole psalm. */
+  verses?: [number, number] | null;
+  /** Typed text, for the "own" psalm. */
+  own?: string;
   /** The pointed text, when it differs from what pointing the source would give. */
   text?: string;
 }
@@ -39,6 +43,8 @@ export async function encode(state: Shared): Promise<string> {
   const params = new URLSearchParams({ psalm: state.psalm, tone: state.tone });
   if (!state.gloria) params.set("gloria", "0");
   if (state.transpose) params.set("pitch", String(state.transpose));
+  if (state.verses) params.set("verses", state.verses.join("-"));
+  if (state.own !== undefined) params.set("own", await packText(state.own));
   if (state.text !== undefined) params.set("text", await packText(state.text));
   return "#" + params.toString();
 }
@@ -48,22 +54,28 @@ export async function decode(hash: string): Promise<Shared | null> {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const psalm = params.get("psalm");
   const tone = params.get("tone");
-  if (!psalm || !tone) return null;
+  if (!psalm) return null;
   const transpose = Number(params.get("pitch") ?? 0);
-  const packed = params.get("text");
-  let text: string | undefined;
-  if (packed) {
+  const range = params.get("verses")?.match(/^(\d+)-(\d+)$/);
+  const verses: [number, number] | null = range ? [Number(range[1]), Number(range[2])] : null;
+  const unpack = async (name: string) => {
+    const packed = params.get(name);
+    if (!packed) return undefined;
     try {
-      text = await unpackText(packed);
+      return await unpackText(packed);
     } catch {
-      text = undefined;
+      return undefined;
     }
-  }
+  };
+  const text = await unpack("text");
+  const own = await unpack("own");
   return {
     psalm,
-    tone,
+    tone: tone ?? "",
     gloria: params.get("gloria") !== "0",
-    transpose: Number.isInteger(transpose) && Math.abs(transpose) <= 12 ? transpose : 0,
+    transpose: Number.isInteger(transpose) && Math.abs(transpose) <= 7 ? transpose : 0,
+    verses,
+    ...(own !== undefined ? { own } : {}),
     text,
   };
 }

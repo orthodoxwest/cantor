@@ -5,7 +5,8 @@ declare global {
     __pointer: {
       state: { text: string; auto: string; tone: string };
       visited: number[];
-      shared: () => Promise<{ text?: string } | null>;
+      player: { started: boolean };
+      shared: () => Promise<{ text?: string; own?: string } | null>;
     };
   }
 }
@@ -51,6 +52,12 @@ test("the arrow keys move an accent, and undo puts it back", async ({ page }) =>
   expect(after.split("*")[0]).toBe(before.split("*")[0]);
   await expect(page.locator("#status")).toContainText("pointing edited");
   await expect(page).toHaveURL(/&text=/);
+  // Leaving out the Gloria keeps the edit.
+  await page.locator("#gloria").uncheck();
+  await expect(page.locator(".verse")).toHaveCount(6);
+  expect((await text(page)).split("\n")[0]).toBe(after.split("\n")[0]);
+  await expect(page.locator("#status")).toContainText("pointing edited");
+  await page.getByRole("button", { name: "Undo" }).click();
   await page.getByRole("button", { name: "Undo" }).click();
   expect(await text(page)).toBe(before);
 });
@@ -97,6 +104,8 @@ test("singing a verse follows its syllables in order", async ({ page }) => {
     .evaluateAll((els) => els.map((el) => Number((el as HTMLElement).dataset.start)));
   await page.locator(`.verse[data-verse="2"] .num`).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  // The fake clock moves only once the player has scheduled the sound and set its origin.
+  await expect.poll(() => page.evaluate(() => window.__pointer.player.started)).toBe(true);
   await page.clock.runFor(60_000);
   await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
   const visited = await page.evaluate(() => window.__pointer.visited);
@@ -110,7 +119,7 @@ test("exports the setting as GABC and text", async ({ page }) => {
   expect(gabc.suggestedFilename()).toBe("psalm-23-tone-8G.gabc");
   const body = await (await gabc.createReadStream()).toArray();
   const source = Buffer.concat(body).toString("utf8");
-  expect(source).toMatch(/^name:Psalm 23 · Dominus regit me;\nmode:8\.G;\n%%\n\(c4\)/);
+  expect(source).toMatch(/^name:Psalm 23 · Dominus regit me;\nmode:8;\nmode-differentia:G;\n%%\n\(c4\)/);
   const [txt] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Text", exact: true }).click()]);
   const lines = Buffer.concat(await (await txt.createReadStream()).toArray()).toString("utf8");
   expect(lines).toContain(await text(page));
@@ -123,11 +132,44 @@ test("points text of your own", async ({ page }) => {
   await page.locator("#own").fill("O praise the Lord, all ye heathen * praise him, all ye nations.");
   await expect(page.locator(".verse")).toHaveCount(1);
   await expect(accents(page, 0, "termination")).toHaveCount(1);
-  await expect.poll(() => page.evaluate(async () => (await window.__pointer.shared())?.text)).toContain("nátions");
-  await expect(page).toHaveURL(/psalm=own&tone=8\.G&gloria=0&text=/);
+  await expect.poll(() => page.evaluate(async () => (await window.__pointer.shared())?.own)).toContain("nations");
+  await expect(page).toHaveURL(/psalm=own&tone=8\.G&gloria=0&own=/);
   const url = page.url();
   await page.goto("about:blank");
   await page.goto(url);
-  await expect(page.locator("#own")).toHaveValue("O praise the Lord, all ye · héathen * praise him, · all ye nátions.");
+  await expect(page.locator("#own")).toHaveValue("O praise the Lord, all ye heathen * praise him, all ye nations.");
   await expect(page.locator(".verse")).toHaveCount(1);
+  // The typed text, not its pointing, travels: another tone points it afresh.
+  await page.locator("#tone").selectOption("1.D");
+  await expect(accents(page, 0, "mediant")).toHaveCount(2);
+});
+
+test("sings a range of verses", async ({ page }) => {
+  await open(page);
+  await page.locator("#from").fill("2");
+  await page.locator("#from").dispatchEvent("change");
+  await page.locator("#to").fill("4");
+  await page.locator("#to").dispatchEvent("change");
+  // Three verses and the Gloria.
+  await expect(page.locator(".verse")).toHaveCount(5);
+  await expect(page.locator(".verse .num").first()).toHaveText("2");
+  await expect(page).toHaveURL(/verses=2-4/);
+  // Each end of the range was its own change.
+  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator(".verse")).toHaveCount(6 + 2);
+});
+
+test("copies the pointing for a word processor", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await open(page);
+  await page.getByRole("button", { name: "Copy for Word" }).click();
+  await expect(page.locator("#status")).toContainText("Copied");
+  const html = await page.evaluate(async () => {
+    const [item] = await navigator.clipboard.read();
+    return (await item!.getType("text/html")).text();
+  });
+  expect(html).toContain("Psalm 23 · Dominus regit me");
+  expect(html).toContain("color:#a3211c;font-weight:bold\">·</span>");
+  expect(html).toContain("shépherd");
 });

@@ -1,6 +1,6 @@
 import { init, psalmDisplay } from "neuma";
 import { beforeAll, describe, expect, it } from "vitest";
-import { GLORIA, moveAccents, pointText, psalmText } from "../src/pointing";
+import { GLORIA, moveAccents, nucleus, pointText, psalmText } from "../src/pointing";
 
 beforeAll(() => init());
 
@@ -82,5 +82,40 @@ describe("moveAccents", () => {
     const before = pointText(text, tone).text;
     const lord = syllables(before, tone, 0, "mediant")[0]!;
     expect(() => moveAccents(before, tone, 0, "termination", [lord])).toThrow();
+  });
+
+  it("takes the marks before a half's first syllable with it", () => {
+    const before = pointText("1 O God * my God.", tone).text;
+    expect(before).toBe("1 O · Gód * – – · mý God.");
+    let text = before;
+    for (let i = 0; i < 4; i++) {
+      const half = syllables(text, tone, 0, "termination");
+      text = moveAccents(text, tone, 0, "termination", [half.find((s) => s.text === (i % 2 ? "my" : "God."))!]);
+      expect(text.match(/·/g)).toHaveLength(2);
+    }
+  });
+
+  it("puts every accent back where it was without changing the text", () => {
+    for (const [verse, tone] of [
+      ["1 He gave them hailstones for rain * and flames of fire in their land.", "4.E"],
+      ["1 I will go into thine house with burnt-offerings * and will pay thee my vows.", "8.G"],
+    ] as const) {
+      const text = pointText(verse, tone).text;
+      for (const part of ["mediant", "termination"] as const) {
+        const accents = syllables(text, tone, 0, part).filter((s) => s.accent);
+        expect(moveAccents(text, tone, 0, part, accents)).toBe(text);
+      }
+    }
+  });
+
+});
+
+describe("nucleus", () => {
+  it("accents the vowel a pointed psalter does", () => {
+    const accent = (s: string) => s.slice(0, nucleus(s)) + "'" + s.slice(nucleus(s));
+    expect(["ye", "you", "pie", "true", "guide", "qui", "sion", "strength", "Lord"].map(accent)).toEqual([
+      "y'e", "y'ou", "p'ie", "tr'ue", "g'uide", "qu'i", "si'on", "str'ength", "L'ord",
+    ]);
+    expect(nucleus("s")).toBe(-1);
   });
 });

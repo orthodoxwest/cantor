@@ -36,6 +36,17 @@
 .pointer textarea {
   font: inherit;
 }
+.range {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+.range[hidden] {
+  display: none;
+}
+.range input {
+  width: 3.5rem;
+  font: inherit;
+}
 #psalm {
   max-width: min(24rem, 100%);
 }

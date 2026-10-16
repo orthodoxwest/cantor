@@ -14,6 +14,7 @@ export class Voice {
   /** Notes go here; the formants and master gain follow. */
   readonly input: GainNode;
   private readonly nodes: AudioNode[] = [];
+  private readonly oscillators = new Set<OscillatorNode>();
   private readonly wave: PeriodicWave;
 
   constructor(
@@ -61,11 +62,21 @@ export class Voice {
     osc.connect(env).connect(this.input);
     osc.start(start);
     osc.stop(end);
-    osc.onended = () => env.disconnect();
+    this.oscillators.add(osc);
+    osc.onended = () => {
+      env.disconnect();
+      this.oscillators.delete(osc);
+    };
   }
 
   /** Silences every note and lets the graph go. */
   close(): void {
+    for (const osc of this.oscillators) {
+      osc.onended = null;
+      osc.stop();
+      osc.disconnect();
+    }
+    this.oscillators.clear();
     for (const node of this.nodes) node.disconnect();
   }
 }

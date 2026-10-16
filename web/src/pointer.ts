@@ -1,7 +1,7 @@
 // The psalm pointer: a psalm (or typed text) pointed for a tone, its accents moved by hand,
 // sung in the guide voice, and exported as text, GABC or SVG.
 import { Chant, type PsalmDisplay, type TimelineNote, init, psalm, psalmDisplay, toneLabel, toneNames } from "neuma";
-import { type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
+import { GLORIA, type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
 import { Player } from "./player";
 import { decode, encode } from "./share";
 
@@ -29,6 +29,9 @@ const els = {
   tone: byId<HTMLSelectElement>("tone"),
   gloria: byId<HTMLInputElement>("gloria"),
   ownLabel: byId<HTMLLabelElement>("own-label"),
+  range: byId<HTMLElement>("range"),
+  from: byId<HTMLInputElement>("from"),
+  to: byId<HTMLInputElement>("to"),
   own: byId<HTMLTextAreaElement>("own"),
   toneLabel: byId<HTMLElement>("tone-label"),
   toneScore: byId<HTMLDivElement>("tone-score"),
@@ -51,6 +54,8 @@ const DEFAULT = { psalm: "23", tone: "8.G" };
 interface Snapshot {
   tone: string;
   gloria: boolean;
+  verses: [number, number] | null;
+  own: string;
   text: string;
   unsure: Set<HalfKey>;
 }
@@ -60,6 +65,8 @@ const state = {
   tone: DEFAULT.tone,
   gloria: true,
   transpose: 0,
+  /** The verses sung, by number, or null for the whole psalm. */
+  verses: null as [number, number] | null,
   /** Typed text, for the "own" psalm. */
   own: "",
   /** The pointed text as shown. */
@@ -76,8 +83,8 @@ const undoStack: Snapshot[] = [];
 const clean = (text: string) =>
   text
     .normalize("NFC")
-    .replace(/⁠/g, "")
-    .replace(/ /g, " ")
+    .replace(/\u2060/g, "")
+    .replace(/\u00a0/g, " ")
     .replace(/\r\n?/g, "\n");
 
 function sourceText(): string {
@@ -86,7 +93,16 @@ function sourceText(): string {
     return state.gloria ? [own, ...psalmText([], 1, true).split("\n")].filter(Boolean).join("\n") : own;
   }
   const entry = psalter.get(state.psalm) ?? psalter.get(DEFAULT.psalm)!;
-  return psalmText(entry.verses, entry.first, state.gloria);
+  const [from, to] = range(entry);
+  return psalmText(entry.verses.slice(from - entry.first, to - entry.first + 1), from, state.gloria);
+}
+
+/** The verses sung, clamped to the psalm. */
+function range(entry: PsalterEntry): [number, number] {
+  const last = entry.first + entry.verses.length - 1;
+  const [from, to] = state.verses ?? [entry.first, last];
+  const a = Math.min(Math.max(from, entry.first), last);
+  return [a, Math.min(Math.max(to, a), last)];
 }
 
 /** Points the source afresh for the tone, dropping hand edits. */
@@ -97,7 +113,7 @@ function repoint(): void {
 }
 
 function snapshot(): Snapshot {
-  return { tone: state.tone, gloria: state.gloria, text: state.text, unsure: new Set(state.unsure) };
+  return { tone: state.tone, gloria: state.gloria, verses: state.verses, own: state.own, text: state.text, unsure: new Set(state.unsure) };
 }
 
 function pushUndo(): void {
@@ -127,16 +143,29 @@ function syncControls(): void {
   els.gloria.checked = state.gloria;
   els.pitch.value = String(state.transpose);
   els.ownLabel.hidden = state.psalm !== OWN;
+  els.range.hidden = state.psalm === OWN;
+  const entry = psalter.get(state.psalm);
+  if (entry) {
+    const [from, to] = range(entry);
+    for (const input of [els.from, els.to]) {
+      input.min = String(entry.first);
+      input.max = String(entry.first + entry.verses.length - 1);
+    }
+    els.from.value = String(from);
+    els.to.value = String(to);
+  }
   if (state.psalm === OWN && els.own.value !== state.own) els.own.value = state.own;
 }
 
 els.psalm.addEventListener("change", () => {
+  flushOwn();
   const previous = state.psalm;
   state.psalm = els.psalm.value;
   if (state.psalm === OWN && !state.own) {
     const entry = psalter.get(previous);
     if (entry) state.own = psalmText(entry.verses, entry.first, false);
   }
+  state.verses = null;
   undoStack.length = 0;
   els.undo.disabled = true;
   repoint();
@@ -144,6 +173,7 @@ els.psalm.addEventListener("change", () => {
 });
 
 els.tone.addEventListener("change", () => {
+  flushOwn();
   pushUndo();
   state.tone = els.tone.value;
   repoint();
@@ -151,11 +181,48 @@ els.tone.addEventListener("change", () => {
 });
 
 els.gloria.addEventListener("change", () => {
+  flushOwn();
   pushUndo();
   state.gloria = els.gloria.checked;
-  repoint();
+  // The Gloria comes and goes at the end, so hand edits to the verses stay.
+  const lines = state.text.split("\n");
+  if (state.gloria) {
+    const gloria = pointText(GLORIA.join("\n"), state.tone);
+    state.text += "\n" + gloria.text;
+    state.auto += "\n" + gloria.text;
+    for (const key of gloria.unsure) {
+      const [v, part] = key.split(":") as [string, Half];
+      state.unsure.add(halfKey(Number(v) + lines.length, part));
+    }
+  } else {
+    const keep = lines.length - GLORIA.length;
+    state.text = lines.slice(0, keep).join("\n");
+    state.auto = state.auto.split("\n").slice(0, keep).join("\n");
+    for (const key of [...state.unsure]) if (Number(key.split(":")[0]) >= keep) state.unsure.delete(key);
+  }
   refresh({ tone: false });
 });
+
+for (const input of [els.from, els.to]) {
+  input.addEventListener("change", () => {
+    flushOwn();
+    const entry = psalter.get(state.psalm);
+    if (!entry) return;
+    const from = Number(els.from.value);
+    const to = Number(els.to.value);
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return syncControls();
+    const before = state.verses;
+    state.verses = input === els.from ? [from, Math.max(from, to)] : [Math.min(from, to), to];
+    const next = range(entry);
+    const whole = [entry.first, entry.first + entry.verses.length - 1].join();
+    state.verses = next.join() === whole ? null : next;
+    if (String(state.verses) === String(before)) return syncControls();
+    undoStack.push({ ...snapshot(), verses: before });
+    els.undo.disabled = false;
+    repoint();
+    refresh({ tone: false });
+  });
+}
 
 els.pitch.addEventListener("change", () => {
   state.transpose = Number(els.pitch.value);
@@ -166,11 +233,26 @@ let ownTimer = 0;
 els.own.addEventListener("input", () => {
   clearTimeout(ownTimer);
   ownTimer = window.setTimeout(() => {
+    ownTimer = 0;
+    if (els.own.value === state.own) return;
+    pushUndo();
     state.own = els.own.value;
     repoint();
     refresh({ tone: false });
   }, 300);
 });
+
+/** Takes in typing still waiting on its pause; true when there was some. */
+function flushOwn(): boolean {
+  if (!ownTimer) return false;
+  clearTimeout(ownTimer);
+  ownTimer = 0;
+  if (els.own.value === state.own) return false;
+  pushUndo();
+  state.own = els.own.value;
+  repoint();
+  return true;
+}
 
 els.undo.addEventListener("click", undo);
 document.addEventListener("keydown", (e) => {
@@ -181,12 +263,15 @@ document.addEventListener("keydown", (e) => {
 });
 
 function undo(): void {
+  flushOwn();
   const last = undoStack.pop();
   els.undo.disabled = undoStack.length === 0;
   if (!last) return;
   const toneChanged = last.tone !== state.tone;
   state.tone = last.tone;
   state.gloria = last.gloria;
+  state.verses = last.verses;
+  state.own = last.own;
   state.text = last.text;
   state.unsure = last.unsure;
   state.auto = pointText(sourceText(), state.tone).text;
@@ -329,6 +414,11 @@ const span = (el: HTMLElement) => ({ start: Number(el.dataset.start), end: Numbe
 
 /** Moves the accent on `from` to `to`, a syllable of the same half. Returns the accent's new index. */
 function move(from: HTMLElement, to: HTMLElement): number | null {
+  if (flushOwn()) {
+    // The text changed under the drag: show it, and leave the accent where it was.
+    refresh({ tone: false });
+    return null;
+  }
   if (from === to || to.classList.contains("acc")) return null;
   const { verse, part } = halfOf(from);
   const accents = halfSyllables(verse, part)
@@ -410,12 +500,12 @@ els.verses.addEventListener("keydown", (e) => {
   if (index !== null) focusAccent(verse, part, index);
 });
 
+let checkAt = -1;
 els.check.addEventListener("click", () => {
   const all = [...els.verses.querySelectorAll<HTMLElement>(".acc.unsure")];
   if (!all.length) return;
-  const active = document.activeElement as HTMLElement | null;
-  const after = all.find((el) => active && active.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
-  const next = after ?? all[0]!;
+  checkAt = (checkAt + 1) % all.length;
+  const next = all[checkAt]!;
   next.scrollIntoView({ block: "center", behavior: "smooth" });
   next.focus({ preventScroll: true });
 });
@@ -457,6 +547,8 @@ function sing(verse: number | null): void {
   const setting = chant.psalm!;
   const notes = chant.layout(800).timeline().notes;
   const run = verse === null ? notes : notes.filter((n) => setting.notes[n.id]?.verse === verse);
+  // Stopping what plays first, so its onStop doesn't undo the labels below.
+  player.stop();
   els.play.setAttribute("aria-pressed", "true");
   els.play.textContent = "Stop";
   void player.play(run, {
@@ -520,10 +612,41 @@ function download(name: string, type: string, body: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** The verses as a pointed psalter prints them, for a word processor: marks in red. */
+function richText(): string {
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const red = "color:#a3211c";
+  const verses = state.display!.verses.map((v) => {
+    const runs = v.runs.map((r) => {
+      const text = esc(r.text.replace(/\u2060/g, ""));
+      if (r.kind === "syllable") return r.flexDrop ? `<i>${text}</i>` : text;
+      if (r.kind === "text") return text;
+      if (r.kind === "rubric") return `<i style="${red}">${text}</i>`;
+      const bold = r.kind === "point" || r.kind === "held" ? ";font-weight:bold" : "";
+      return `<span style="${red}${bold}">${text}</span>`;
+    });
+    const num = v.number === null ? "" : `<span style="${red};font-size:smaller">${v.number}</span>&nbsp;`;
+    return `<p style="margin:0 0 6pt">${num}${runs.join("")}</p>`;
+  });
+  return (
+    `<div style="font-family:'EB Garamond',Garamond,Georgia,serif;font-size:12pt">` +
+    `<p style="margin:0 0 3pt"><b>${esc(heading())}</b></p>` +
+    `<p style="margin:0 0 9pt;${red}"><i>${esc(toneLabel(state.tone))}</i></p>${verses.join("")}</div>`
+  );
+}
+
 byId("copy").addEventListener("click", async () => {
+  const plainText = `${heading()}\n${toneLabel(state.tone)}\n\n${state.text}\n`;
   try {
-    await navigator.clipboard.writeText(state.text + "\n");
-    els.status.textContent = "Copied the pointed text.";
+    if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([richText()], { type: "text/html" }),
+          "text/plain": new Blob([plainText], { type: "text/plain" }),
+        }),
+      ]);
+    } else await navigator.clipboard.writeText(plainText);
+    els.status.textContent = "Copied: paste into Word or another editor.";
   } catch {
     els.status.textContent = "The browser would not copy; use the Text download instead.";
   }
@@ -535,7 +658,9 @@ byId("download-text").addEventListener("click", () =>
 
 byId("download-gabc").addEventListener("click", () => {
   const { gabc } = psalm(state.text, state.tone);
-  const header = `name:${heading().replace(/;/g, ",")};\nmode:${state.tone};\n`;
+  // Gregorio's headers: the mode's number (or name) and its ending apart.
+  const [mode, ending] = state.tone.split(".");
+  const header = `name:${heading().replace(/;/g, ",")};\nmode:${mode};\n${ending ? `mode-differentia:${ending};\n` : ""}`;
   download(filename("gabc"), "text/plain;charset=utf-8", header + gabc.replace(/^\s*/, ""));
 });
 
@@ -558,7 +683,9 @@ function saveHash(): void {
       tone: state.tone,
       gloria: state.gloria,
       transpose: state.transpose,
-      text: state.psalm === OWN || state.text !== state.auto ? state.text : undefined,
+      verses: state.psalm === OWN ? null : state.verses,
+      own: state.psalm === OWN ? state.own : undefined,
+      text: state.text !== state.auto ? state.text : undefined,
     });
     if (hash === location.hash) return;
     lastHash = hash;
@@ -569,19 +696,18 @@ function saveHash(): void {
 async function load(hash: string): Promise<void> {
   const shared = await decode(hash);
   const tones = new Set(toneNames());
-  state.psalm = shared && (shared.psalm === OWN || psalter.has(shared.psalm)) ? shared.psalm : DEFAULT.psalm;
+  const known = shared && (shared.psalm === OWN || psalter.has(shared.psalm));
+  state.psalm = known ? shared.psalm : DEFAULT.psalm;
   state.tone = shared && tones.has(shared.tone) ? shared.tone : DEFAULT.tone;
   state.gloria = shared?.gloria ?? true;
   state.transpose = shared?.transpose ?? 0;
+  state.verses = shared?.verses ?? null;
   undoStack.length = 0;
   els.undo.disabled = true;
-  if (state.psalm === OWN) {
-    // Typed text travels as its pointing, which pointing again keeps.
-    const text = clean(shared?.text ?? "");
-    state.own = state.gloria ? text.split("\n").slice(0, -2).join("\n") : text;
-  }
+  if (state.psalm === OWN) state.own = shared?.own ?? "";
   repoint();
-  if (shared?.text !== undefined && state.psalm !== OWN) {
+  // Edits made for another psalm, or another tone, don't belong to this one.
+  if (known && shared.tone === state.tone && shared.text !== undefined) {
     const auto = state.text;
     state.text = clean(shared.text);
     // A half still as the pointer left it stays flagged.
@@ -606,6 +732,7 @@ if (test) {
   (window as Window & { __pointer?: unknown }).__pointer = {
     state,
     visited,
+    player,
     shared: () => decode(location.hash),
   };
 }

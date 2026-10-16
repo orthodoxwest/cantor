@@ -1,8 +1,8 @@
 // Validates every score in content/chants with neuma and writes content/dist/library.json,
-// and checks that every psalm in content/psalter.json sets to a tone without error.
+// and checks that every psalm in content/psalter.json sets to every tone without error.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Chant, init, psalm } from "../vendor/neuma/neuma.mjs";
+import { Chant, init, psalm, toneNames } from "../vendor/neuma/neuma.mjs";
 
 const chantsDir = fileURLToPath(new URL("chants/", import.meta.url));
 const distDir = fileURLToPath(new URL("dist/", import.meta.url));
@@ -42,13 +42,15 @@ for (const file of readdirSync(chantsDir).filter((f) => f.endsWith(".gabc")).sor
 const { psalms } = JSON.parse(readFileSync(new URL("psalter.json", import.meta.url), "utf8"));
 for (const entry of psalms) {
   const text = entry.verses.map((v, i) => `${entry.first + i} ${v}`).join("\n");
-  for (const d of psalm(text, "8.G").diagnostics) {
-    if (d.severity !== "error") continue;
-    failed = true;
-    console.error(`psalter.json psalm ${entry.id}: ${d.code}: ${d.message}`);
+  for (const tone of toneNames()) {
+    for (const d of psalm(text, tone).diagnostics) {
+      if (d.severity !== "error") continue;
+      failed = true;
+      console.error(`psalter.json psalm ${entry.id}, tone ${tone}: ${d.code}: ${d.message}`);
+    }
   }
 }
 if (failed) process.exit(1);
 mkdirSync(distDir, { recursive: true });
 writeFileSync(distDir + "library.json", JSON.stringify(library, null, 2) + "\n");
-console.log(`${library.length} chants -> content/dist/library.json; ${psalms.length} psalms set`);
+console.log(`${library.length} chants -> content/dist/library.json; ${psalms.length} psalms set to every tone`);

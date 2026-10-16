@@ -24,6 +24,10 @@
       <div class="controls" role="group" aria-label="Psalm and tone">
         <label>Psalm <select id="psalm"></select></label>
         <label>Tone <select id="tone"></select></label>
+        <span id="range" class="range">
+          <label>Verses <input id="from" type="number" inputmode="numeric" /></label>
+          <label>to <input id="to" type="number" inputmode="numeric" /></label>
+        </span>
         <label class="check"><input type="checkbox" id="gloria" checked /> Gloria Patri</label>
       </div>
       <label id="own-label" class="own" hidden>
@@ -58,7 +62,7 @@
 
       <div class="toolbar export" role="toolbar" aria-label="Export">
         <span class="label">Export</span>
-        <button id="copy" type="button">Copy text</button>
+        <button id="copy" type="button" title="Copies the pointed verses with their red marks, to paste into Word">Copy for Word</button>
         <button id="download-text" type="button">Text</button>
         <button id="download-gabc" type="button">GABC</button>
         <button id="download-svg" type="button">SVG</button>
