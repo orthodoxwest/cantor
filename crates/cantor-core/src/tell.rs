@@ -60,16 +60,15 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
         (1, _) if which.is_empty() => Some("The cadence went off pitch.".to_string()),
         (1, 0) => Some("The one cadence clearly heard was on pitch.".to_string()),
         (1, _) => Some("The one cadence clearly heard went off pitch.".to_string()),
+        (2, 0) => Some(format!("Both cadences{which} were on pitch.")),
+        (2, 2) => Some(format!("Both cadences{which} went off pitch.")),
         (_, 0) => Some(format!("Every cadence{which} was on pitch.")),
         _ if off == n => Some(format!("Every cadence{which} went off pitch.")),
-        _ => {
-            let (off, n) = if n <= 12 {
-                (capitalise(NUMBERS[off]), NUMBERS[n].to_string())
-            } else {
-                (off.to_string(), n.to_string())
-            };
-            Some(format!("{off} of the {n} cadences{which} went off pitch."))
-        }
+        _ => Some(format!(
+            "{} of the {} cadences{which} went off pitch.",
+            capitalise(&number(off)),
+            number(n)
+        )),
     };
     out.extend(sentence);
     out
@@ -109,10 +108,13 @@ fn steps(cents: f32) -> Option<&'static str> {
     })
 }
 
-/// Numbers in words, to twelve.
-const NUMBERS: [&str; 13] = [
-    "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
-];
+/// `n` in words to twelve, and in figures above.
+fn number(n: usize) -> String {
+    const WORDS: [&str; 13] = [
+        "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+    ];
+    WORDS.get(n).map_or_else(|| n.to_string(), |w| w.to_string())
+}
 
 fn capitalise(word: &str) -> String {
     let mut chars = word.chars();
@@ -209,7 +211,7 @@ mod tests {
     #[test]
     fn a_clean_take_is_told_it_held() {
         assert_eq!(
-            summary(&psalm(), &heard(20.0, &[Some(30.0), Some(-60.0)])),
+            summary(&psalm(), &heard(20.0, &[Some(30.0), Some(-60.0), Some(5.0)])),
             ["Your reciting tone held steady.", "Every cadence was on pitch."]
         );
         // A chant not recited holds its pitch.
@@ -237,11 +239,13 @@ mod tests {
             told(&[Some(20.0), Some(-120.0), Some(10.0)]),
             "One of the three cadences went off pitch."
         );
-        assert_eq!(told(&[Some(120.0), Some(-300.0)]), "Every cadence went off pitch.");
+        assert_eq!(told(&[Some(120.0), Some(-300.0)]), "Both cadences went off pitch.");
+        assert_eq!(told(&[Some(120.0), Some(-300.0), Some(400.0)]), "Every cadence went off pitch.");
         assert_eq!(told(&[Some(20.0)]), "The cadence was on pitch.");
         assert_eq!(told(&[Some(-101.0)]), "The cadence went off pitch.");
         let many: Vec<Option<f32>> = (0..14).map(|i| Some(if i < 2 { 150.0 } else { 0.0 })).collect();
-        assert_eq!(told(&many), "2 of the 14 cadences went off pitch.");
+        assert_eq!(told(&many), "Two of the 14 cadences went off pitch.");
+        assert_eq!(told(&[Some(0.0), Some(20.0)]), "Both cadences were on pitch.");
     }
 
     #[test]
@@ -249,12 +253,12 @@ mod tests {
         let notes = psalm();
         let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences)).get(1).cloned();
         assert_eq!(
-            told(&[Some(20.0), None, Some(10.0)]).unwrap(),
+            told(&[Some(20.0), None, Some(10.0), Some(0.0)]).unwrap(),
             "Every cadence clearly heard was on pitch."
         );
         assert_eq!(
             told(&[Some(200.0), None, Some(-150.0)]).unwrap(),
-            "Every cadence clearly heard went off pitch."
+            "Both cadences clearly heard went off pitch."
         );
         assert_eq!(
             told(&[Some(200.0), None, Some(15.0)]).unwrap(),

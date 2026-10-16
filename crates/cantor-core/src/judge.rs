@@ -97,14 +97,14 @@ pub struct Cadence {
     pub first: usize,
     pub last: usize,
     /// Its note furthest from the key and the drift, in cents, of the notes at least
-    /// [`HEARD_MIN_S`] long; none unless each of them was heard with frames that agree, as a
-    /// marked note's must.
+    /// [`HEARD_MIN_S`] long heard with frames that agree, as a marked note's must. None when
+    /// none was, or when one was not and none of the others is off pitch: it could have been.
     pub cents: Option<f32>,
 }
 
 impl Cadence {
-    /// Whether it was sung on pitch: every note heard within [`CADENCE_CENTS`]. None when
-    /// none was heard.
+    /// Whether it was sung on pitch: every note within [`CADENCE_CENTS`]. None when it was
+    /// not judged.
     pub fn on_pitch(&self) -> Option<bool> {
         self.cents.map(|c| c.abs() < CADENCE_CENTS)
     }
@@ -127,7 +127,7 @@ pub struct Verdict {
     pub relative: Vec<Option<f32>>,
     /// How many notes were heard in tune and not under a mark.
     pub in_tune: usize,
-    /// Each phrase's cadence, when heard.
+    /// Each phrase's cadence.
     #[serde(default)]
     pub cadences: Vec<Cadence>,
 }
@@ -208,15 +208,11 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         .map(|(first, last)| Cadence {
             first,
             last,
-            // A note not clearly heard could be the one off: then the cadence is not judged.
-            cents: (first..=last)
-                .filter(|&i| notes[i].dur_s >= HEARD_MIN_S)
-                .map(|i| relative[i].filter(|_| agreed(&results[i])))
-                .try_fold(None::<f32>, |worst, rel| {
-                    let rel = rel?;
-                    Some(Some(worst.map_or(rel, |w| if rel.abs() > w.abs() { rel } else { w })))
-                })
-                .flatten(),
+            cents: cadence_cents(
+                (first..=last)
+                    .filter(|&i| notes[i].dur_s >= HEARD_MIN_S)
+                    .map(|i| relative[i].filter(|_| agreed(&results[i]))),
+            ),
         })
         .collect();
     Verdict {
@@ -236,12 +232,14 @@ pub fn recited(notes: &[Note]) -> bool {
     !notes.is_empty() && notes.iter().filter(|n| n.recitation).count() as f32 >= RECITED_SHARE * notes.len() as f32
 }
 
-/// Each phrase's cadence, as the notes `first..=last`. In a recited chant it runs from after
-/// the last two notes in a row on the reciting tone (the pitch most recited notes are on)
-/// before the phrase's last note off the tone, to its end: a psalm tone's mediant or
-/// termination. A phrase that never leaves the tone has none, and one that never holds it
-/// two notes running has its last [`CADENCE_NOTES`] and its last note off the tone. In a chant
-/// not recited it is each phrase's last [`CADENCE_NOTES`].
+/// Each phrase's cadence, as the notes `first..=last`. In a recited chant it runs to the
+/// phrase's end from after its last recited note before its last note off the reciting tone
+/// (the pitch most recited notes are on), or, with no recited note there, after the last two
+/// notes in a row on the tone: a psalm tone's mediant or termination, accent and all. A phrase
+/// that never leaves the tone has none; one that neither recites nor holds the tone before
+/// leaving it runs from its first note off the tone after its first note, or has none when it
+/// comes back to the tone for longer at its end. In a chant not recited it is each phrase's
+/// last [`CADENCE_NOTES`].
 pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
     let pitch = |n: &Note| (n.midi * 100.0).round() as i32;
     let tenor = recited(notes)
@@ -262,13 +260,16 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
         }
         let ends = (last + 1).saturating_sub(CADENCE_NOTES).max(first);
         let from = match tenor {
-            // The cadence reaches back from the phrase's last note off the tone to the last
-            // two on it before that; a phrase that never leaves the tone has none.
-            Some(t) => (first..=last).rev().find(|&i| pitch(&notes[i]) != t).map(|off| {
-                (first + 1..off)
-                    .rev()
-                    .find(|&i| pitch(&notes[i]) == t && pitch(&notes[i - 1]) == t)
-                    .map_or(ends.min(off), |i| i + 1)
+            // The cadence reaches back from the phrase's last note off the tone to its last
+            // recited note before that, else to the last two on the tone. A phrase that never
+            // leaves the tone, or comes back to it for good, has none.
+            Some(t) => (first..=last).rev().find(|&i| pitch(&notes[i]) != t).and_then(|off| {
+                let recited = (first..off).rev().find(|&i| notes[i].recitation);
+                let held = || (first + 1..off).rev().find(|&i| pitch(&notes[i]) == t && pitch(&notes[i - 1]) == t);
+                match recited.or_else(held) {
+                    Some(i) => Some(i + 1),
+                    None => (last - off < CADENCE_NOTES).then(|| (first + 1..=off).find(|&i| pitch(&notes[i]) != t).unwrap_or(off)),
+                }
             }),
             None => Some(ends),
         };
@@ -278,6 +279,15 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
         first = last + 1;
     }
     out
+}
+
+/// A cadence's note furthest from the line, of its notes' errors when clearly heard. A note
+/// clearly heard off pitch puts it off whatever else was heard; otherwise a note not clearly
+/// heard could be the one off, and it is not judged.
+fn cadence_cents(errors: impl Iterator<Item = Option<f32>>) -> Option<f32> {
+    let errors: Vec<Option<f32>> = errors.collect();
+    let worst = errors.iter().flatten().copied().max_by(|a, b| a.abs().total_cmp(&b.abs()))?;
+    (worst.abs() >= CADENCE_CENTS || errors.iter().all(Option::is_some)).then_some(worst)
 }
 
 /// Whether a note's frames agree on its pitch: enough of them, close together.
@@ -655,6 +665,19 @@ mod tests {
     }
 
     #[test]
+    fn a_cadence_keeps_its_accent_when_it_passes_the_tone() {
+        // Tone VII's mediant leaves the tenor (i) for its accent and passes it twice on the way
+        // down: "fróm my wíck-ed-ness" is all cadence. A first half-verse that comes back to the
+        // tenor after its intonation has none.
+        let notes = crate::notes_from_gabc(
+            "(c3) Wash(i) me(i) through(i)ly(i) fróm(k) my(j) wíck(i)ed(i)ness,(j) *(:) and(i) cléanse(j) me(i) fróm(h) my(g) sin.(g) (::) \
+             O(g) praise(h) the(i) Lord(i) all(i) ye(i) hea(i)then(i) *(:) praise(i) him(i) all(i) ye(i) na(h)tions.(g) (::)",
+            0.5,
+        );
+        assert_eq!(cadences(&notes), [(4, 8), (10, 14), (27, 28)]);
+    }
+
+    #[test]
     fn a_chant_not_recited_ends_each_phrase_in_two_notes() {
         let notes = crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5);
         assert!(!recited(&notes));
@@ -679,7 +702,12 @@ mod tests {
         assert!(v.marks.is_empty(), "{:?}", v.marks);
         let on: Vec<Option<bool>> = v.cadences.iter().map(Cadence::on_pitch).collect();
         assert_eq!(on, [Some(false), Some(true), Some(true)]);
-        // A cadence with a note whose frames disagree is not judged, nor one not heard.
+        // A note clearly heard off puts its cadence off, whatever trailed away after it.
+        let mut trailing = cents.clone();
+        trailing[12] = Some(200.0);
+        trailing[13] = None;
+        assert_eq!(judge(&notes, &report(&trailing)).cadences[1].on_pitch(), Some(false));
+        // Otherwise a cadence with a note whose frames disagree is not judged, nor one not heard.
         let mut disagreeing = report(&cents);
         disagreeing.notes[12].spread_cents = Some(200.0);
         assert_eq!(judge(&notes, &disagreeing).cadences[1].on_pitch(), None);

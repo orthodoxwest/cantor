@@ -63,9 +63,11 @@ const CLEAR_CENTS: f32 = 100.0;
 const VERSE_DESERVED: f32 = 0.8;
 /// A note heard in tune that was planted this far off is a false "in tune".
 const OFF_CENTS: f32 = 100.0;
-/// A cadence called off pitch is wrong when every note of it was planted within this...
+/// A cadence called off pitch is wrong when every note of it was planted within this; one
+/// with a note planted at least [`FLAGRANT_CENTS`] off must be called off.
 const CADENCE_CLEAR_CENTS: f32 = 50.0;
-/// ...and one called on pitch is wrong when a note of it was planted at least [`FLAGRANT_CENTS`] off.
+/// The share of a good take's cadences the judge must rule on.
+const CADENCE_JUDGED_FLOOR: f32 = 0.8;
 /// A planted drift at least this large must be named, and one at most `STEADY_DRIFT` must not.
 const UNSTEADY_DRIFT: f32 = 90.0;
 const STEADY_DRIFT: f32 = 40.0;
@@ -176,19 +178,19 @@ fn summary_wrong(v: &Verdict, planted_drift: f32) -> bool {
     (planted_drift.abs() >= UNSTEADY_DRIFT && v.steady) || (planted_drift.abs() <= STEADY_DRIFT && !v.steady)
 }
 
-/// Whether a cadence's pitch disagrees with what was planted: called off when every note of it
-/// that counts was planted within [`CADENCE_CLEAR_CENTS`], or on when one was planted at least
-/// [`FLAGRANT_CENTS`] off. In between it may be either.
-fn cadence_wrong(c: &Cadence, notes: &[Note], planted: &[Planted]) -> bool {
+/// What was planted on a cadence: whether a note of it that counts was planted at least
+/// [`FLAGRANT_CENTS`] off (it must be called off), or every one within
+/// [`CADENCE_CLEAR_CENTS`] (it must not be). The spans are the judge's; what is planted on
+/// them is the suite's.
+fn cadence_planted(c: &Cadence, notes: &[Note], planted: &[Planted]) -> (bool, bool) {
     let counted: Vec<f32> = (c.first..=c.last)
-        .filter(|&i| !planted[i].silent && notes[i].dur_s >= cantor_core::judge::HEARD_MIN_S)
+        .filter(|&i| !planted[i].silent && notes[i].dur_s >= COUNTED_MIN_S)
         .map(|i| fold(planted[i].cents).abs())
         .collect();
-    match c.on_pitch() {
-        Some(false) => !counted.is_empty() && counted.iter().all(|&p| p < CADENCE_CLEAR_CENTS),
-        Some(true) => counted.iter().any(|&p| p >= FLAGRANT_CENTS),
-        None => false,
-    }
+    (
+        counted.iter().any(|&p| p >= FLAGRANT_CENTS),
+        !counted.is_empty() && counted.iter().all(|&p| p < CADENCE_CLEAR_CENTS),
+    )
 }
 
 /// How the oracle's per-note pitch compares with the scorer's. It is never gated: it says
@@ -204,8 +206,8 @@ struct OracleStats {
     /// The oracle's mean distance from the truth over the notes it heard, where the truth
     /// is known (synthetic takes).
     tracking_cents: Option<f32>,
-    /// The judge's summaries and key on the oracle's labels, counted as for the scorer's; the
-    /// key only where the truth is known.
+    /// The judge's steadiness and key on the oracle's labels, counted as for the scorer's;
+    /// the key only where the truth is known.
     summary_errors: u32,
     key_error_cents: Option<f32>,
 }
@@ -282,8 +284,15 @@ struct Metrics {
     key_error_cents: f32,
     /// Takes whose steadiness disagrees with the drift planted.
     summary_errors: u32,
+    /// Cadences, and those the judge ruled on.
+    cadences: u32,
+    cadences_judged: u32,
     /// Cadences called off pitch that were planted on it, or on pitch that were planted off.
     cadence_errors: u32,
+    /// Cadences with a note planted flagrantly off, and the fraction of them called off (1
+    /// when there were none).
+    cadence_faults: u32,
+    cadence_recall: f32,
     /// Takes given an outcome instead of a judgement.
     unjudged: u32,
     /// Notes heard in tune, over all takes.
@@ -303,7 +312,7 @@ impl Metrics {
         let ratio = |a: usize, b: usize| if b == 0 { 0.0 } else { a as f32 / b as f32 };
         let (mut counted, mut heard, mut masked, mut all, mut all_heard) = (0, 0, 0, 0, 0);
         let (mut errors, mut gross, mut tracked) = (0.0f32, 0usize, 0usize);
-        let mut caught = 0u32;
+        let (mut caught, mut cadences_caught) = (0u32, 0u32);
         let (mut both, mut agreed) = (0usize, 0usize);
         for take in takes {
             for f in &take.frames {
@@ -355,7 +364,18 @@ impl Metrics {
             }
             if v.outcome == Outcome::Heard {
                 m.summary_errors += u32::from(summary_wrong(v, take.planted_drift));
-                m.cadence_errors += v.cadences.iter().filter(|c| cadence_wrong(c, &take.notes, &take.planted)).count() as u32;
+                for c in &v.cadences {
+                    let (off, clear) = cadence_planted(c, &take.notes, &take.planted);
+                    m.cadences += 1;
+                    m.cadences_judged += u32::from(c.on_pitch().is_some());
+                    m.cadence_errors += u32::from(match c.on_pitch() {
+                        Some(true) => off,
+                        Some(false) => clear,
+                        None => false,
+                    });
+                    m.cadence_faults += u32::from(off);
+                    cadences_caught += u32::from(off && c.on_pitch() == Some(false));
+                }
                 if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
                     m.key_error_cents = m.key_error_cents.max(fold(k - t).abs());
                 }
@@ -370,6 +390,11 @@ impl Metrics {
         m.tracking_cents = if tracked == 0 { 0.0 } else { errors / tracked as f32 };
         m.gross_error_rate = ratio(gross, tracked);
         m.recall = if m.faults == 0 { 1.0 } else { caught as f32 / m.faults as f32 };
+        m.cadence_recall = if m.cadence_faults == 0 {
+            1.0
+        } else {
+            cadences_caught as f32 / m.cadence_faults as f32
+        };
         m.agreement = (both > 0).then(|| agreed as f32 / both as f32);
         m
     }
@@ -402,6 +427,10 @@ impl Metrics {
                 need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
                 need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
                 need(self.cadence_errors == 0, format!("{} cadences told wrong", self.cadence_errors));
+                need(
+                    self.cadences_judged as f32 >= CADENCE_JUDGED_FLOOR * self.cadences as f32,
+                    format!("{} of {} cadences judged", self.cadences_judged, self.cadences),
+                );
             }
             Gate::Student | Gate::Wrong => {
                 need(self.recall >= RECALL_FLOOR, format!("recall {:.3} < {RECALL_FLOOR}", self.recall));
@@ -414,6 +443,10 @@ impl Metrics {
                 need(self.unjudged == 0, format!("{} takes not judged", self.unjudged));
                 need(self.summary_errors == 0, format!("{} wrong summaries", self.summary_errors));
                 need(self.cadence_errors == 0, format!("{} cadences told wrong", self.cadence_errors));
+                need(
+                    self.cadence_recall >= RECALL_FLOOR,
+                    format!("cadence recall {:.3} < {RECALL_FLOOR}", self.cadence_recall),
+                );
             }
             Gate::Silent => {
                 need(
@@ -478,6 +511,20 @@ impl Metrics {
             self.summary_errors as f32,
             base.summary_errors as f32,
             self.summary_errors > base.summary_errors,
+        );
+        let judged = |m: &Metrics| {
+            if m.cadences == 0 {
+                1.0
+            } else {
+                m.cadences_judged as f32 / m.cadences as f32
+            }
+        };
+        check("cadences_judged", judged(self), judged(base), judged(self) < judged(base) - 0.02);
+        check(
+            "cadence_recall",
+            self.cadence_recall,
+            base.cadence_recall,
+            self.cadence_recall < base.cadence_recall - 0.02,
         );
         check(
             "cadence_errors",
