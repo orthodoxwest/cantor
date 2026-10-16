@@ -44,6 +44,9 @@ pub struct Frame {
     /// The frame was below the loudness floor: evidence of silence, not just of no pitch.
     #[serde(default)]
     pub quiet: bool,
+    /// A second tracker's pitch at this frame, when one listened (see [`crate::listen`]).
+    #[serde(default)]
+    pub other: Option<f32>,
 }
 
 /// What [`detect`] hears in one frame.
@@ -80,6 +83,7 @@ pub fn track_with(samples: &[f32], sample_rate: f32, frame: usize, hop: usize, m
             rms: d.rms,
             masked: false,
             quiet: d.rms < min_rms,
+            other: None,
         });
         start += hop;
     }

@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+mod ear;
 mod eval;
 mod explain;
 mod wav;
@@ -11,18 +12,22 @@ mod wav;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use cantor_core::{Profile, Voice, listen, notes_from_gabc, part_from_gabc, render, voice};
+use cantor_core::{Profile, Voice, notes_from_gabc, part_from_gabc, render, voice};
+
+use crate::ear::Ear;
 
 /// The sample rate synthetic takes are rendered and tracked at.
 const SAMPLE_RATE: f32 = 16_000.0;
 
-const USAGE: &str = "usage: cantor pitch FILE.wav
+const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
        cantor sing CHANT.gabc [--voice VOICE.cvox] --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
        cantor diction CHANT.gabc
-       cantor eval [--takes DIR] [--write-baseline]
-       cantor explain SUITE [--takes DIR]
-       cantor version";
+       cantor eval [--takes DIR] [--write-baseline] [--nsdf-only]
+       cantor explain SUITE [--takes DIR] [--nsdf-only]
+       cantor version
+
+Listening uses the NSDF tracker with SwiftF0's opinion beside it; --nsdf-only drops SwiftF0.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,10 +58,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 
 /// Tracks a WAV file and prints one JSON frame per line.
 fn pitch_cmd(args: &[String]) -> Result<(), String> {
-    let [file] = args else { return Err(USAGE.into()) };
+    let (nsdf_only, args) = nsdf_only(args);
+    let [file] = &args[..] else { return Err(USAGE.into()) };
     let (samples, rate) = wav::read_mono(Path::new(file))?;
     let mut out = String::new();
-    for frame in listen(&samples, rate, None) {
+    for frame in Ear::new(nsdf_only)?.listen(&samples, rate, None)? {
         out.push_str(&serde_json::to_string(&frame).map_err(|e| e.to_string())?);
         out.push('\n');
     }
@@ -179,6 +185,7 @@ fn diction_cmd(args: &[String]) -> Result<(), String> {
 }
 
 fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
+    let (nsdf_only, args) = nsdf_only(args);
     let mut write_baseline = false;
     let mut takes = None;
     let mut it = args.iter();
@@ -189,12 +196,13 @@ fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
         }
     }
-    eval::run(&repo_root(), takes.as_deref(), write_baseline, None)
+    eval::run(&repo_root(), &Ear::new(nsdf_only)?, takes.as_deref(), write_baseline, None)
 }
 
 /// Draws every take of one suite (`real-takes` for the takes given with `--takes`) under
-/// `out/explain/`, printing the files' paths.
+/// `out/explain/` (`out/explain-nsdf/` with `--nsdf-only`), printing the files' paths.
 fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
+    let (nsdf_only, args) = nsdf_only(args);
     let mut suite = None;
     let mut takes = None;
     let mut it = args.iter();
@@ -206,7 +214,13 @@ fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let suite = suite.ok_or_else(|| USAGE.to_string())?;
-    eval::run(&repo_root(), takes.as_deref(), false, Some(&suite))
+    eval::run(&repo_root(), &Ear::new(nsdf_only)?, takes.as_deref(), false, Some(&suite))
+}
+
+/// Whether `--nsdf-only` is among `args`, and the other arguments.
+fn nsdf_only(args: &[String]) -> (bool, Vec<String>) {
+    let rest: Vec<String> = args.iter().filter(|a| *a != "--nsdf-only").cloned().collect();
+    (rest.len() < args.len(), rest)
 }
 
 /// The repository root: the current directory when it holds the suites, else the checkout

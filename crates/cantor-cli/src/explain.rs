@@ -1,7 +1,9 @@
 //! One picture of a judged take: the notes the chant asks for in the singer's key, the pitch
 //! heard, the truth where it is known (a synthetic take's planted pitch), and the marks. A
 //! trace that leaves its bar where the truth stays on it is the tracker's error; a mark where
-//! the truth is on the bar is a false mark.
+//! the truth is on the bar is a false mark. SwiftF0's pitch, where it listened, is drawn in
+//! violet under the heard pitch: violet alone is a frame only SwiftF0 voiced (or one under the
+//! take's loudness floor), and violet away from blue is the two trackers disagreeing.
 
 use std::fmt::Write;
 
@@ -130,12 +132,19 @@ pub fn svg(p: &Picture) -> String {
             );
             continue;
         }
-        let Some(m) = f.midi else { continue };
         let Some(n) = p.notes.get(note) else { continue };
         let target = n.midi + key;
-        let shown = target + cantor_core::score::fold((m - target) * 100.0) / 100.0;
-        if (lo..=hi).contains(&shown) {
-            let _ = writeln!(s, r##"<circle cx="{:.1}" cy="{:.1}" r="1.8" fill="#2a5db0"/>"##, x(f.t), y(shown));
+        let shown = |m: f32| target + cantor_core::score::fold((m - target) * 100.0) / 100.0;
+        if let Some(o) = f.other.map(shown).filter(|o| (lo..=hi).contains(o)) {
+            let _ = writeln!(
+                s,
+                r##"<circle cx="{:.1}" cy="{:.1}" r="2.6" fill="none" stroke="#9b59b6" stroke-width="0.8"/>"##,
+                x(f.t),
+                y(o)
+            );
+        }
+        if let Some(m) = f.midi.map(shown).filter(|m| (lo..=hi).contains(m)) {
+            let _ = writeln!(s, r##"<circle cx="{:.1}" cy="{:.1}" r="1.8" fill="#2a5db0"/>"##, x(f.t), y(m));
         }
     }
 
@@ -153,12 +162,12 @@ pub fn svg(p: &Picture) -> String {
         s,
         r##"<text x="{LEFT}" y="20" font-size="15" font-weight="600" fill="#2b2925">{}</text>
 <text x="{LEFT}" y="38" fill="#5c574f">{}</text>
-<g transform="translate({} 14)" fill="#5c574f"><rect width="14" height="6" y="2" fill="#b9b2a5"/><text x="18" y="9">notes</text><circle cx="66" cy="5" r="2.5" fill="#2a5db0"/><text x="72" y="9">heard</text><line x1="116" x2="132" y1="5" y2="5" stroke="#2f8f5b" stroke-width="2" stroke-dasharray="4 3"/><text x="136" y="9">truth</text><rect x="176" width="4" height="8" fill="#e39b2d"/><text x="184" y="9">masked</text><rect x="234" width="12" height="9" fill="#d64545" fill-opacity="0.25" stroke="#d64545"/><text x="250" y="9">mark</text></g>
+<g transform="translate({} 14)" fill="#5c574f"><rect width="14" height="6" y="2" fill="#b9b2a5"/><text x="18" y="9">notes</text><circle cx="66" cy="5" r="2.5" fill="#2a5db0"/><text x="72" y="9">heard</text><line x1="116" x2="132" y1="5" y2="5" stroke="#2f8f5b" stroke-width="2" stroke-dasharray="4 3"/><text x="136" y="9">truth</text><rect x="176" width="4" height="8" fill="#e39b2d"/><text x="184" y="9">masked</text><rect x="234" width="12" height="9" fill="#d64545" fill-opacity="0.25" stroke="#d64545"/><text x="250" y="9">mark</text><circle cx="298" cy="5" r="3" fill="none" stroke="#9b59b6"/><text x="305" y="9">SwiftF0</text></g>
 </svg>
 "##,
         escape(p.title),
         escape(&summary),
-        WIDTH - 300.0
+        WIDTH - 370.0
     );
     s
 }

@@ -1,11 +1,12 @@
 //! `cantor eval`: the listening gates. Every suite in `evals/suites/` is synthesized,
 //! listened to, scored and judged, and checked two ways: against its gate (what the take
-//! must and must not be told) and against `evals/baseline.json` (no metric may get worse
+//! must and must not be told) and against `evals/baseline.json`, or with `--nsdf-only`
+//! `evals/baseline-nsdf.json` (no metric may get worse
 //! past its tolerance, and the faults and takes counted must not change). Real takes from a
 //! directory given with `--takes` are held to the expert gate; they have no guide and no
 //! planted truth, so their tracking error is measured from the judge's own key. The scorecard
-//! is printed and written to `out/eval.json` and `out/eval.md`, and every take is drawn in
-//! `out/explain/`.
+//! is printed and written to `out/eval.json` and `out/eval.md` (`eval-nsdf.*` with
+//! `--nsdf-only`), and every take is drawn in `out/explain/` (`explain-nsdf/`).
 //!
 //! What counts as a fault, and how long a note must be to count, are this file's own
 //! constants, written from the specification, not read from the judge: tuning the judge
@@ -24,16 +25,17 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cantor_core::score::fold;
 use cantor_core::synth::cue_span;
-use cantor_core::{
-    Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, listen, notes_from_gabc, render_take, score,
-};
+use cantor_core::{Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::SAMPLE_RATE;
+use crate::ear::Ear;
 use crate::explain;
 
 /// A fault a mark must catch: a note this many cents off...
@@ -61,6 +63,8 @@ const ALL_HEARD_FLOOR: f32 = 0.9;
 const RECALL_FLOOR: f32 = 0.95;
 const KEY_TOLERANCE: f32 = 50.0;
 const SILENT_CEILING: f32 = 0.01;
+/// Two trackers agree on a frame within this many cents, octaves aside.
+const AGREEMENT_CENTS: f32 = 50.0;
 /// The name real takes are reported under.
 const REAL: &str = "real-takes";
 
@@ -169,6 +173,9 @@ struct Metrics {
     unjudged: u32,
     /// Notes heard in tune, over all takes.
     in_tune: u32,
+    /// Of the frames the NSDF tracker found clear and SwiftF0 also voiced, the fraction
+    /// within [`AGREEMENT_CENTS`] of each other, octaves aside; none when SwiftF0 did not listen.
+    agreement: Option<f32>,
 }
 
 impl Metrics {
@@ -182,7 +189,16 @@ impl Metrics {
         let (mut counted, mut heard, mut masked, mut all, mut all_heard) = (0, 0, 0, 0, 0);
         let (mut errors, mut gross, mut tracked) = (0.0f32, 0usize, 0usize);
         let mut caught = 0u32;
+        let (mut both, mut agreed) = (0usize, 0usize);
         for take in takes {
+            for f in &take.frames {
+                if let (Some(m), Some(o)) = (f.midi, f.other)
+                    && f.clarity >= cantor_core::pitch::DEFAULT_MIN_CLARITY
+                {
+                    both += 1;
+                    agreed += usize::from(fold((m - o) * 100.0).abs() <= AGREEMENT_CENTS);
+                }
+            }
             let v = &take.verdict;
             let (mut take_counted, mut take_heard) = (0, 0);
             for (i, note) in take.notes.iter().enumerate() {
@@ -240,6 +256,7 @@ impl Metrics {
         m.tracking_cents = if tracked == 0 { 0.0 } else { errors / tracked as f32 };
         m.gross_error_rate = ratio(gross, tracked);
         m.recall = if m.faults == 0 { 1.0 } else { caught as f32 / m.faults as f32 };
+        m.agreement = (both > 0).then(|| agreed as f32 / both as f32);
         m
     }
 
@@ -337,6 +354,21 @@ impl Metrics {
             self.gross_error_rate > base.gross_error_rate + 0.02,
         );
         check("recall", self.recall, base.recall, self.recall < base.recall - 0.02);
+        if let (Some(now), Some(was)) = (self.agreement, base.agreement) {
+            check("agreement", now, was, now < was - 0.02);
+        }
+        check(
+            "summary_errors",
+            self.summary_errors as f32,
+            base.summary_errors as f32,
+            self.summary_errors > base.summary_errors,
+        );
+        check(
+            "key_error_cents",
+            self.key_error_cents,
+            base.key_error_cents,
+            self.key_error_cents > base.key_error_cents + 10.0,
+        );
         check(
             "false_marks",
             self.false_marks as f32,
@@ -346,6 +378,10 @@ impl Metrics {
         // What is counted is fixed by the suites: a change means the test moved, not the listener.
         check("faults", self.faults as f32, base.faults as f32, self.faults != base.faults);
         check("takes", self.takes as f32, base.takes as f32, self.takes != base.takes);
+        // SwiftF0 going deaf on a suite would otherwise drop its agreement from the gate.
+        if let (None, Some(was)) = (self.agreement, base.agreement) {
+            out.push(format!("agreement {was:.3} -> none: SwiftF0 compared no frames"));
+        }
         out
     }
 }
@@ -409,22 +445,19 @@ struct TakeOutput<'a> {
 }
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes.
-pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Option<&str>) -> Result<ExitCode, String> {
+pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: bool, only: Option<&str>) -> Result<ExitCode, String> {
     let mut suites: Vec<(String, Gate, Vec<Judged>)> = Vec::new();
     for suite in load_suites(&root.join("evals/suites"))? {
         if only.is_some_and(|o| o != suite.name) {
             continue;
         }
-        let judged = suite
-            .takes
-            .iter()
-            .enumerate()
-            .map(|(i, t)| run_take(root, t, format!("{} {i}", suite.name)))
+        let judged = in_parallel(&suite.takes, |i, t| run_take(root, ear, t, format!("{} {i}", suite.name)))
+            .into_iter()
             .collect::<Result<_, _>>()?;
         suites.push((suite.name, suite.gate, judged));
     }
     if let Some(dir) = takes_dir.filter(|_| only.is_none_or(|o| o == REAL)) {
-        let judged = load_real_takes(dir)?;
+        let judged = load_real_takes(ear, dir)?;
         if judged.is_empty() {
             return Err(format!("{}: no takes", dir.display()));
         }
@@ -434,8 +467,10 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
         return Err(format!("no suite named {}", only.unwrap_or("")));
     }
 
+    // The NSDF tracker alone, as the browser listens, is held to a baseline of its own.
+    let tag = if ear.nsdf_only() { "-nsdf" } else { "" };
     let out_dir = root.join("out");
-    let explain_dir = out_dir.join("explain");
+    let explain_dir = out_dir.join(format!("explain{tag}"));
     std::fs::create_dir_all(&explain_dir).map_err(|e| format!("{}: {e}", explain_dir.display()))?;
     for (_, _, judged) in &suites {
         for j in judged {
@@ -457,18 +492,18 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
         return Ok(ExitCode::SUCCESS);
     }
 
-    let baseline_path = root.join("evals/baseline.json");
+    let baseline_path = root.join(format!("evals/baseline{tag}.json"));
     let baseline: BTreeMap<String, Metrics> = match std::fs::read_to_string(&baseline_path) {
         Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", baseline_path.display()))?,
         Err(_) => BTreeMap::new(),
     };
 
     println!(
-        "{:<22} {:<8} {:>5} {:>6} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>5}  result",
-        "suite", "gate", "takes", "heard", "all", "masked", "|cents|", "gross", "faults", "recall", "false"
+        "{:<22} {:<8} {:>5} {:>6} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>5} {:>6}  result",
+        "suite", "gate", "takes", "heard", "all", "masked", "|cents|", "gross", "faults", "recall", "false", "agree"
     );
     let mut md = String::from(
-        "| suite | gate | takes | heard | all heard | masked | \\|cents\\| | gross | faults | recall | false marks | result |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n",
+        "| suite | gate | takes | heard | all heard | masked | \\|cents\\| | gross | faults | recall | false marks | trackers agree | result |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n",
     );
     let mut scorecard = BTreeMap::new();
     let mut outputs = Vec::new();
@@ -487,13 +522,14 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
             scorecard.insert(name.clone(), metrics);
         }
         let failures: Vec<String> = gated.iter().chain(&moved).cloned().collect();
+        let agreement = metrics.agreement.map_or("-".to_string(), |a| format!("{a:.3}"));
         let result = if failures.is_empty() {
             "pass".to_string()
         } else {
             format!("FAIL: {}", failures.join("; "))
         };
         println!(
-            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5}  {result}",
+            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5} {:>6}  {result}",
             name,
             gate.name(),
             metrics.takes,
@@ -505,9 +541,10 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
             metrics.faults,
             metrics.recall,
             metrics.false_marks,
+            agreement,
         );
         md.push_str(&format!(
-            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {result} |\n",
+            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {} | {result} |\n",
             gate.name(),
             metrics.takes,
             metrics.heard_fraction,
@@ -518,6 +555,7 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
             metrics.faults,
             metrics.recall,
             metrics.false_marks,
+            agreement,
         ));
         gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
@@ -541,8 +579,8 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
         baseline_failures.push(format!("{name}: in the baseline but not in evals/suites"));
     }
 
-    write_json(&out_dir.join("eval.json"), &outputs)?;
-    std::fs::write(out_dir.join("eval.md"), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+    write_json(&out_dir.join(format!("eval{tag}.json")), &outputs)?;
+    std::fs::write(out_dir.join(format!("eval{tag}.md")), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
     if write_baseline {
         if !gate_failures.is_empty() {
             for f in &gate_failures {
@@ -566,7 +604,31 @@ pub fn run(root: &Path, takes_dir: Option<&Path>, write_baseline: bool, only: Op
     })
 }
 
-fn run_take(root: &Path, spec: &TakeSpec, name: String) -> Result<Judged, String> {
+/// `f` over `items` on every core, the results in order. Each take is judged on its own, so
+/// the order they run in changes nothing.
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(usize, &T) -> R + Sync) -> Vec<R> {
+    let next = AtomicUsize::new(0);
+    let results: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(items.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    let r = f(i, item);
+                    *results[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                }
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|r| r.into_inner().unwrap_or_else(|e| e.into_inner()).expect("every item ran"))
+        .collect()
+}
+
+fn run_take(root: &Path, ear: &Ear, spec: &TakeSpec, name: String) -> Result<Judged, String> {
     let path = root.join(&spec.gabc);
     let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
@@ -580,7 +642,7 @@ fn run_take(root: &Path, spec: &TakeSpec, name: String) -> Result<Judged, String
         samples,
         alone: cue_span(&notes).unwrap_or((0.0, 0.0)),
     });
-    let frames = listen(&take.samples, SAMPLE_RATE, guide);
+    let frames = ear.listen(&take.samples, SAMPLE_RATE, guide)?;
     let report = score(&notes, &frames);
     let verdict = judge(&notes, &report);
     let planted = profile.planted(&notes);
@@ -610,7 +672,7 @@ fn run_take(root: &Path, spec: &TakeSpec, name: String) -> Result<Judged, String
     })
 }
 
-fn load_real_takes(dir: &Path) -> Result<Vec<Judged>, String> {
+fn load_real_takes(ear: &Ear, dir: &Path) -> Result<Vec<Judged>, String> {
     let mut out = Vec::new();
     for path in json_files(dir)? {
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -630,7 +692,7 @@ fn load_real_takes(dir: &Path) -> Result<Vec<Judged>, String> {
             n.dur_s = end - start;
         }
         let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
-        let frames = listen(&samples, rate, None);
+        let frames = ear.listen(&samples, rate, None)?;
         let report = score(&notes, &frames);
         let verdict = judge(&notes, &report);
         let len = notes.len();

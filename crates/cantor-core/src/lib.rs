@@ -20,7 +20,7 @@ pub mod voice;
 
 pub use diction::{Language, Lyric, Sung, Vowel};
 pub use judge::{Mark, MarkKind, Outcome, Verdict, judge};
-pub use listen::{Guide, listen};
+pub use listen::{Guide, Track, listen, listen_with};
 pub use pitch::{Frame, track};
 pub use score::{NoteResult, Report, score};
 pub use synth::{Note, Planted, Profile, Take, render, render_take};
