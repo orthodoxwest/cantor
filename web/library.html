@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Library · Cantor</title>
+    <meta name="description" content="English plainchant to read, hear sung and practise: search by the words or browse by kind." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" />
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/library.css" />
+  </head>
+  <body>
+    <header class="beam">
+      <div class="beam-in">
+        <a class="brand" href="/"><span class="cross" aria-hidden="true">✠</span>Cantor</a>
+        <nav aria-label="Pages">
+          <a href="/">Psalms</a>
+          <a href="/library" aria-current="page">Library</a>
+          <a href="/sing">Practice</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="browse">
+        <p class="titulus">Library</p>
+        <h1 class="title">English plainchant</h1>
+        <p class="lede">Search by the English words or the Latin name, or browse by kind. Open a piece to hear it sung, then practise it yourself.</p>
+        <div class="desk">
+          <label class="search">
+            <span class="sr">Search the words</span>
+            <input type="search" id="q" placeholder="Search the words" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+          </label>
+          <div class="kinds" id="kinds" role="group" aria-label="Kind"></div>
+        </div>
+        <p class="count" id="count" role="status" aria-live="polite"></p>
+        <ol class="results" id="results"></ol>
+      </section>
+
+      <article id="piece" hidden>
+        <a class="back" href="#" id="back"><span aria-hidden="true">‹</span> Library</a>
+        <p class="titulus" id="piece-kicker"></p>
+        <h1 class="title" id="piece-title" tabindex="-1"></h1>
+        <p class="lede" id="piece-book"></p>
+        <div id="score" class="score"></div>
+        <p class="status" id="status" aria-live="polite"></p>
+        <footer class="colophon" id="piece-source"></footer>
+      </article>
+    </main>
+
+    <div class="bar" id="bar" hidden>
+      <div class="bar-in">
+        <button type="button" class="btn primary" id="play" aria-pressed="false" disabled>Play</button>
+        <span class="spacer"></span>
+        <a class="btn" id="practise" href="/sing">Practise this</a>
+      </div>
+    </div>
+    <script type="module" src="/src/library-page.ts"></script>
+  </body>
+</html>

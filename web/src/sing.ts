@@ -2,9 +2,9 @@ import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { Listener } from "./listen";
+import { kicker, library, chant as findChant } from "./library";
 import { describePitch } from "./notes";
-import { SAMPLE } from "./sample";
-import { Score } from "./score";
+import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { neutralTable, VoiceTable } from "./singer";
 
@@ -17,7 +17,19 @@ const test = params.get("test") === "1";
 const voiceUrl = params.get("voice");
 
 await init();
-const score = new Score(byId("score"), new Chant(SAMPLE));
+// ?chant=SLUG picks a chant from the library; the first route's chant otherwise.
+const DEFAULT = "lumen-gentium";
+const piece = findChant(params.get("chant") ?? DEFAULT) ?? findChant(DEFAULT)!;
+byId("kicker").textContent = ["Practice", kicker(piece)].filter(Boolean).join(" · ");
+byId("title").textContent = piece.title;
+document.title = `${piece.title} · Practice · Cantor`;
+const picker = byId<HTMLSelectElement>("chant");
+for (const c of library()) picker.add(new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c === piece));
+picker.addEventListener("change", () => {
+  params.set("chant", picker.value);
+  location.search = params.toString();
+});
+const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
 // After a take (for now only through `__cantor.show`, until a take is timed against the
@@ -127,7 +139,7 @@ const guide =
   table &&
   new Guide(score, cursor, {
     table,
-    gabc: SAMPLE,
+    gabc: piece.gabc,
     clock: test ? () => performance.now() / 1000 : undefined,
     onStop: () => playButton.setAttribute("aria-pressed", "false"),
     onError: (message) => (status.textContent = message),

@@ -1,0 +1,75 @@
+/* The practice page: the score, the singer's ribbon after a take, and the bar of actions. */
+.pick {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0 0 1rem;
+}
+.pick select {
+  flex: 1;
+  min-width: 0;
+  max-width: 28rem;
+}
+#score {
+  margin: 0.5rem 0 1rem;
+}
+@media (min-width: 1000px) {
+  #score {
+    --w: min(58rem, 100vw - 6rem);
+    width: var(--w);
+    margin-inline: calc(50% - var(--w) / 2);
+  }
+}
+#readout {
+  font-variant-numeric: tabular-nums lining-nums;
+  min-width: 7rem;
+  text-align: right;
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+.result {
+  border-top: 1px solid var(--gold-line);
+  padding-top: 0.6rem;
+}
+.result p {
+  margin: 0.5rem 0;
+}
+#key {
+  font-size: 1.15rem;
+}
+#base {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+
+/* The ribbon (ribbon.ts): a band per note, the singer's trace across it. */
+.ribbon .band-hit {
+  fill: transparent;
+}
+.ribbon .band:not(.unheard) {
+  cursor: pointer;
+}
+.ribbon .band:focus {
+  outline: none;
+}
+.ribbon .band:focus-visible .band-hit {
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.ribbon .band-target {
+  stroke: color-mix(in srgb, currentColor 35%, transparent);
+  stroke-width: 1;
+}
+.ribbon .unheard .band-target {
+  stroke-dasharray: 2 3;
+}
+.ribbon .band-trace {
+  fill: none;
+  stroke: var(--trace);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}

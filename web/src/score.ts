@@ -6,17 +6,22 @@ import { STRIP } from "./ribbon";
 /** Draws the ribbon's strips, given where each line's strip starts. */
 export type Strips = (timeline: Timeline, stripTop: (line: number) => number) => string;
 
+/** Pixels per staff space for a score read at the desk, larger than neuma's 6. */
+export const SCALE = 8;
+
 export class Score {
   private view: View<LinesPage>;
   private page: LinesPage;
   timeline: Timeline;
   private strips: Strips | null = null;
 
+  /** `scale` is pixels per staff space (neuma's default is 6). */
   constructor(
     readonly host: HTMLElement,
     private chant: Chant,
+    private readonly scale?: number,
   ) {
-    this.view = chant.view({ svg: "lines" });
+    this.view = chant.view({ svg: "lines", scale });
     this.page = this.view.layout(host.clientWidth);
     this.timeline = this.page.timeline();
     this.render();
@@ -33,7 +38,7 @@ export class Score {
     this.view.free();
     this.chant.free();
     this.chant = chant;
-    this.view = chant.view({ svg: "lines" });
+    this.view = chant.view({ svg: "lines", scale: this.scale });
     this.strips = null;
     this.page = this.view.layout(this.host.clientWidth);
     this.timeline = this.page.timeline();
