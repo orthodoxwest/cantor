@@ -9,7 +9,9 @@ export interface Heard {
   rms: number;
 }
 
-/** The browser and system `ua` names, as a person would say them. An iPad asking for desktop
+/** The browser and system `ua` names, as a person would say them. Browsers now freeze some of
+ * it (Chrome on Android says Android 10, every Mac says 10.15.7), so it is what the user agent
+ * says, not always what runs. An iPad asking for desktop
  * pages says it is a Mac; `touch` (a touch screen) tells it apart. On iOS every browser is
  * Safari's engine underneath. */
 export function browserOf(ua: string, touch = false): string {
@@ -51,8 +53,8 @@ export function browserOf(ua: string, touch = false): string {
 
 /** For each beep that began at a time in `beeps` (on the audio clock), how long until a frame
  * heard its pitch, `midi`, within a semitone, looking no further than `window` seconds; null
- * where none did. A frame is about 43 ms long and they come every 30 ms, so each is good to
- * about that. */
+ * where none did. A frame is about 43 ms long and they come every 30 ms, so each is within
+ * about 15 ms; beeps that fall at different places between frames do better together. */
 export function echoes(frames: readonly Heard[], beeps: readonly number[], midi: number, window: number): Array<number | null> {
   return beeps.map((at) => {
     const frame = frames.find((f) => f.t >= at && f.t < at + window && f.midi !== null && Math.abs(f.midi - midi) <= 1);

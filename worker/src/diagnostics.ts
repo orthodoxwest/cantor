@@ -7,13 +7,13 @@ import { bounded } from "./takes";
 const diagnostics = new Hono<{ Bindings: Env }>();
 
 /** The largest report accepted, as JSON. */
-const MAX_BODY = 16 * 1024;
+const MAX_BODY = 8 * 1024;
 /** At most this many rows a report, this long a label and a value. */
 const MAX_ROWS = 40;
 const MAX_LABEL = 60;
 const MAX_VALUE = 600;
 /** Reports kept at most; past this, more are refused rather than filling the database. */
-export const MAX_REPORTS = 10_000;
+export const MAX_REPORTS = 2_000;
 
 const text = (x: unknown, max: number): x is string => typeof x === "string" && x.length <= max;
 

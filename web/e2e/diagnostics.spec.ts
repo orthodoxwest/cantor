@@ -12,6 +12,7 @@ test("a check fills the table, which copies and sends", async ({ page }) => {
   });
   await page.goto("/diagnostics");
   await page.getByRole("button", { name: "Check" }).click();
+  await expect(page.getByRole("button", { name: "Send" })).toBeHidden();
   await expect(page.locator("#status")).toHaveText("Done. Copy the table, or send it.", { timeout: 20_000 });
 
   const table = page.locator("#table");
@@ -40,9 +41,10 @@ test("a check fills the table, which copies and sends", async ({ page }) => {
 });
 
 test("the practice page offers the check when the browser does not say about headphones", async ({ page }) => {
-  // A browser that names no outputs says nothing of headphones.
+  // A browser that names its microphone but no outputs says nothing of headphones.
   await page.addInitScript(() => {
-    navigator.mediaDevices.enumerateDevices = async () => [];
+    const mic = { kind: "audioinput", label: "Microphone", deviceId: "default", groupId: "" } as MediaDeviceInfo;
+    navigator.mediaDevices.enumerateDevices = async () => [mic];
   });
   await page.goto("/sing");
   const link = page.locator("#mode a");
@@ -50,4 +52,13 @@ test("the practice page offers the check when the browser does not say about hea
   await expect(link).toHaveAttribute("href", "/diagnostics");
   await page.locator("#headphones").check();
   await expect(link).toHaveCount(0);
+});
+
+test("the practice page does not offer it before the browser names its devices", async ({ page }) => {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.enumerateDevices = async () => [];
+  });
+  await page.goto("/sing");
+  await expect(page.locator("#mode")).toHaveText(/does not say whether headphones are in/);
+  await expect(page.locator("#mode a")).toHaveCount(0);
 });

@@ -44,8 +44,8 @@
       <p><button id="check" class="btn primary" type="button">Check</button></p>
       <p id="status" class="status" role="status"></p>
       <section id="report" hidden>
-        <table id="table" class="diagnostics"></table>
-        <p class="actions">
+        <table id="table" class="diagnostics" aria-label="What this browser said and what the check measured"></table>
+        <p class="actions" id="actions" hidden>
           <button id="copy" class="btn" type="button">Copy as text</button>
           <button id="send" class="btn" type="button">Send</button>
           <span id="sent" aria-live="polite"></span>

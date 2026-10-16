@@ -15,14 +15,17 @@ const report = byId<HTMLElement>("report");
 const table = byId<HTMLTableElement>("table");
 const sent = byId<HTMLSpanElement>("sent");
 const sendButton = byId<HTMLButtonElement>("send");
+const actions = byId<HTMLParagraphElement>("actions");
 
 /** The beeps: A5, in the ear's range and clear of a voice's fundamental. */
 const BEEP_HZ = 880;
 const BEEP_MIDI = 81;
 const BEEPS = 3;
 const BEEP_S = 0.2;
-/** From one beep's start to the next's; a beep later than this is not heard as its own. */
-const EVERY_S = 1.2;
+/** From one beep's start to the next's; a beep later than this is not heard as its own. Not a
+ * whole number of the ear's 30 ms hops, so the beeps fall at different places between frames
+ * and their mean is closer than any one. */
+const EVERY_S = 1.21;
 /** How long the room is heard before the first beep, and listening goes on after the last. */
 const ROOM_S = 1.2;
 const TAIL_S = 1.0;
@@ -54,8 +57,6 @@ function show(): void {
     }),
   );
   report.hidden = rows.length === 0;
-  sent.textContent = "";
-  sendButton.hidden = false;
 }
 
 const wait = (s: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, s) * 1000));
@@ -70,10 +71,17 @@ async function context(): Promise<AudioContext | null> {
 async function check(): Promise<void> {
   checkButton.disabled = true;
   failure = undefined;
+  actions.hidden = true;
+  sent.textContent = "";
+  sendButton.hidden = false;
   rows = [
     ["Browser", browserOf(navigator.userAgent, navigator.maxTouchPoints > 1)],
     ["User agent", navigator.userAgent],
   ];
+  // Chromium's user agent freezes the system's version; it says it when asked.
+  const data = (navigator as Navigator & { userAgentData?: { getHighEntropyValues(hints: string[]): Promise<{ platform?: string; platformVersion?: string }> } }).userAgentData;
+  const platform = await data?.getHighEntropyValues(["platformVersion"]).catch(() => undefined);
+  if (platform?.platformVersion) rows.push(["System version", `${platform.platform ?? ""} ${platform.platformVersion}`.trim()]);
   show();
   setStatus("Opening the microphone…");
   let stream: MediaStream | undefined;
@@ -86,12 +94,15 @@ async function check(): Promise<void> {
     rows.push(["Microphone", `not opened: ${(error as Error).name || error}`]);
     show();
     setStatus("The microphone could not be opened, so nothing more can be checked.", true);
+    actions.hidden = false;
     checkButton.disabled = false;
     return;
   }
   try {
     await measure(stream);
-    setStatus(failure ? `The ear failed: ${failure.message}` : "Done. Copy the table, or send it.", failure !== undefined);
+    // Set by the listener while measuring, which the compiler does not see.
+    const failed = failure as Error | undefined;
+    setStatus(failed ? `The ear failed: ${failed.message}` : "Done. Copy the table, or send it.", failed !== undefined);
   } catch (error) {
     rows.push(["Stopped by", String((error as Error).message || error)]);
     setStatus(`The check stopped: ${(error as Error).message || error}`, true);
@@ -99,6 +110,7 @@ async function check(): Promise<void> {
     listener.stop();
     stream.getTracks().forEach((track) => track.stop());
     show();
+    actions.hidden = false;
     checkButton.textContent = "Check again";
     checkButton.disabled = false;
   }
@@ -132,6 +144,8 @@ async function measure(stream: MediaStream): Promise<void> {
   if (session) rows.push(["Audio session", session]);
   show();
   if (!ctx) throw new Error("the audio context would not start");
+  // The ear opens the microphone again as a take does; one capture at a time.
+  stream.getTracks().forEach((track) => track.stop());
 
   setStatus("Listening to the room, then three beeps…");
   await listener.start();
@@ -151,26 +165,39 @@ async function measure(stream: MediaStream): Promise<void> {
   const end = beeps.at(-1)! + EVERY_S;
   osc.start(first);
   osc.stop(end);
+  // Waits on the audio clock, and no longer than twice the check's length by the wall's: a
+  // phone call or a locked screen stops the clock.
+  const deadline = performance.now() + 2000 * (end + TAIL_S - ctx.currentTime);
   try {
-    // Waits on the audio clock, which a tab in the background may slow.
-    while (ctx.currentTime < end + TAIL_S && listener.listening) await wait(Math.min(0.25, end + TAIL_S - ctx.currentTime));
+    while (ctx.currentTime < end + TAIL_S && listener.listening) {
+      if (ctx.state !== "running" || performance.now() > deadline) throw new Error(`the audio stopped (${ctx.state})`);
+      await wait(Math.min(0.25, end + TAIL_S - ctx.currentTime));
+    }
   } finally {
     osc.disconnect();
     gain.disconnect();
+    listener.stop();
   }
-  listener.stop();
-  const heard = await listener.heard?.catch((error: Error) => {
-    failure ??= error;
-    return undefined;
-  });
+  const heard = await Promise.race([
+    listener.heard?.catch((error: Error) => {
+      failure ??= error;
+      return undefined;
+    }),
+    wait(10).then(() => {
+      failure ??= new Error("the ear did not finish");
+      return undefined;
+    }),
+  ]);
 
   const frames = listener.frames;
   const times = echoes(frames, beeps, BEEP_MIDI, EVERY_S - BEEP_S);
   const found = times.filter((t): t is number => t !== null);
-  const trip = median(found);
+  const trip = found.length ? found.reduce((a, b) => a + b) / found.length : null;
   rows.push([
     "Round trip",
-    trip === null ? "beeps not heard (headphones in, the volume low, or the speaker cancelled)" : `${ms(trip)} (${found.length} of ${BEEPS} beeps heard)`,
+    trip === null
+      ? "beeps not heard (headphones in, the volume low, the room too loud, or the speaker cancelled)"
+      : `${ms(trip)} (${found.length} of ${BEEPS} beeps heard)`,
   ]);
   const room = frames.filter((f) => f.t < first);
   rows.push(["Room level", level(median(room.map((f) => f.rms)))]);

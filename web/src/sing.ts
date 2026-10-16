@@ -305,6 +305,8 @@ const modeLine = modeText.parentElement!;
 const headphonesBox = byId<HTMLInputElement>("headphones");
 /** What the browser says of headphones, until the singer says otherwise. */
 let detected: boolean | null = null;
+/** Whether the browser names its devices, as it does once the microphone is allowed. */
+let named = false;
 let chosen = false;
 /** How long the cursor waits before the chant begins, after listening begins, in seconds. */
 const LEAD = 1.5;
@@ -329,8 +331,8 @@ function showMode(): void {
   modeText.textContent = worn
     ? `A take is scored with the guide in your headphones (${why}). Play sings the chant to you and is never scored.`
     : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
-  // A browser that does not say can be checked.
-  if (!chosen && detected === null) {
+  // A browser that names its devices but does not say which is playing can be checked.
+  if (!chosen && detected === null && named) {
     const check = document.createElement("a");
     check.href = "/diagnostics";
     check.textContent = "Check this browser";
@@ -340,7 +342,9 @@ function showMode(): void {
 
 async function detect(take?: number): Promise<void> {
   try {
-    detected = headphonesIn(await navigator.mediaDevices.enumerateDevices());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    named = devices.some((d) => d.label);
+    detected = headphonesIn(devices);
   } catch {
     detected = null;
   }
