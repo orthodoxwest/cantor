@@ -25,15 +25,20 @@ pub const VERSION: u16 = 1;
 const UNIT_RMS: f32 = 0.1;
 /// Notes closer together than this are sung legato, in one breath.
 const LEGATO_GAP_S: f64 = 0.03;
-const ATTACK_S: f64 = 0.04;
+/// How long the voice takes to sound at a phrase's start. A recorded cantor's onsets take
+/// about 75 ms to reach full voice; sharper edges sound clipped.
+const ATTACK_S: f64 = 0.08;
 /// How long the voice takes to die away after a phrase's last note.
-pub const RELEASE_S: f64 = 0.08;
+pub const RELEASE_S: f64 = 0.2;
 /// The longest pitch period a unit may have, so grains never reach far past their mark.
 const MAX_PERIOD_S: f64 = 0.025;
 /// The longest pitch glide between two notes.
 const GLIDE_S: f64 = 0.05;
-/// The longest consonant dip between two syllables, and the vowel crossfade inside it.
-const DIP_S: f64 = 0.07;
+/// The longest consonant dip between two syllables, and the vowel crossfade inside it. With
+/// the depths in [`Phrase::new`] the dips come out about 65 ms wide and 8 dB deep in
+/// recitation, near a recorded cantor's 70 ms and 7 dB; narrower, deeper ones chopped
+/// each syllable off.
+const DIP_S: f64 = 0.16;
 /// The longest closing glide of a diphthong.
 const DIPHTHONG_S: f64 = 0.12;
 /// The pitches a voice sings (MIDI): outside them a note is left silent.
@@ -442,9 +447,9 @@ impl<'a> Phrase<'a> {
                 let half = (DIP_S / 2.0).min(0.35 * room);
                 let coda = notes[groups[k - 1].0].diction.coda;
                 let depth = match (coda, d.onset) {
-                    (Consonants::Unvoiced, _) | (_, Consonants::Unvoiced) => 0.85,
-                    (Consonants::Voiced, _) | (_, Consonants::Voiced) => 0.5,
-                    _ => 0.25,
+                    (Consonants::Unvoiced, _) | (_, Consonants::Unvoiced) => 0.65,
+                    (Consonants::Voiced, _) | (_, Consonants::Voiced) => 0.4,
+                    _ => 0.2,
                 };
                 // Consonants come just before the beat, so the dip leans early.
                 (half, depth, s_start - 0.4 * half)
@@ -840,8 +845,27 @@ mod tests {
         };
         let steady = rms(0.15, 0.3);
         assert!(rms(0.375, 0.395) < 0.5 * steady, "dip {} vs {steady}", rms(0.375, 0.395));
-        assert!(rms(0.95, 1.15) < 1e-6, "rest {}", rms(0.95, 1.15));
+        assert!(rms(1.05, 1.15) < 1e-6, "rest {}", rms(1.05, 1.15));
         assert!(rms(1.25, 1.4) > 0.5 * steady);
+    }
+
+    #[test]
+    fn edges_are_gradual() {
+        let v = test_voice();
+        let part = [sung(55.0, 0.0, 0.4, Vowel::Aa, true), sung(55.0, 0.4, 0.4, Vowel::Aa, true)];
+        let take = whole(&v, &part);
+        let rms = |a: f32, b: f32| {
+            let s = &take[(a * SR) as usize..(b * SR) as usize];
+            (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+        };
+        let steady = rms(0.15, 0.3);
+        // The voice comes in over tens of milliseconds, not at once.
+        assert!(rms(0.0, 0.02) < 0.2 * steady, "onset {}", rms(0.0, 0.02));
+        // A consonant dims the voice over a broad dip, not a notch.
+        let dips = [rms(0.31, 0.33), rms(0.33, 0.35), rms(0.35, 0.37), rms(0.37, 0.39)];
+        assert!(dips.iter().all(|&d| d < 0.85 * steady && d > 0.2 * steady), "{dips:?} vs {steady}");
+        // And it dies away after the last note rather than stopping.
+        assert!(rms(0.85, 0.9) > 0.2 * steady, "release {}", rms(0.85, 0.9));
     }
 
     #[test]
