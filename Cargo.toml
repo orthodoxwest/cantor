@@ -15,6 +15,9 @@ cantor-core = { path = "crates/cantor-core" }
 # neuma is pinned by revision; scripts/neuma.sh builds the matching browser module.
 neuma = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
 neuma-tones = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42daa9e8f88615ef86c885a8839c0578" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hound = "3.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

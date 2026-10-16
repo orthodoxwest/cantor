@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 neuma.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true
