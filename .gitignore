@@ -9,3 +9,5 @@ playwright-report/
 *.local
 .DS_Store
 web/e2e/fixtures/*.wav
+web/public/cantor.wasm
+*.cvox

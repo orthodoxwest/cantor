@@ -3,15 +3,23 @@ import type { Timeline } from "neuma";
 
 declare global {
   interface Window {
-    __cantor: { frames: Array<{ midi: number | null }>; timeline: Timeline; visited: number[] };
+    __cantor: {
+      frames: Array<{ midi: number | null }>;
+      timeline: Timeline;
+      visited: number[];
+      chunks: Array<[number, number, number]>;
+      voice: "neutral" | "recorded" | "none";
+    };
   }
 }
 
 const PULSE = 0.5;
 
-async function open(page: Page): Promise<Timeline> {
-  await page.goto("/sing.html?test=1");
+/** Opens the practice page and waits until it has its voice (or has given up on one). */
+async function open(page: Page, query = ""): Promise<Timeline> {
+  await page.goto(`/sing.html?test=1${query}`);
   await expect(page.locator("#score svg")).toBeVisible();
+  await page.waitForFunction(() => window.__cantor);
   return page.evaluate(() => window.__cantor.timeline);
 }
 
@@ -46,4 +54,54 @@ test("listen hears A4 from the microphone", async ({ page }) => {
     })
     .toBe(true);
   await expect(page.locator("#readout")).toHaveText(/^A4 /);
+});
+
+for (const [voice, query] of [
+  ["neutral", ""],
+  ["recorded", "&voice=/test-voice.cvox"],
+] as const) {
+  test(`the guide sings with the ${voice} voice in chunks`, async ({ page }) => {
+    const { makeVoice } = await import("./fixtures/voice.mjs");
+    await page.route(
+      (url) => url.pathname === "/test-voice.cvox",
+      (route) => route.fulfill({ body: makeVoice() }),
+    );
+    const errors: string[] = [];
+    page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+    await open(page, query);
+    expect(await page.evaluate(() => window.__cantor.voice)).toBe(voice);
+    await page.getByRole("button", { name: "Play" }).click();
+    await expect.poll(() => page.evaluate(() => window.__cantor.chunks.length), { timeout: 10_000 }).toBeGreaterThan(2);
+    const chunks = await page.evaluate(() => window.__cantor.chunks);
+    // Chunks follow one another without gaps, and the voice is heard in them.
+    chunks.forEach(([from], i) => i > 0 && expect(from).toBe(chunks[i - 1]![0] + chunks[i - 1]![1]));
+    expect(chunks.some(([, , rms]) => rms > 0.01)).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("a voice file with nothing to sing falls back to the neutral vowel", async ({ page }) => {
+  const empty = Buffer.alloc(12);
+  empty.write("CVOX", 0);
+  empty.writeUInt16LE(1, 4);
+  empty.writeUInt32LE(24000, 8);
+  await page.route(
+    (url) => url.pathname === "/empty.cvox",
+    (route) => route.fulfill({ body: empty }),
+  );
+  await open(page, "&voice=/empty.cvox");
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  expect(await page.evaluate(() => window.__cantor.voice)).toBe("neutral");
+});
+
+test("without the renderer the guide is off and listening still works", async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === "/cantor.wasm",
+    (route) => route.fulfill({ status: 404 }),
+  );
+  await open(page);
+  expect(await page.evaluate(() => window.__cantor.voice)).toBe("none");
+  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+  await page.getByRole("button", { name: "Listen" }).click();
+  await expect(page.locator("#readout")).toHaveText(/^A4 /, { timeout: 15_000 });
 });
