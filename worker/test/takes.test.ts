@@ -1,3 +1,4 @@
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import app from "../src/index";
@@ -55,8 +56,8 @@ describe("takes", () => {
     const { id, url } = await res.json<{ id: string; url: string }>();
     expect(id).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(url).toBe(`/take/${id}`);
-    const row = await env.DB.prepare("SELECT user_id, chant_slug, title, seconds, bytes FROM takes WHERE id = ?").bind(id).first();
-    expect(row).toEqual({ user_id: "singer", chant_slug: "ubi-caritas", title: "Where charity and love are", seconds: 9.5, bytes: wav().length });
+    const row = await env.DB.prepare("SELECT user_id, chant_slug, title, public, seconds, bytes FROM takes WHERE id = ?").bind(id).first();
+    expect(row).toEqual({ user_id: "singer", chant_slug: "ubi-caritas", title: "Where charity and love are", public: 1, seconds: 9.5, bytes: wav().length });
 
     // A reader with no account.
     const take = await get(`/api/takes/${id}`);
@@ -64,6 +65,8 @@ describe("takes", () => {
     expect(take.headers.get("Cache-Control")).toBe("private, no-store");
     const body = await take.json<Record<string, unknown>>();
     expect(body).toMatchObject({ id, slug: "ubi-caritas", gabc: UBI, pulse: 0.5, offset: 1.2, mine: false });
+    // The verdict and what the page draws of it; nothing else of what the page sent.
+    expect(Object.keys(body.judged as object).sort()).toEqual(["ribbon", "summary", "told", "verdict"]);
     expect((body.judged as { summary: string[] }).summary).toHaveLength(2);
     expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "singer" })).json<{ mine: boolean }>()).mine).toBe(true);
     expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "someone" })).json<{ mine: boolean }>()).mine).toBe(false);
@@ -96,17 +99,36 @@ describe("takes", () => {
       expect(await ranged(whole)).toEqual({ status: 200, range: null, length: size });
   });
 
-  it("shows a reader not signed in the score only of a public chant", async () => {
-    const { id } = await (await send({ take: { ...record(), slug: "private-test", gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
-    expect((await (await get(`/api/takes/${id}`)).json<{ gabc: string | null }>()).gabc).toBeNull();
-    expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "director" })).json<{ gabc: string }>()).gabc).toBe("(c4) BOok(f) (::)");
-    // A public chant's score goes to anyone with the link.
-    const { id: open } = await (await send()).json<{ id: string }>();
-    expect(await (await get(`/api/takes/${open}`)).json()).toMatchObject({ gabc: UBI, title: "Where charity and love are" });
-    // Nor does a score the library does not hold, whatever slug it is sent under.
+  it("shows a reader not signed in which chant was sung, and its score, only for a public chant's take", async () => {
+    const { id } = await (await send({ take: { ...record(), slug: "private-test", title: "Booklet antiphon", gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
+    expect(await (await get(`/api/takes/${id}`)).json()).toMatchObject({ slug: null, title: null, gabc: null });
+    expect(await (await get(`/api/takes/${id}`, { "X-Dev-User": "director" })).json()).toMatchObject({
+      slug: "private-test",
+      title: "Booklet antiphon",
+      gabc: "(c4) BOok(f) (::)",
+    });
+    // A public chant's take, under the library's title whatever the page sent.
+    const { id: open } = await (await send({ take: { ...record(), title: "Something else" } })).json<{ id: string }>();
+    expect(await (await get(`/api/takes/${open}`)).json()).toMatchObject({ slug: "ubi-caritas", gabc: UBI, title: "Where charity and love are" });
+    // A score the library does not hold is not shown, whatever slug it is sent under.
     const { id: other } = await (await send({ take: { ...record(), gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
-    expect(await (await get(`/api/takes/${other}`)).json()).toMatchObject({ gabc: null, title: null });
-    expect(await (await get(`/api/takes/${id}`)).json()).toMatchObject({ title: null });
+    expect(await (await get(`/api/takes/${other}`)).json()).toMatchObject({ slug: null, gabc: null, title: null });
+    // What was public when sent stays so when the library changes.
+    await env.DB.prepare("UPDATE chants SET gabc = gabc || ' ' WHERE slug = 'ubi-caritas'").run();
+    expect(await (await get(`/api/takes/${open}`)).json()).toMatchObject({ gabc: UBI });
+    await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(UBI).run();
+  });
+
+  it("stores a take whole within the request's own context", async () => {
+    const ctx = createExecutionContext();
+    const form = new FormData();
+    form.append("audio", new File([wav().slice()], "take.wav"));
+    form.append("take", JSON.stringify(record()));
+    const res = await app.request("/api/takes", { method: "POST", body: form, headers: { "X-Dev-User": "singer", Origin: ORIGIN } }, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(201);
+    const { id } = await res.json<{ id: string }>();
+    expect((await get(`/api/takes/${id}/audio`)).status).toBe(200);
   });
 
   it("stops reading a body longer than any take, its length declared or not", async () => {

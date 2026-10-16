@@ -10,7 +10,11 @@ CREATE TABLE takes (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   chant_slug TEXT NOT NULL,
+  -- The library's title for a public chant's take, else the singer's.
   title TEXT NOT NULL,
+  -- 1 when sung from a public chant's score as the library held it when sent: a reader not
+  -- signed in is shown which chant and its score only then.
+  public INTEGER NOT NULL,
   seconds REAL NOT NULL,
   -- The audio's length in bytes, for ranges.
   bytes INTEGER NOT NULL,

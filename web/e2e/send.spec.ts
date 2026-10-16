@@ -72,7 +72,7 @@ test("a take that cannot be sent says why and may be sent again", async ({ page 
   await expect(page.locator("#sent")).toHaveText("");
 });
 
-test("while a take is sent nothing else plays, and its link is given even if the take is cleared", async ({ page }) => {
+test("a take being sent leaves the page free, and its link is given even if the take is cleared", async ({ page }) => {
   let release = () => {};
   const held = new Promise<void>((resolve) => (release = resolve));
   let reached = false;
@@ -84,9 +84,11 @@ test("while a take is sent nothing else plays, and its link is given even if the
   await judgedTake(page);
   await page.getByRole("button", { name: "Send to a director" }).click();
   await expect.poll(() => reached).toBe(true);
-  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Sing a take" })).toBeDisabled();
-  await expect(page.locator("#chant")).toBeDisabled();
+  // Once its audio is read, the page may be used while the take is sent.
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Sing a take" })).toBeEnabled();
+  await expect(page.locator("#chant")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send to a director" })).toBeDisabled();
   // The page's own listening (the tests' hook) clears the take while it is sent.
   await page.evaluate(() => void window.__cantor.listen());
   await expect(page.locator("#result")).toBeHidden();

@@ -10,7 +10,7 @@ const takes = new Hono<{ Bindings: Env }>();
 
 /** 24 random bytes, base64url: 192 bits. */
 const ID = /^[A-Za-z0-9_-]{32}$/;
-/** The largest take accepted: about five minutes and forty seconds at 24 kHz. */
+/** The largest take accepted: nearly six minutes at 24 kHz. */
 export const MAX_AUDIO = 16 * 1024 * 1024;
 /** The largest judged result and score accepted, as JSON. */
 export const MAX_RECORD = 2 * 1024 * 1024;
@@ -72,8 +72,7 @@ function finish<T>(c: Context<{ Bindings: Env }>, work: Promise<T>): Promise<T> 
 export interface TakeRecord {
   slug: string;
   title: string;
-  /** The score the take was judged against; a reader not signed in is given null for one not
-   * in the public library. */
+  /** The score the take was judged against. */
   gabc: string;
   /** Seconds a pulse, and when the first note started in the take, in seconds. */
   pulse: number;
@@ -109,14 +108,18 @@ export function parseRecord(raw: string): TakeRecord | null {
     pulse: r.pulse,
     offset: r.offset,
     seconds: r.seconds,
-    judged: j as TakeRecord["judged"],
+    // The judge's verdict and what the page draws of it, and no more: the notes it was judged
+    // against are the score's, which a reader not signed in may not be given.
+    judged: { verdict: verdict as TakeRecord["judged"]["verdict"], ribbon: j.ribbon, told: j.told, summary: j.summary },
   };
 }
 
-/** Whether `bytes` begin as a WAV file does. */
-function isWav(bytes: Uint8Array): boolean {
-  const tag = (at: number) => String.fromCharCode(...bytes.subarray(at, at + 4));
-  return bytes.length > 44 && tag(0) === "RIFF" && tag(8) === "WAVE";
+/** Whether `file` begins as a WAV file does. */
+async function isWav(file: Blob): Promise<boolean> {
+  if (file.size <= 44) return false;
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const tag = (at: number) => String.fromCharCode(...head.subarray(at, at + 4));
+  return tag(0) === "RIFF" && tag(8) === "WAVE";
 }
 
 // Sends a take: multipart, the audio as `audio` (WAV) and the record as `take` (JSON).
@@ -138,8 +141,13 @@ takes.post("/", async (c) => {
   if (!(audio instanceof File) || typeof take !== "string") return c.json({ error: "bad request" }, 400);
   if (audio.size > MAX_AUDIO || take.length > MAX_RECORD) return c.json({ error: "too large" }, 413);
   const record = parseRecord(take);
-  const bytes = new Uint8Array(await audio.arrayBuffer());
-  if (!record || !isWav(bytes)) return c.json({ error: "bad request" }, 400);
+  if (!record || !(await isWav(audio))) return c.json({ error: "bad request" }, 400);
+  // A public chant's take, sung from the score the library holds, is shown to any reader with
+  // its link, under the library's title; decided now, so later changes to the library leave
+  // it as it was sent.
+  const library = await c.env.DB.prepare("SELECT title FROM chants WHERE slug = ? AND gabc = ?")
+    .bind(record.slug, record.gabc)
+    .first<{ title: string }>();
   const id = newId();
   // Stored whole or not at all, even if the singer goes away mid-way: a take with no row is
   // never served, so whatever of it was written goes too.
@@ -147,10 +155,10 @@ takes.post("/", async (c) => {
     c,
     (async () => {
       try {
-        await c.env.TAKES.put(audioKey(id), bytes, { httpMetadata: { contentType: "audio/wav" } });
+        await c.env.TAKES.put(audioKey(id), audio, { httpMetadata: { contentType: "audio/wav" } });
         await c.env.TAKES.put(recordKey(id), JSON.stringify(record), { httpMetadata: { contentType: "application/json" } });
-        await c.env.DB.prepare("INSERT INTO takes (id, user_id, chant_slug, title, seconds, bytes) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(id, who.id, record.slug, record.title, record.seconds, bytes.length)
+        await c.env.DB.prepare("INSERT INTO takes (id, user_id, chant_slug, title, public, seconds, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, who.id, record.slug, library?.title ?? record.title, library ? 1 : 0, record.seconds, audio.size)
           .run();
       } catch (error) {
         await c.env.TAKES.delete([audioKey(id), recordKey(id)]).catch(() => {});
@@ -164,9 +172,9 @@ takes.post("/", async (c) => {
 /** The take's row, when `id` names one. */
 async function row(c: Context<{ Bindings: Env }>, id: string) {
   if (!ID.test(id)) return null;
-  return c.env.DB.prepare("SELECT id, user_id, bytes, created_at FROM takes WHERE id = ?")
+  return c.env.DB.prepare("SELECT id, user_id, title, public, bytes, created_at FROM takes WHERE id = ?")
     .bind(id)
-    .first<{ id: string; user_id: string; bytes: number; created_at: string }>();
+    .first<{ id: string; user_id: string; title: string; public: number; bytes: number; created_at: string }>();
 }
 
 // A take's record, to whoever holds its id; `mine` says whether the caller sent it.
@@ -179,15 +187,14 @@ takes.get("/:id", async (c) => {
   if (!found || !object) return c.json({ error: "not found" }, 404);
   const record = await object.json<TakeRecord>();
   const who = await identity(c.req.raw.headers, c.env);
-  // A reader not signed in sees the score and its title only when they are a public chant's,
-  // as stored in the library: a private chant (booklet-derived) is shown only to a known caller.
-  const open =
-    who !== null ||
-    (await c.env.DB.prepare("SELECT 1 FROM chants WHERE slug = ? AND gabc = ?").bind(record.slug, record.gabc).first()) !== null;
+  // A reader not signed in sees which chant was sung, and its score, only for a public chant's
+  // take; a private chant (booklet-derived) is shown only to a known caller.
+  const open = who !== null || found.public === 1;
   return c.json({
     id,
     ...record,
-    title: open ? record.title : null,
+    slug: open ? record.slug : null,
+    title: open ? found.title : null,
     gabc: open ? record.gabc : null,
     created_at: found.created_at,
     mine: who?.id === found.user_id,

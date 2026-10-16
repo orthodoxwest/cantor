@@ -109,7 +109,7 @@ interface ToSend {
   judged: Judged;
 }
 let toSend: ToSend | null = null;
-/** Whether a take is being sent; until it is, nothing else plays or listens. */
+/** Whether a take is being sent. */
 let sending = false;
 
 /** Offers to send the take just shown. */
@@ -120,10 +120,9 @@ function offerSend(take: ToSend): void {
   });
 }
 
-/** Holds Play, a take and the chant while a take is sent, or lets them go. */
-function holdForSending(on: boolean): void {
-  sending = on;
-  playButton.disabled = on || !guide;
+/** Holds a new take and the chant while the take being sent is read from the ear, which
+ * keeps only the last take, or lets them go. */
+function holdTake(on: boolean): void {
   takeButton.disabled = on || !guide;
   picker.disabled = on;
 }
@@ -133,8 +132,11 @@ sendButton.addEventListener("click", () => {
   if (!take || sending) return;
   sendButton.disabled = true;
   sentText.textContent = "Sending…";
-  holdForSending(true);
-  const link = listener.audio().then(({ wav, seconds }) => {
+  sending = true;
+  holdTake(true);
+  const audio = listener.audio();
+  void audio.finally(() => holdTake(false)).catch(() => {});
+  const link = audio.then(({ wav, seconds }) => {
     const { gabc, pulse, offset, judged } = take;
     return sendTake(wav, { slug: piece.slug, title: piece.title, gabc, pulse, offset, seconds, judged });
   });
@@ -142,7 +144,7 @@ sendButton.addEventListener("click", () => {
   link.then(
     async (url) => {
       const done = await copied;
-      holdForSending(false);
+      sending = false;
       const told = done ? "Link copied. Anyone with it can hear this take: " : "Send this link; anyone with it can hear this take: ";
       // A take no longer shown still gets its link, in the status line.
       if (toSend !== take) return setStatus(`${told}${url}`, true);
@@ -153,7 +155,7 @@ sendButton.addEventListener("click", () => {
       sentText.replaceChildren(told, a);
     },
     (error: unknown) => {
-      holdForSending(false);
+      sending = false;
       if (toSend === take) {
         sendButton.disabled = false;
         sentText.textContent = "";

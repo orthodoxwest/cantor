@@ -27,13 +27,18 @@ export interface Sent {
 /** The largest take the Worker accepts (takes.ts `MAX_AUDIO`). */
 export const MAX_AUDIO = 16 * 1024 * 1024;
 
+/** How long a send may take before it is given up, in milliseconds. */
+const SEND_TIMEOUT = 120_000;
+
 /** Sends the take; resolves with the link to it. */
 export async function sendTake(wav: ArrayBuffer, take: Sent): Promise<string> {
   if (wav.byteLength > MAX_AUDIO) throw new Error("the take is too long to send");
   const form = new FormData();
   form.append("audio", new Blob([wav], { type: "audio/wav" }), "take.wav");
   form.append("take", JSON.stringify(take));
-  const res = await fetch("/api/takes", { method: "POST", body: form });
+  const res = await fetch("/api/takes", { method: "POST", body: form, signal: AbortSignal.timeout(SEND_TIMEOUT) }).catch((error: unknown) => {
+    throw error instanceof DOMException && error.name === "TimeoutError" ? new Error("the connection is too slow; try again") : error;
+  });
   if (res.status === 401) throw new Error("you are no longer signed in");
   if (res.status === 403) throw new Error("the site could not tell that the take came from this page");
   if (res.status === 413) throw new Error("the take is too long to send");
