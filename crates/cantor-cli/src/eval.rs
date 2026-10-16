@@ -16,7 +16,8 @@
 //! is the judge's, so how many there are, and how many were planted off, are held to the
 //! baseline.
 //!
-//! The gates. Every suite, gated or not, must have no false marks.
+//! The gates. Every suite, gated or not, must have no false marks, and be told the same when
+//! timed as the page times it (below).
 //! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
 //!   0.3 s or more heard over the suite and 90% in every take; 90% of all notes heard; a
 //!   steady reciting tone; no cadence called off pitch, and 80% of them judged; every take
@@ -27,6 +28,21 @@
 //!   every note planted within 50 cents, or on with one planted 150 off), and 80% judged.
 //! - `silent`: the guide alone, singer silent. No take judged, no note heard, nothing in tune.
 //! - `wrong`: a wrong singer over a right guide is marked, as for `student`.
+//!
+//! Every take is also timed as the page times it ([`mod@cantor_core::entry`]), its first
+//! note due where it was sung (a real take's is where it was aligned), and must be told the
+//! same there: the same outcome, steadiness and marks (their kinds and notes), and the same
+//! cadences called off pitch (one called on pitch one way and not clearly heard the other is
+//! not counted). A take sung as on the page, after a lead of [`PAGE_LEAD_S`] or more with no
+//! guide in it (every real take, and the `-lead` suites), is timed again as for a singer
+//! each of [`LATE_S`] behind the cursor, its note due that much earlier: it must be told the
+//! same, and under the expert, student and wrong gates be timed by the same first sound as on
+//! time, within [`SAME_SOUND_S`]. Not
+//! covered: a singer late behind a guide heard in the take. A synthetic guide sings with the
+//! singer, and its cue ends just before the first note, where the page listens only after the
+//! cue; on the page the guide's bleed can be the first sound heard. Nor a singer who leads
+//! the cursor: the page then times the take as due, as the singer holds the first note until
+//! the cursor moves, which a recording sung at its own pace does not.
 //!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
@@ -44,7 +60,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{
-    Cadence, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score,
+    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -163,6 +179,95 @@ struct Judged {
     /// The scorer's report on the oracle's labels and the judge's verdict on it, when the
     /// oracle listened.
     oracle: Option<OracleTake>,
+    timing: Timing,
+}
+
+/// How far behind the cursor a singer is taken to be, in seconds, each time a take is timed as
+/// the page times it for a late singer: its first note falls due that long before it was sung.
+const LATE_S: [f32; 2] = [0.3, 0.8];
+/// A late singer's take must be timed by a first sound this close to the one it is timed by
+/// on time, in seconds.
+const SAME_SOUND_S: f32 = 0.05;
+/// The page listens at least this long before the first note is due (sing.ts's `LEAD`, less
+/// a margin); a take with a shorter lead is not timed as for a late singer.
+const PAGE_LEAD_S: f32 = 1.0;
+
+/// A take timed as the page times it, its first note due where it was sung (`on_time`) and,
+/// when it was sung as on the page, each of [`LATE_S`] before (`late`).
+#[derive(Clone, Debug, Serialize)]
+struct Timing {
+    on_time: Retimed,
+    late: Vec<Retimed>,
+}
+
+impl Timing {
+    /// Whether the take was timed as for a late singer, and each time by the first sound it
+    /// was timed by on time.
+    fn by_sound(&self) -> bool {
+        let same = |r: &Retimed| match (r.entry.sound, self.on_time.entry.sound) {
+            (Some(a), Some(b)) => (a - b).abs() <= SAME_SOUND_S,
+            _ => false,
+        };
+        !self.late.is_empty() && self.late.iter().all(same)
+    }
+
+    /// Whether the take was told the same each way it was timed.
+    fn kept(&self) -> bool {
+        self.on_time.kept && self.late.iter().all(|r| r.kept)
+    }
+}
+
+/// Where the notes were put, and whether the judge told the take the same there.
+#[derive(Clone, Copy, Debug, Serialize)]
+struct Retimed {
+    entry: Entry,
+    kept: bool,
+}
+
+impl Timing {
+    /// `guided`: the guide is heard in the take.
+    fn of(notes: &[Note], samples: &[f32], rate: f32, frames: &[Frame], verdict: &Verdict, guided: bool) -> Timing {
+        let start = notes.first().map_or(0.0, |n| n.start_s);
+        let live = cantor_core::live(samples, rate);
+        let loud = cantor_ear::onset(samples, rate);
+        let told = |v: &Verdict| {
+            let marks: Vec<_> = v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect();
+            (v.outcome, v.steady, marks)
+        };
+        // A cadence on pitch one way and not clearly heard the other is not told otherwise,
+        // only not counted; one called off pitch must be called off both ways.
+        let contradicts = |a: &Verdict, b: &Verdict| {
+            a.cadences.len() != b.cadences.len()
+                || a.cadences
+                    .iter()
+                    .zip(&b.cadences)
+                    .any(|(x, y)| (x.first, x.last) != (y.first, y.last) || (x.on_pitch() == Some(false)) != (y.on_pitch() == Some(false)))
+        };
+        let retime = |due: f32| {
+            let entry = cantor_core::entry(&live, loud, due);
+            let moved: Vec<Note> = notes
+                .iter()
+                .map(|n| Note {
+                    start_s: n.start_s + entry.at - start,
+                    ..*n
+                })
+                .collect();
+            let again = judge(&moved, &score(&moved, frames));
+            Retimed {
+                entry,
+                kept: told(&again) == told(verdict) && !contradicts(&again, verdict),
+            }
+        };
+        let late = if !guided && start >= PAGE_LEAD_S {
+            LATE_S.iter().map(|late| retime(start - late)).collect()
+        } else {
+            Vec::new()
+        };
+        Timing {
+            on_time: retime(start),
+            late,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -301,6 +406,12 @@ struct Metrics {
     cadence_recall: f32,
     /// Takes given an outcome instead of a judgement.
     unjudged: u32,
+    /// Takes timed as for a singer [`LATE_S`] behind the cursor; those of them timed each way
+    /// by the same first sound as on time; and takes told otherwise when timed as the page
+    /// times them, any way.
+    timed_late: u32,
+    timed_by_sound: u32,
+    timing_moved_marks: u32,
     /// Notes heard in tune, over all takes.
     in_tune: u32,
     /// Of the frames the NSDF tracker found clear and SwiftF0 also voiced, the fraction
@@ -389,6 +500,9 @@ impl Metrics {
                 m.unjudged += 1;
             }
             m.in_tune += v.in_tune as u32;
+            m.timed_late += u32::from(!take.timing.late.is_empty());
+            m.timed_by_sound += u32::from(take.timing.by_sound());
+            m.timing_moved_marks += u32::from(!take.timing.kept());
         }
         m.heard_fraction = ratio(heard, counted);
         m.heard_all = ratio(all_heard, all);
@@ -414,6 +528,17 @@ impl Metrics {
             }
         };
         need(self.false_marks == 0, format!("{} false marks", self.false_marks));
+        need(
+            self.timing_moved_marks == 0,
+            format!("{} takes told otherwise as the page times them", self.timing_moved_marks),
+        );
+        // A singer late behind the cursor is timed by the sound of the voice.
+        if matches!(gate, Gate::Expert | Gate::Student | Gate::Wrong) {
+            need(
+                self.timed_by_sound == self.timed_late,
+                format!("{} of {} takes timed by their first sound", self.timed_by_sound, self.timed_late),
+            );
+        }
         match gate {
             Gate::None => {}
             Gate::Expert => {
@@ -509,6 +634,18 @@ impl Metrics {
             self.gross_error_rate > base.gross_error_rate + 0.02,
         );
         check("recall", self.recall, base.recall, self.recall < base.recall - 0.02);
+        check(
+            "timed_by_sound",
+            self.timed_by_sound as f32,
+            base.timed_by_sound as f32,
+            self.timed_by_sound < base.timed_by_sound,
+        );
+        check(
+            "timed_late",
+            self.timed_late as f32,
+            base.timed_late as f32,
+            self.timed_late != base.timed_late,
+        );
         if let (Some(now), Some(was)) = (self.agreement, base.agreement) {
             check("agreement", now, was, now < was - 0.02);
         }
@@ -633,6 +770,7 @@ struct TakeOutput<'a> {
     report: &'a cantor_core::Report,
     #[serde(skip_serializing_if = "Option::is_none")]
     oracle: Option<&'a OracleTake>,
+    timing: &'a Timing,
 }
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
@@ -700,11 +838,11 @@ pub fn run(
     };
 
     println!(
-        "{:<22} {:<8} {:>5} {:>6} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>5} {:>6}  result",
-        "suite", "gate", "takes", "heard", "all", "masked", "|cents|", "gross", "faults", "recall", "false", "agree"
+        "{:<22} {:<8} {:>5} {:>6} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>5} {:>6} {:>6}  result",
+        "suite", "gate", "takes", "heard", "all", "masked", "|cents|", "gross", "faults", "recall", "false", "agree", "late"
     );
     let mut md = String::from(
-        "| suite | gate | takes | heard | all heard | masked | \\|cents\\| | gross | faults | recall | false marks | trackers agree | result |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n",
+        "| suite | gate | takes | heard | all heard | masked | \\|cents\\| | gross | faults | recall | false marks | trackers agree | late singer timed by sound | result |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|\n",
     );
     let mut scorecard = BTreeMap::new();
     let mut outputs = Vec::new();
@@ -727,13 +865,14 @@ pub fn run(
         }
         let failures: Vec<String> = gated.iter().chain(&moved).cloned().collect();
         let agreement = metrics.agreement.map_or("-".to_string(), |a| format!("{a:.3}"));
+        let late = format!("{}/{}", metrics.timed_by_sound, metrics.timed_late);
         let result = if failures.is_empty() {
             "pass".to_string()
         } else {
             format!("FAIL: {}", failures.join("; "))
         };
         println!(
-            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5} {:>6}  {result}",
+            "{:<22} {:<8} {:>5} {:>6.3} {:>6.3} {:>6.3} {:>7.2} {:>6.3} {:>6} {:>6.3} {:>5} {:>6} {:>6}  {result}",
             name,
             gate.name(),
             metrics.takes,
@@ -746,9 +885,10 @@ pub fn run(
             metrics.recall,
             metrics.false_marks,
             agreement,
+            late,
         );
         md.push_str(&format!(
-            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {} | {result} |\n",
+            "| {name} | {} | {} | {:.3} | {:.3} | {:.3} | {:.2} | {:.3} | {} | {:.3} | {} | {} | {} | {result} |\n",
             gate.name(),
             metrics.takes,
             metrics.heard_fraction,
@@ -760,6 +900,7 @@ pub fn run(
             metrics.recall,
             metrics.false_marks,
             agreement,
+            late,
         ));
         gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
@@ -788,6 +929,7 @@ pub fn run(
                     verdict: &j.verdict,
                     report: &j.report,
                     oracle: j.oracle.as_ref(),
+                    timing: &j.timing,
                 })
                 .collect(),
         });
@@ -880,6 +1022,7 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
         None => None,
     };
     let verdict = judge(&notes, &report);
+    let timing = Timing::of(&notes, &take.samples, SAMPLE_RATE, &frames, &verdict, take.guide.is_some());
     let planted = profile.planted(&notes);
     let mid = |n: &Note| n.start_s + n.dur_s / 2.0;
     let truth = notes
@@ -905,6 +1048,7 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
         verdict,
         report,
         oracle,
+        timing,
     })
 }
 
@@ -914,7 +1058,7 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
 pub struct TakeFile {
     pub gabc: String,
     pub pulse_s: f32,
-    /// When the first note starts, and when the take first sounds, in seconds.
+    /// When the first note starts, and the take's first loud sample, in seconds.
     pub lead_in_s: f32,
     pub onset_s: Option<f32>,
     pub report: cantor_core::Report,
@@ -1021,6 +1165,13 @@ fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec
             n.start_s = *start;
             n.dur_s = end - start;
         }
+        // The page listens before the first note is due, so a take is timed as it would be.
+        if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
+            return Err(format!(
+                "{}: the first note starts at {} s, before the {PAGE_LEAD_S} s the page listens first",
+                take.name, first.start_s
+            ));
+        }
         let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
         let frames = ear.listen(&samples, rate, None)?;
         let report = score(&notes, &frames);
@@ -1029,6 +1180,7 @@ fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec
             None => None,
         };
         let verdict = judge(&notes, &report);
+        let timing = Timing::of(&notes, &samples, rate, &frames, &verdict, false);
         let len = notes.len();
         out.push(Judged {
             name: format!("{REAL} {}", take.name),
@@ -1041,6 +1193,7 @@ fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec
             verdict,
             report,
             oracle,
+            timing,
         });
     }
     Ok(out)
