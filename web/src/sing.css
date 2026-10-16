@@ -76,6 +76,22 @@
 .mode label {
   white-space: nowrap;
 }
+/* Speed and pitch for the guide, the cursor, Start note and Drone alike. */
+.tempo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 0 0 1rem;
+}
+.tempo label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+#do {
+  color: var(--muted);
+}
 #score {
   margin: 0.5rem 0 1rem;
 }

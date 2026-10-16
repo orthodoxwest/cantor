@@ -98,6 +98,61 @@ test("drone holds the reciting note until pressed again, and never sounds in a t
   await expect(drone).toBeEnabled();
 });
 
+test("speed and pitch move the guide, the cursor, Start note and Drone, and stay in the address", async ({ page }) => {
+  await page.clock.install();
+  const timeline = await open(page);
+  const first = await page.evaluate(() => window.__cantor.timeline.notes[0]!.semitones);
+  const drone = page.getByRole("button", { name: "Drone" });
+  await drone.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.drone)).not.toBeNull();
+  const droned = (await page.evaluate(() => window.__cantor.drone))!;
+  await page.getByLabel("Pitch").selectOption("2");
+  await expect(page.locator("#do")).toHaveText("The clef’s do is D.");
+  // The drone follows at once, a tone up.
+  await expect.poll(() => page.evaluate(() => window.__cantor.drone)).toBe(droned + 2);
+  await page.getByRole("button", { name: "Start note" }).click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.map((m) => m % 12))).toEqual([(((60 + first + 2) % 12) + 12) % 12]);
+  // Speed leaves the drone sounding as it was, once the retuned one's fade is done.
+  await expect.poll(() => page.evaluate(() => window.__cantor.drones)).toBe(1);
+  await page.getByLabel("Speed").selectOption("Slow");
+  expect(await page.evaluate(() => window.__cantor.drones)).toBe(1);
+  expect(await page.evaluate(() => window.__cantor.drone)).toBe(droned + 2);
+  expect(new URL(page.url()).searchParams.get("speed")).toBe("0.65");
+  expect(new URL(page.url()).searchParams.get("pitch")).toBe("2");
+  // The guide sings slower, and the cursor takes as long to cross: at the steady pulse it
+  // would be done by now, at the slow one not.
+  await page.getByRole("button", { name: "Play" }).click();
+  await page.clock.runFor((timeline.duration * 0.5 + 0.5) * 1000);
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  expect(await page.evaluate(() => window.__cantor.sung.map((n) => n.midi % 12)[0])).toBe((((60 + first + 2) % 12) + 12) % 12);
+  await page.clock.runFor((timeline.duration * 0.2 + 1) * 1000);
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  expect(await page.evaluate(() => window.__cantor.visited)).toEqual(timeline.notes.map((n) => n.id));
+  // Changed mid-play, the play stops.
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(page.getByRole("button", { name: "Play" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Speed").selectOption("Steady");
+  await expect(page.getByRole("button", { name: "Play" })).toHaveAttribute("aria-pressed", "false");
+  // However far it is moved, the guide stays where its voice is at home.
+  for (const shift of ["-7", "7", "2"]) {
+    await page.getByLabel("Pitch").selectOption(shift);
+    const [centre, midis] = await page.evaluate(() => [window.__cantor.centre!, window.__cantor.sung.map((n) => n.midi)] as const);
+    const middle = [...midis].sort((a, b) => a - b)[Math.floor(midis.length / 2)]!;
+    expect(Math.abs(middle - centre)).toBeLessThanOrEqual(6);
+  }
+  await page.getByLabel("Speed").selectOption("Slow");
+  // A take holds them where they are.
+  await page.getByRole("button", { name: "Sing a take" }).click();
+  await expect(page.getByLabel("Speed")).toBeDisabled();
+  await expect(page.getByLabel("Pitch")).toBeDisabled();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByLabel("Pitch")).toBeEnabled();
+  // Opened again from the address, they are as left.
+  await page.reload();
+  await expect(page.getByLabel("Pitch")).toHaveValue("2");
+  await expect(page.getByLabel("Speed")).toHaveValue("0.65");
+});
+
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());

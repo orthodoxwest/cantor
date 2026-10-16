@@ -49,6 +49,17 @@
         <p class="found-note"><span id="found-note" role="status"></span> <a href="/library">Browse the library</a></p>
       </div>
       <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
+      <p class="tempo">
+        <label>Speed
+          <select id="speed">
+            <option value="0.65">Slow</option>
+            <option value="0.5" selected>Steady</option>
+            <option value="0.38">Brisk</option>
+          </select>
+        </label>
+        <label>Pitch <select id="pitch"></select></label>
+        <span id="do" hidden></span>
+      </p>
       <p id="status" class="status" role="status"></p>
       <div id="score" class="score"></div>
       <p id="why" class="why" aria-live="polite"></p>
