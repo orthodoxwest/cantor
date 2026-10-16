@@ -81,6 +81,10 @@ export class Listener {
   private ear: Ear | undefined;
   /** The ear's hearing of the take being sung, or of the last one. */
   heard: Promise<Heard> | undefined;
+  /** When the take being sung (or the last) began to be heard, on the audio clock, and how
+   * late the microphone's samples reach the page, in seconds, where the browser says. */
+  startedAt = 0;
+  inputLatency = 0;
   /** The last take's hearing, settled either way, which the next take waits for. */
   private last: Promise<unknown> = Promise.resolve();
   private generation = 0;
@@ -161,6 +165,10 @@ export class Listener {
     node.port.postMessage({ ear: channel.port1 }, [channel.port1]);
     // The node is pulled only when it reaches the destination; it outputs silence.
     source.connect(node).connect(ctx.destination);
+    this.startedAt = ctx.currentTime;
+    // Chrome reports the capture latency; the type does not list it.
+    const latency = (stream.getAudioTracks()[0]?.getSettings() as { latency?: unknown } | undefined)?.latency;
+    this.inputLatency = typeof latency === "number" && Number.isFinite(latency) ? latency : 0;
     this.nodes = [source, node];
     this.worklet = node;
   }

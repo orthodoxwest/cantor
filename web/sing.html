@@ -11,10 +11,12 @@
   <body>
     <main>
       <div class="controls">
+        <button id="take" type="button" disabled>Sing a take</button>
         <button id="play" type="button" disabled>Play</button>
         <button id="listen" type="button">Listen</button>
         <output id="readout" aria-live="polite">–</output>
       </div>
+      <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
       <p id="status" class="status" role="status"></p>
       <div id="score" class="score"></div>
       <p id="why" class="why" aria-live="polite"></p>
