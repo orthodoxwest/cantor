@@ -142,6 +142,7 @@ const recording = found?.recording ?? [];
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
 const why = byId<HTMLParagraphElement>("why");
+const markedList = byId<HTMLOListElement>("marked");
 const cutText = byId<HTMLParagraphElement>("cut");
 let shown: Judged | null = null;
 /** The note the singer stopped the take shown at, or null when it ran to the end; and whether
@@ -158,6 +159,62 @@ function unheard(judged: Judged): string {
   const begin = shownWorn ? "with the guide" : "when the cursor appears";
   return `Too little of your voice was heard to judge the take. Sing nearer the microphone and a little louder, beginning ${begin}.`;
 }
+
+/** The words sung on note `i`: its syllable, or for a note with none (a jubilus) the last
+ * sung before it in its verse. */
+function syllableOf(i: number): string {
+  const notes = score.timeline.notes;
+  const verse = notes[i]?.verse;
+  for (let j = i; j >= 0; j--) {
+    const n = notes[j];
+    if (!n || n.verse !== verse) break;
+    const text = n.syllableText.trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+/** The take the marks are listed for. */
+let listedFor: Judged | null = null;
+
+/** The core's marks written out in the order sung, each with the note it is on, so that a
+ * phone shows what the rings mean without a tap; each opens its mark on the score. Listed once
+ * a take, so that opening one keeps the button and its focus. */
+function listMarks(judged: Judged | null): void {
+  if (judged === listedFor) {
+    for (const b of markedList.querySelectorAll<HTMLButtonElement>("[data-opens]"))
+      b.setAttribute("aria-expanded", String(Number(b.dataset.opens) === open));
+    return;
+  }
+  listedFor = judged;
+  const marks = judged?.verdict.marks ?? [];
+  markedList.hidden = marks.length === 0;
+  const order = marks.map((m, k) => ({ m, k })).sort((a, b) => a.m.first - b.m.first || a.k - b.k);
+  markedList.replaceChildren(
+    ...order.map(({ m, k }) => {
+      const sung = syllableOf(m.first);
+      const where = `${m.first === m.last ? `Note ${m.first + 1}` : `Notes ${m.first + 1} to ${m.last + 1}`}${sung ? `, “${sung}”` : ""}: `;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.opens = String(k);
+      button.setAttribute("aria-controls", "why");
+      button.setAttribute("aria-expanded", String(k === open));
+      button.append(Object.assign(document.createElement("span"), { className: "where", textContent: where }), judged?.told[k] ?? "");
+      const item = document.createElement("li");
+      item.append(button);
+      return item;
+    }),
+  );
+}
+markedList.addEventListener("click", (e) => {
+  const button = (e.target as Element | null)?.closest<HTMLButtonElement>("[data-opens]");
+  if (!button || !shown) return;
+  const k = Number(button.dataset.opens);
+  open = open === k ? null : k;
+  drawResult();
+  // The mark's ring on the score; its words stay in view above the bar.
+  if (open !== null) score.host.querySelector(`[data-mark="${k}"]`)?.scrollIntoView({ block: "center" });
+});
 
 /** Shows `text` as the words of the mark open, announcing it only when it changes. */
 function say(text: string): void {
@@ -179,6 +236,7 @@ function drawResult(): void {
       through === 0
         ? `You stopped the take at note ${cutAt + 1} of ${total}, before its first phrase was sung through, so there is nothing to judge yet.`
         : `You stopped the take at note ${cutAt + 1} of ${total}, so it is judged through note ${through}, where the last phrase you sang through ended.`;
+  listMarks(key === null ? null : judged);
   if (!judged || key === null) {
     score.showStrips(null);
     say("");
