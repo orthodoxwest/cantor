@@ -18,6 +18,7 @@ neuma-tones = { git = "https://github.com/orthodoxwest/neuma", rev = "2d6d8a3b42
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hound = "3.5"
+claxon = "0.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -29,3 +30,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The core's signal code is slow unoptimized; tests and `cantor eval` run it optimized.
+[profile.dev.package.cantor-core]
+opt-level = 3

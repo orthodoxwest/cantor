@@ -1,5 +1,7 @@
 //! Scoring a tracked take against the notes it should contain: the median cents error per
-//! note over its sustained part, and a few summary rates.
+//! note over its sustained part, and a few summary rates. Errors are octave-agnostic: each
+//! frame's error is folded to the nearest octave of the note, so a singer an octave down is
+//! on pitch and a tracker's octave error on one frame does not move the note.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +26,9 @@ pub struct NoteResult {
     pub expected_midi: f32,
     /// How many voiced frames landed in the note's sustained part.
     pub voiced_frames: usize,
+    /// How many frames there were masked by the guide's bleed.
+    #[serde(default)]
+    pub masked_frames: usize,
     /// The median cents error of those frames, or `None` when too few landed.
     pub cents: Option<f32>,
 }
@@ -70,19 +75,23 @@ pub fn score(notes: &[Note], frames: &[Frame]) -> Report {
 fn score_note(index: usize, note: &Note, frames: &[Frame]) -> NoteResult {
     let from = note.start_s + SKIP_HEAD * note.dur_s;
     let to = note.start_s + (1.0 - SKIP_TAIL) * note.dur_s;
-    let mut errors: Vec<f32> = frames
-        .iter()
-        .filter(|f| f.t >= from && f.t < to)
-        .filter_map(|f| f.midi.map(|m| (m - note.midi) * 100.0))
-        .collect();
+    let sustained = frames.iter().filter(|f| f.t >= from && f.t < to);
+    let masked_frames = sustained.clone().filter(|f| f.masked).count();
+    let mut errors: Vec<f32> = sustained.filter_map(|f| f.midi.map(|m| fold((m - note.midi) * 100.0))).collect();
     let voiced_frames = errors.len();
     let cents = (voiced_frames >= MIN_VOICED).then(|| median(&mut errors));
     NoteResult {
         index,
         expected_midi: note.midi,
         voiced_frames,
+        masked_frames,
         cents,
     }
+}
+
+/// `cents` folded to the nearest octave: into `-600.0..600.0`.
+pub fn fold(cents: f32) -> f32 {
+    (cents + 600.0).rem_euclid(1200.0) - 600.0
 }
 
 /// The median of a non-empty slice, sorting it in place.
@@ -107,17 +116,14 @@ mod tests {
                 midi,
                 clarity: 1.0,
                 rms: 0.1,
+                masked: false,
             })
             .collect()
     }
 
     #[test]
     fn median_error_over_the_sustained_part() {
-        let notes = [Note {
-            midi: 60.0,
-            start_s: 0.0,
-            dur_s: 1.0,
-        }];
+        let notes = [Note::new(60.0, 0.0, 1.0)];
         // The first frame (t = 0.1) and the last (t = 0.95) fall outside the sustained part.
         let fr = frames(&[
             (0.1, Some(70.0)),
@@ -136,18 +142,7 @@ mod tests {
 
     #[test]
     fn too_few_voiced_frames_is_unheard() {
-        let notes = [
-            Note {
-                midi: 60.0,
-                start_s: 0.0,
-                dur_s: 1.0,
-            },
-            Note {
-                midi: 62.0,
-                start_s: 1.0,
-                dur_s: 1.0,
-            },
-        ];
+        let notes = [Note::new(60.0, 0.0, 1.0), Note::new(62.0, 1.0, 1.0)];
         let fr = frames(&[
             (0.3, Some(60.0)),
             (0.5, None),
@@ -165,15 +160,20 @@ mod tests {
     }
 
     #[test]
+    fn octaves_fold_away() {
+        assert_eq!(fold(1210.0), 10.0);
+        assert_eq!(fold(-1190.0), 10.0);
+        assert_eq!(fold(-250.0), -250.0);
+        assert_eq!(fold(700.0), -500.0);
+        let notes = [Note::new(60.0, 0.0, 1.0)];
+        let fr = frames(&[(0.3, Some(48.1)), (0.5, Some(60.1)), (0.7, Some(48.1))]);
+        let cents = score(&notes, &fr).notes[0].cents.expect("heard");
+        assert!((cents - 10.0).abs() < 1e-3, "{cents}");
+    }
+
+    #[test]
     fn nothing_heard_gives_zero_rates() {
-        let report = score(
-            &[Note {
-                midi: 60.0,
-                start_s: 0.0,
-                dur_s: 1.0,
-            }],
-            &[],
-        );
+        let report = score(&[Note::new(60.0, 0.0, 1.0)], &[]);
         assert_eq!(
             (report.heard_fraction, report.gross_error_rate, report.mean_abs_cents),
             (0.0, 0.0, 0.0)

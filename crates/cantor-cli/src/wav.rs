@@ -1,5 +1,5 @@
-//! WAV files in and out: 16-bit PCM or 32-bit float in, the first channel only; 32-bit float
-//! mono out.
+//! Audio files in and out: WAV (PCM or 32-bit float) or FLAC in, the first channel only;
+//! 32-bit float mono WAV out.
 
 use std::path::Path;
 
@@ -7,6 +7,9 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 /// The first channel of `path` as f32 samples, with its sample rate.
 pub fn read_mono(path: &Path) -> Result<(Vec<f32>, f32), String> {
+    if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("flac")) {
+        return read_flac(path);
+    }
     let err = |e: hound::Error| format!("{}: {e}", path.display());
     let mut reader = WavReader::open(path).map_err(err)?;
     let spec = reader.spec();
@@ -25,6 +28,21 @@ pub fn read_mono(path: &Path) -> Result<(Vec<f32>, f32), String> {
         (format, bits) => return Err(format!("{}: unsupported {bits}-bit {format:?} samples", path.display())),
     };
     Ok((samples, spec.sample_rate as f32))
+}
+
+fn read_flac(path: &Path) -> Result<(Vec<f32>, f32), String> {
+    let err = |e: claxon::Error| format!("{}: {e}", path.display());
+    let mut reader = claxon::FlacReader::open(path).map_err(err)?;
+    let info = reader.streaminfo();
+    let step = info.channels.max(1) as usize;
+    let scale = 1.0 / (1u64 << (info.bits_per_sample - 1)) as f32;
+    let samples = reader
+        .samples()
+        .step_by(step)
+        .map(|s| s.map(|v| v as f32 * scale))
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    Ok((samples, info.sample_rate as f32))
 }
 
 /// Writes `samples` to `path` as a 32-bit float mono WAV file.

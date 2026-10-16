@@ -60,6 +60,8 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build -p cantor-wasm --target wasm32-unknown-unknown --profile wasm
       - run: cargo run -q -p cantor-cli -- eval
+      - if: always()
+        run: if [ -f out/eval.md ]; then cat out/eval.md >> "$GITHUB_STEP_SUMMARY"; fi
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'

@@ -1,0 +1,11 @@
+{
+  "name": "tracker-drift",
+  "gabc": "evals/chants/scale.gabc",
+  "pulse_s": 0.5,
+  "takes": [
+    {
+      "seed": 3,
+      "drift_cents_per_second": -1.5
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "expert-dry",
+  "gate": "expert",
+  "pulse_s": 0.45,
+  "voice": "vowel",
+  "scoop_cents": 120,
+  "scoop_s": 0.08,
+  "vibrato_cents": 30,
+  "vibrato_hz": 5.5,
+  "wander_cents": 8,
+  "takes": [
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 11,
+      "key_cents": -1500
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 12,
+      "key_cents": -1130,
+      "drift_cents_per_second": 0.4
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 13,
+      "key_cents": -760,
+      "drift_cents_per_second": -0.5
+    },
+    {
+      "gabc": "content/chants/ubi-caritas.gabc",
+      "seed": 14,
+      "key_cents": -470,
+      "pulse_s": 0.4
+    },
+    {
+      "gabc": "content/chants/nunc-dimittis.gabc",
+      "seed": 15,
+      "key_cents": -900
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 16,
+      "key_cents": -1210,
+      "pulse_s": 0.5
+    }
+  ]
+}

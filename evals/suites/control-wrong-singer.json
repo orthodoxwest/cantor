@@ -1,0 +1,48 @@
+{
+  "name": "control-wrong-singer",
+  "gate": "wrong",
+  "gabc": "evals/chants/psalm-117.gabc",
+  "pulse_s": 0.45,
+  "voice": "vowel",
+  "scoop_cents": 120,
+  "scoop_s": 0.08,
+  "vibrato_cents": 30,
+  "vibrato_hz": 5.5,
+  "wander_cents": 8,
+  "guide": "full",
+  "lead_in_s": 2.0,
+  "takes": [
+    {
+      "seed": 71,
+      "key_cents": 0,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.1,
+      "ranges": [
+        {"first": 45, "last": 61, "cents": 200}
+      ],
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 180, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200]
+    },
+    {
+      "seed": 72,
+      "key_cents": -1200,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.15,
+      "reverb_rt60_s": 1.2,
+      "reverb_wet": 0.4,
+      "phone": true,
+      "ranges": [
+        {"first": 14, "last": 44, "cents": -200}
+      ],
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -180]
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 73,
+      "pulse_s": 0.5,
+      "key_cents": -1210,
+      "bleed_db": -14,
+      "bleed_delay_s": 0.05,
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, -200, 0, 0, 0, 0, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 180, 0, 0, 0, 0, 0, 220]
+    }
+  ]
+}
