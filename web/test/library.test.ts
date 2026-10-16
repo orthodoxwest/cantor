@@ -43,6 +43,9 @@ describe("searching the library", () => {
     expect(found("ii", chant({ mode: "ii" }))).toBe(true);
     expect(found("ii", chant({ mode: "iii" }))).toBe(false);
     expect(found("vi", chant({ title: "Vidi aquam", mode: "viii" }))).toBe(true);
+    expect(found("mode vi", chant({ title: "Vidi aquam", mode: "viii" }))).toBe(false);
+    expect(found("vi antiphon", chant({ title: "Vidi aquam", mode: "viii" }))).toBe(false);
+    expect(found("mode vi", chant({ mode: "vi" }))).toBe(true);
   });
 
   it("finds everything when nothing is searched", () => {

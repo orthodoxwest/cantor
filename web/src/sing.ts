@@ -97,7 +97,8 @@ find.addEventListener("input", () => {
 });
 const links = () => [...foundList.querySelectorAll<HTMLAnchorElement>("a")];
 find.addEventListener("keydown", (e) => {
-  // Enter practises the first match, the down arrow goes into the list, Escape clears.
+  // Enter practises the first match (not the Enter that ends an input method's composing, which
+  // Safari sends as key code 229), the down arrow goes into the list, Escape clears.
   if (e.key === "Escape" && find.value) {
     e.preventDefault();
     find.value = "";
@@ -106,7 +107,7 @@ find.addEventListener("keydown", (e) => {
   }
   const first = links()[0];
   if (!first) return;
-  if (e.key === "Enter" && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     location.assign(first.href);
   } else if (e.key === "ArrowDown") {
