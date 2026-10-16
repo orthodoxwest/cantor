@@ -24,3 +24,4 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 - Tests are deterministic. A flaky test is a bug to fix, never retried.
 - Private material (recordings, booklet-derived content, personal data) never enters this repository.
 - Commit messages describe the change; no attribution trailers.
+- Deploys happen only from `.github/workflows/deploy.yml` when `main` changes; never deploy by hand.
