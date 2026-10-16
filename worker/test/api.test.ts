@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { identity } from "../src/identity";
 import app from "../src/index";
 
 const get = (path: string, headers?: HeadersInit, bindings: Env = env) =>
@@ -152,6 +153,24 @@ describe("api", () => {
         expect((await get("/api/me", { Cookie }, prod)).status).toBe(401);
         expect((await get("/api/chants/private-test", { Cookie }, prod)).status).toBe(404);
       }
+    });
+
+    it("waits a few seconds after a team's keys fail to load before fetching them again", async () => {
+      const DOWN = "https://down.cloudflareaccess.com";
+      const down = { ...prod, ACCESS_TEAM: DOWN };
+      const headers = new Headers({ "Cf-Access-Jwt-Assertion": await token({ ...good(), iss: DOWN }) });
+      const calls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith(DOWN)).length;
+      const t = Date.now();
+      expect(await identity(headers, down, t)).toBeNull();
+      expect(await identity(headers, down, t + 9_999)).toBeNull();
+      expect(calls()).toBe(1);
+      expect(await identity(headers, down, t + 10_000)).toBeNull();
+      expect(calls()).toBe(2);
+    });
+
+    it("never lets /api/me be cached", async () => {
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token(good()) }, prod)).headers.get("Cache-Control")).toBe("private, no-store");
+      expect((await get("/api/me", {}, prod)).headers.get("Cache-Control")).toBe("private, no-store");
     });
 
     it("takes a single audience as well as a list", async () => {

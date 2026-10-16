@@ -221,13 +221,13 @@ a {
     gap: 1rem;
   }
   /* With signing in offered too, everything draws in a little to fit a 320px phone. */
-  .beam-in:has(.signin) {
+  .beam-in.offers-signin {
     gap: 0.7rem;
   }
-  .beam-in:has(.signin) nav {
+  .beam-in.offers-signin nav {
     gap: 0.7rem;
   }
-  .beam-in:has(.signin) nav a,
+  .beam-in.offers-signin nav a,
   .signin {
     font-size: 0.74rem;
     letter-spacing: 0.02em;

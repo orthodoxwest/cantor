@@ -67,30 +67,21 @@ const REFETCH = 60_000;
 /** When fetching a team's keys last failed: no request fetches them again for a few seconds. */
 const failed = new Map<string, number>();
 const RETRY = 10_000;
-/** A fetch under way, shared by the requests (and cookies) that need it. */
-const fetching = new Map<string, Promise<boolean>>();
 
 async function signingKey(team: string, kid: string, now: number): Promise<CryptoKey | undefined> {
   const known = teams.get(team);
   const fresh = known && now - known.fetched < KEYS_TTL;
   if (fresh && (known.keys.has(kid) || now - known.fetched < REFETCH)) return known.keys.get(kid);
-  if (now - (failed.get(team) ?? -Infinity) < RETRY) return fresh ? known.keys.get(kid) : undefined;
-  let fetched = fetching.get(team);
-  if (!fetched) {
-    fetched = fetchKeys(team, now)
-      .catch(() => false)
-      .finally(() => fetching.delete(team));
-    fetching.set(team, fetched);
-  }
-  if (!(await fetched)) {
+  if (now - (failed.get(team) ?? -Infinity) < RETRY) return undefined;
+  if (!(await fetchKeys(team, now).catch(() => false))) {
     failed.set(team, now);
-    return fresh ? known.keys.get(kid) : undefined;
+    return undefined;
   }
   return teams.get(team)?.keys.get(kid);
 }
 
 async function fetchKeys(team: string, now: number): Promise<boolean> {
-  const res = await fetch(`${team}/cdn-cgi/access/certs`);
+  const res = await fetch(`${team}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) return false;
   const { keys: jwks } = (await res.json()) as { keys?: Array<JsonWebKey & { kid?: string }> };
   const keys = new Map<string, CryptoKey>();
