@@ -1,6 +1,6 @@
 import { Chant, init, summarize } from "neuma";
 import { Cursor } from "./cursor";
-import { Guide } from "./guide";
+import { Guide, PULSE } from "./guide";
 import { type Entry, Listener } from "./listen";
 import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
 import { escape, finds, highlight, kicker, library, chant as findChant, terms, type LibraryChant } from "./library";
@@ -456,6 +456,57 @@ async function startDrone(): Promise<void> {
   }
 }
 
+// Speed and Pitch set the guide's pulse and transposition, so the voice, the cursor, a take's
+// timing, Start note and Drone all follow them; the clef's do is named when it moves. They
+// are kept in the address, and so in the links to the chants found.
+const speedSelect = byId<HTMLSelectElement>("speed");
+/** The clef's do moved by 0 to 11 semitones, spelled as a singer would read the key. */
+const DO_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const pitchSelect = byId<HTMLSelectElement>("pitch");
+const doText = byId<HTMLSpanElement>("do");
+for (let s = -7; s <= 7; s++) {
+  const label = s === 0 ? "As written" : `${s > 0 ? "+" : "−"}${Math.abs(s)} semitone${Math.abs(s) === 1 ? "" : "s"}`;
+  pitchSelect.add(new Option(label, String(s)));
+}
+const askedSpeed = params.get("speed");
+if ([...speedSelect.options].some((o) => o.value === askedSpeed)) speedSelect.value = askedSpeed!;
+const askedPitch = Number(params.get("pitch") ?? 0);
+pitchSelect.value = String(Number.isInteger(askedPitch) && Math.abs(askedPitch) <= 7 ? askedPitch : 0);
+
+function applyTempo(): void {
+  const pulse = Number(speedSelect.value);
+  const transpose = Number(pitchSelect.value);
+  if (guide) {
+    guide.pulse = pulse;
+    guide.transpose = transpose;
+  }
+  doText.hidden = transpose === 0;
+  doText.textContent = `The clef’s do is ${DO_NAMES[(transpose + 12) % 12]}.`;
+  if (pulse === PULSE) params.delete("speed");
+  else params.set("speed", speedSelect.value);
+  if (transpose === 0) params.delete("pitch");
+  else params.set("pitch", String(transpose));
+  const query = params.toString();
+  history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  // The chants found lead to their practice at this speed and pitch.
+  drawFound();
+}
+applyTempo();
+for (const select of [speedSelect, pitchSelect]) {
+  select.addEventListener("change", () => {
+    // What is sounding was set going at the old speed and pitch; Start note and a drone have
+    // no speed.
+    guide?.stop();
+    if (select === pitchSelect) stopPitch();
+    const retune = select === pitchSelect && droneButton.getAttribute("aria-pressed") === "true";
+    applyTempo();
+    if (retune) {
+      stopDrone();
+      void startDrone();
+    }
+  });
+}
+
 if (!guide) {
   playButton.title = noteButton.title = droneButton.title = "The guide voice could not load.";
   setStatus(playButton.title);
@@ -585,6 +636,7 @@ async function takeScored(): Promise<void> {
   stopDrone(false);
   listener.stop();
   playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = true;
+  speedSelect.disabled = pitchSelect.disabled = true;
   holdChant(true);
   takeButton.textContent = "Stop";
   readout.textContent = "–";
@@ -670,7 +722,7 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = droneButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   readout.setAttribute("aria-live", "polite");
-  headphonesBox.disabled = false;
+  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = false;
   holdChant(false);
   modeLine.hidden = !guide;
   void detect();
@@ -702,6 +754,12 @@ if (test) {
     get drone() {
       return drone?.midi ?? null;
     },
+    /** Where the guide's voice is at home, as MIDI. */
+    centre: table?.centre ?? null,
+    /** The notes the guide sings, at the page's speed and pitch. */
+    get sung() {
+      return guide?.notes() ?? [];
+    },
     /** Drones not yet silent, fading ones included. */
     get drones() {
       return Drone.sounding.size;
@@ -717,10 +775,11 @@ if (test) {
     // Puts `gabc` on the page at `pulse` seconds a pulse, for a take of another chant.
     practise: (gabc: string, pulse: number) => {
       if (gabc !== score.source) score.setChant(new Chant(gabc));
-      if (guide) {
-        guide.gabc = gabc;
-        guide.pulse = pulse;
-      }
+      if (guide) guide.gabc = gabc;
+      // Through the Speed select, as a singer would, adding the pulse to it if it is not there.
+      if (![...speedSelect.options].some((o) => o.value === String(pulse))) speedSelect.add(new Option(`${pulse} s a pulse`, String(pulse)));
+      speedSelect.value = String(pulse);
+      applyTempo();
     },
     /** The page's times for the notes on it, at `pulse` seconds a pulse. */
     timed: (pulse: number) => timed(score.timeline.notes, pulse),

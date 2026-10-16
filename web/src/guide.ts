@@ -39,6 +39,8 @@ export class Guide {
   playing = false;
   /** Seconds a pulse. */
   pulse = PULSE;
+  /** Semitones the chant is sung above where it is written. */
+  transpose = 0;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
   private singing: Singing | null = null;
@@ -65,15 +67,15 @@ export class Guide {
     this.options.gabc = gabc;
   }
 
-  /** The notes to sing: the timeline at the core's times, moved by whole octaves to where
-   * the voice is at home. */
+  /** The notes to sing: the timeline at the core's times, moved by [`transpose`], then by
+   * whole octaves to where the voice is at home. */
   notes(): SungNote[] {
     const { notes } = this.score.timeline;
     const shift = octaveShift(
-      notes.map((n) => DO + n.semitones),
+      notes.map((n) => DO + n.semitones + this.transpose),
       this.options.table.centre,
     );
-    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + shift);
+    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + this.transpose + shift);
   }
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves
