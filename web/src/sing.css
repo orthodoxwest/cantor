@@ -195,9 +195,15 @@ main:has(#result:not([hidden])) #loop {
 .ribbon .band-trace {
   fill: none;
   stroke: var(--trace);
-  stroke-width: 2;
+  stroke-width: 1.25;
+  stroke-opacity: 0.55;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+/* The pitch each note was held at, the ribbon's line to read. */
+.ribbon .band-held {
+  stroke: var(--trace);
+  stroke-width: 3.5;
 }
 
 /* The marks (marks.ts): a ring round each note the core marked, its reason below when tapped. */

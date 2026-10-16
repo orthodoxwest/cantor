@@ -2,9 +2,12 @@
 // its target at the centre, and the pitch heard over the note's sustained part. Each band is
 // measured in cents from the note itself, as the core's judge placed it in the singer's key,
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. Where the
-// chant has an aligned recording, its trace is drawn under the singer's, each measured from its
-// own key, so the two compare as sung, wherever each was pitched. The ribbon itself draws no
+// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. Each heard
+// note's value, the pitch it was held at, is drawn as a short bar across its band, over the
+// faint trace it was taken from, so the take reads at a glance as steps against the targets,
+// which reach past the bars' ends. Where the chant has an aligned recording, its trace is drawn
+// under the singer's, each measured from its own key, so the two compare as sung, wherever each
+// was pitched. The ribbon itself draws no
 // verdict: no zone of what counts as in tune, no colours; the core's marks are drawn by
 // marks.ts, on the notes in the engraving.
 import type { TimelineNote } from "neuma";
@@ -123,6 +126,13 @@ export function drawRibbon(
     };
     trace(sung.get(band.index), recordedBase ?? 0, "band-recorded");
     trace(band, base, "band-trace");
+    if (heard) {
+      const y = f(yOf(band.cents! - base, top));
+      // Inset within the target, so that it shows either side even under a note on pitch, and
+      // neighbours' bars do not meet, save where a neume's narrow bands overlap.
+      const inset = Math.min(4, w / 4);
+      out.push(`<line class="band-held" x1="${f(p.left + inset)}" x2="${f(p.right - inset)}" y1="${y}" y2="${y}"/>`);
+    }
     out.push("</g>");
   }
   return out.join("");

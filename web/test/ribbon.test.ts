@@ -41,6 +41,29 @@ describe("ribbon", () => {
     expect(svg.match(/<polyline/g)).toHaveLength(1);
   });
 
+  it("draws each heard note's value as a bar across its band, re-based with the traces", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    const bands = [
+      { index: 0, from_s: 0, to_s: 1, cents: 60, trace: [[0.2, 40], [0.6, 80]] as Array<[number, number]> },
+      { index: 1, from_s: 1, to_s: 2, cents: null, trace: [] },
+    ];
+    const held = (svg: string) =>
+      [...svg.matchAll(/<line class="band-held" x1="([^"]*)" x2="([^"]*)" y1="([^"]*)" y2="([^"]*)"/g)].map((m) => m.slice(1).map(Number));
+    // The first note only, the second not heard: its band (86 to 115) less 4 each side, inside
+    // its target (the band less 1).
+    expect(held(drawRibbon(notes, bands, () => 0))).toEqual([[90, 111, ...[yOf(60, 0), yOf(60, 0)].map((y) => Number(y.toFixed(1)))]]);
+    expect(held(drawRibbon(notes, bands, () => 0, 60, 0))).toEqual([[90, 111, yOf(0, 0), yOf(0, 0)]]);
+    // Clipped at the strip's edge, as the trace is.
+    const far = [{ ...bands[0]!, cents: RANGE_CENTS * 2 }];
+    expect(held(drawRibbon(notes, far, () => 0))[0]!.slice(2)).toEqual([yOf(RANGE_CENTS, 0), yOf(RANGE_CENTS, 0)]);
+    // In a neume's narrow band, a quarter of its width each side.
+    const stacked = [note(157.5, 0), note(157.8, 0), note(163.5, 0)];
+    const [bar] = held(drawRibbon(stacked, [{ ...bands[0]!, index: 1 }], () => 0));
+    expect(bar![1]! - bar![0]!).toBeCloseTo(MIN_WIDTH / 2);
+    expect(bar![0]).toBeGreaterThan(157.8 - MIN_WIDTH / 2 + 1);
+    expect(bar![1]).toBeLessThan(157.8 + MIN_WIDTH / 2 - 1);
+  });
+
   it("re-bases the traces on a note, keeping every target where it was", () => {
     const notes = [note(100, 0), note(130, 0)];
     const bands = [
