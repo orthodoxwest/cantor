@@ -192,4 +192,14 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
+  // The next take clears this one's view, and Stop ends it.
+  await page.locator('[data-mark="0"]').click();
+  await expect(page.locator("#why")).not.toHaveText("");
+  await take.click();
+  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator(".mark-ring")).toHaveCount(0);
+  await expect(page.locator("#result")).toBeHidden();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.locator("#status")).toHaveText("The take was stopped.");
+  await expect(take).toHaveText("Sing a take");
 });

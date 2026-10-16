@@ -145,7 +145,11 @@ const listener = new Listener(
     const text = frame.midi === null ? "–" : taking ? noteName(frame.midi) : describePitch(frame.midi);
     if (readout.textContent !== text) readout.textContent = text;
   },
-  (error) => failedListening(error),
+  (error) => {
+    // A take that cannot be heard is over.
+    if (taking) stopTake();
+    failedListening(error);
+  },
 );
 /** Listens freely, unscored, or stops; the tests hear the microphone this way. A take is the
  * page's one way to sing and be heard. */
@@ -166,8 +170,8 @@ async function toggleListening(): Promise<void> {
   }
 }
 
-// Play (disabled in the page) waits for the voice; without one the guide stays off and
-// listening still works.
+// Play (disabled in the page) waits for the voice; without one the guide stays off, and so
+// does a take, which it leads.
 const playButton = byId<HTMLButtonElement>("play");
 const failed = (error: unknown) => {
   console.error("guide voice:", error);
@@ -353,6 +357,15 @@ async function takeScored(): Promise<void> {
   }
 }
 
+/** Ends the take under way at once, so that nothing of it touches the page again. */
+function stopTake(): void {
+  takes++;
+  // The listener stops first, so its last frames do not reach the readout.
+  listener.stop();
+  guide?.stop();
+  endTake();
+}
+
 function endTake(): void {
   taking = false;
   cueing?.stop();
@@ -369,11 +382,7 @@ if (guide) {
   takeButton.disabled = false;
   takeButton.addEventListener("click", () => {
     if (!taking) return void takeScored();
-    takes++;
-    // The listener stops first, so its last frames are not read as Listen's.
-    listener.stop();
-    guide.stop();
-    endTake();
+    stopTake();
     setStatus("The take was stopped.", true);
   });
 } else {

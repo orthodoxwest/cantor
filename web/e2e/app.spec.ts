@@ -116,7 +116,7 @@ test("a voice file with nothing to sing falls back to the neutral vowel", async 
   expect(await page.evaluate(() => window.__cantor.voice)).toBe("neutral");
 });
 
-test("without the renderer the guide is off and listening still works", async ({ page }) => {
+test("without the renderer the guide and the take are off, and the ear still hears", async ({ page }) => {
   await page.route(
     (url) => url.pathname === "/cantor.wasm",
     (route) => route.fulfill({ status: 404 }),
@@ -124,6 +124,7 @@ test("without the renderer the guide is off and listening still works", async ({
   await open(page);
   expect(await page.evaluate(() => window.__cantor.voice)).toBe("none");
   await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sing a take" })).toBeDisabled();
   await page.evaluate(() => void window.__cantor.listen());
   await expect(page.locator("#readout")).toHaveText(/^A4 /, { timeout: 15_000 });
 });
