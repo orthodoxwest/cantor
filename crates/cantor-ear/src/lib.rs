@@ -42,7 +42,8 @@ impl Hearing {
         })
     }
 
-    /// Adds `samples` to the take: the frames they complete.
+    /// Adds `samples` to the take: the frames they complete, as the live trace shows them
+    /// (under the live floor, unvoiced; see [`Listening::push`]).
     pub fn push(&mut self, samples: &[f32]) -> Result<&[Frame], String> {
         with_swift(|s| self.swift.push(s, samples))?;
         Ok(self.listening.push(samples))
@@ -148,7 +149,8 @@ pub extern "C" fn ear_output_len() -> u32 {
 }
 
 /// Frames as the page reads them: [`FRAME_FIELDS`] numbers each, the frame's centre in
-/// seconds from the take's start, its pitch (NaN when unvoiced), clarity and RMS.
+/// seconds from the take's start, its pitch (NaN when unvoiced, or under the live floor),
+/// clarity and RMS.
 pub fn frame_fields(frames: &[Frame]) -> Vec<f32> {
     frames
         .iter()
