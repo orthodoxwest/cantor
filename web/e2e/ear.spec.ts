@@ -18,6 +18,13 @@ const KEY_TOLERANCE_CENTS = 10;
  * shown 18.7 with its capture. */
 const BAND_TOLERANCE_CENTS = 25;
 
+type Cadenced = { verdict: { cadences: Array<{ cents: number | null }> }; summary: string[] };
+/** Whether a cadence is within the band tolerance of where the judge calls it off
+ * (cantor-core's `CADENCE_CENTS`), where the two ears may call it either way. */
+const nearLine = (c: { cents: number | null }) => c.cents !== null && Math.abs(Math.abs(c.cents) - 100) < BAND_TOLERANCE_CENTS;
+const borderline = (take: Cadenced) => take.verdict.cadences.some(nearLine);
+const offPitch = (c: { cents: number | null }) => (c.cents === null ? null : Math.abs(c.cents) >= 100);
+
 test.use({
   launchOptions: {
     args: [
@@ -116,6 +123,16 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
   // a mark tapped (or entered) shows the core's words for it, and only one is open at a time.
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
+  // So are the two sentences on the take as a whole, but for a cadence too near the line to
+  // call; the page shows the core's.
+  expect(got.summary).toHaveLength(2);
+  const cadences = (take: Cadenced) => take.verdict.cadences.map((c) => (nearLine(c) ? "near" : offPitch(c)));
+  expect(cadences(got).filter((c, i) => c !== "near" && cadences(want)[i] !== "near")).toEqual(
+    cadences(want).filter((c, i) => c !== "near" && cadences(got)[i] !== "near"),
+  );
+  expect(got.summary[0]).toEqual(want.summary[0]);
+  if (!borderline(want) && !borderline(got)) expect(got.summary).toEqual(want.summary);
+  await expect(page.locator("#summary")).toHaveText(got.summary.join(" "));
   type Marked = { first: number; last: number };
   const notesOf = (marks: Marked[]) => marks.flatMap((m) => Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k));
   const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
@@ -192,6 +209,12 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
+  // The take's own sentences: its tone as the eval's, its cadences as the eval's but for one
+  // too near the line to call.
+  const told = (await page.locator("#summary").textContent()) ?? "";
+  expect(told.startsWith(want.summary[0])).toBe(true);
+  if (!borderline(want)) expect(told).toEqual(want.summary.join(" "));
+  else expect(told).toMatch(/cadences? (clearly heard )?(was|were|went)/);
   // The next take clears this one's view, and Stop ends it.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).not.toHaveText("");

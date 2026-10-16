@@ -23,6 +23,8 @@ export interface Judged {
   ribbon: Band[];
   /** Each mark in words. */
   told: string[];
+  /** The take as a whole in two sentences, or none when it was not heard. */
+  summary: string[];
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */
