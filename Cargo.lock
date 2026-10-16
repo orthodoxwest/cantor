@@ -117,6 +117,7 @@ name = "cantor-ear"
 version = "0.0.1"
 dependencies = [
  "cantor-core",
+ "cantor-swift",
  "serde",
  "serde_json",
 ]

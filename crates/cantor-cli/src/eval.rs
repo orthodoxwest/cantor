@@ -864,6 +864,38 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
     ))
 }
 
+/// Every take's audio and its rate, named as the eval names it: each suite's synthetic takes,
+/// then the real takes in `takes`.
+pub fn audio(root: &Path, takes: Option<&Path>) -> Result<Vec<(String, Vec<f32>, f32)>, String> {
+    let mut out = Vec::new();
+    for suite in load_suites(&root.join("evals/suites"))? {
+        for (i, spec) in suite.takes.iter().enumerate() {
+            let path = root.join(&spec.gabc);
+            let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
+            for n in &mut notes {
+                n.start_s += spec.lead_in_s;
+            }
+            let take = render_take(&notes, &spec.profile, SAMPLE_RATE, spec.seed);
+            out.push((format!("{}-{i}", suite.name), take.samples, SAMPLE_RATE));
+        }
+    }
+    if let Some(dir) = takes {
+        for path in json_files(dir)? {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (samples, rate) = crate::wav::read_mono(&path.parent().unwrap_or(dir).join(&take.audio))?;
+            out.push((format!("{REAL} {}", take.name), samples, rate));
+        }
+    }
+    Ok(out)
+}
+
+/// `f` over `items` on every core, as the eval runs takes.
+pub fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    in_parallel(items, |_, item| f(item))
+}
+
 fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
     let mut out = Vec::new();
     for path in json_files(dir)? {
@@ -991,7 +1023,7 @@ mod tests {
     #[test]
     fn the_browser_ear_hears_a_take_as_the_eval_does_wherever_its_frames_fall() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let ear = Ear::new(true).expect("ear");
+        let ear = Ear::new(false).expect("ear");
         let marks = |v: &Verdict| v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>();
         for rate in [44_100.0, 48_000.0] {
             let (samples, want) = take(&root, &ear, "student-notes", 0, rate).expect("take");
@@ -1000,12 +1032,13 @@ mod tests {
             for quarter in 0..4 {
                 let mut padded = vec![0.0; quarter * hop / 4];
                 padded.extend(&samples);
-                let mut listening = cantor_core::Listening::new(rate);
-                listening.push(&padded);
-                let (padded, frames) = listening.finish(None, None);
-                let onset = cantor_ear::onset(&padded, rate).expect("sound");
-                let offset = want.lead_in_s + onset - want.onset_s.expect("sound");
-                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &frames);
+                let mut hearing = cantor_ear::Hearing::new(rate).expect("rate");
+                for block in padded.chunks(1_024) {
+                    hearing.push(block).expect("push");
+                }
+                let heard = hearing.finish().expect("heard");
+                let offset = want.lead_in_s + heard.onset.expect("sound") - want.onset_s.expect("sound");
+                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &heard.frames);
                 let at = format!("{rate} Hz, {quarter}/4 hop");
                 let heard = (got.report.heard_fraction - want.report.heard_fraction).abs();
                 let key = (got.verdict.key_cents.expect("key") - want.verdict.key_cents.expect("key")).abs();

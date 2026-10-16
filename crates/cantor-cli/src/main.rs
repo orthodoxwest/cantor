@@ -1,7 +1,8 @@
 //! The `cantor` command: offline work on takes. `pitch` tracks a WAV or FLAC file, `synth`
 //! renders a chant with planted faults, `sing` renders it with the guide voice, `diction`
 //! lists the vowels it would sing, `eval` runs the listening gates and the baseline, `take`
-//! writes one of their takes with what the eval heard.
+//! writes one of their takes with what the eval heard, `swift-parity` holds SwiftF0's port to
+//! tract's run of the same model.
 
 #![forbid(unsafe_code)]
 
@@ -29,6 +30,7 @@ const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor eval [--takes DIR] [--write-baseline] [--nsdf-only] [--oracle MODEL.onnx]
        cantor explain SUITE [--takes DIR] [--nsdf-only] [--oracle MODEL.onnx]
        cantor take SUITE INDEX [--rate HZ] [--pad SECONDS] [--nsdf-only] -o OUT.wav
+       cantor swift-parity [--takes DIR]
        cantor version
 
 Listening uses the NSDF tracker with SwiftF0's opinion beside it; --nsdf-only drops SwiftF0.
@@ -56,6 +58,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("eval") => return eval_cmd(rest),
         Some("explain") => return explain_cmd(rest),
         Some("take") => take_cmd(rest)?,
+        Some("swift-parity") => return swift_parity_cmd(rest),
         Some("-h" | "--help") => println!("{USAGE}"),
         Some(other) => return Err(format!("unknown command: {other}\n{USAGE}")),
     }
@@ -272,6 +275,66 @@ fn take_cmd(args: &[String]) -> Result<(), String> {
     wav::write_mono_16(&out, &samples, rate)?;
     println!("{}", serde_json::to_string(&file).map_err(|e| e.to_string())?);
     Ok(())
+}
+
+/// The most SwiftF0's port may differ from tract's run of the model on a frame both voice, in
+/// semitones.
+const SWIFT_PARITY_SEMITONES: f32 = 0.001;
+/// How far apart their confidences may be.
+const SWIFT_PARITY_CONFIDENCE: f32 = 1e-4;
+
+/// Runs SwiftF0's port and tract's run of the same model over every take the eval hears
+/// (with `--takes`, the real takes too) and compares them frame for frame: both must voice
+/// the same frames, within [`SWIFT_PARITY_SEMITONES`] and [`SWIFT_PARITY_CONFIDENCE`] of
+/// each other.
+fn swift_parity_cmd(args: &[String]) -> Result<ExitCode, String> {
+    let takes = match args {
+        [] => None,
+        [flag, dir] if flag == "--takes" => Some(PathBuf::from(dir)),
+        _ => return Err(USAGE.into()),
+    };
+    let audio = eval::audio(&repo_root(), takes.as_deref())?;
+    let port = cantor_swift::SwiftF0::new()?;
+    let reference = cantor_swift::reference::Reference::new().map_err(|e| format!("SwiftF0 in tract: {e}"))?;
+    let compared = eval::each(&audio, |(name, samples, rate)| -> Result<_, String> {
+        let ours = port.raw(samples, *rate)?;
+        let theirs = reference.raw(samples, *rate)?;
+        let (mut voiced, mut disagree, mut semitones, mut confidence) = (0, Vec::new(), 0.0f32, 0.0f32);
+        for (i, (a, b)) in ours.iter().zip(&theirs).enumerate() {
+            confidence = confidence.max((a.confidence - b.confidence).abs());
+            match (a.midi(), b.midi()) {
+                (Some(x), Some(y)) => {
+                    voiced += 1;
+                    semitones = semitones.max((x - y).abs());
+                }
+                (None, None) => {}
+                _ => disagree.push(format!("frame {i}: {:.6} against {:.6}", a.confidence, b.confidence)),
+            }
+        }
+        Ok((name.clone(), ours.len(), voiced, disagree, semitones, confidence))
+    });
+    println!("| take | frames | voiced by both | voiced by one | worst semitones | worst confidence |");
+    println!("|---|--:|--:|--:|--:|--:|");
+    let mut pass = true;
+    let (mut worst, mut worst_confidence) = (0.0f32, 0.0f32);
+    for result in compared {
+        let (name, frames, voiced, disagree, semitones, confidence) = result?;
+        println!(
+            "| {name} | {frames} | {voiced} | {} | {semitones:.6} | {confidence:.6} |",
+            disagree.len()
+        );
+        for d in &disagree {
+            eprintln!("{name} {d}");
+        }
+        pass &= disagree.is_empty() && semitones <= SWIFT_PARITY_SEMITONES && confidence <= SWIFT_PARITY_CONFIDENCE;
+        worst = worst.max(semitones);
+        worst_confidence = worst_confidence.max(confidence);
+    }
+    println!(
+        "\nworst {worst:.6} semitones, confidence {worst_confidence:.6}; {}",
+        if pass { "pass" } else { "FAIL" }
+    );
+    Ok(if pass { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// The oracle, when a model was given, caching its labels under `out/oracle/`.

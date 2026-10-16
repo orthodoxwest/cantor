@@ -1,6 +1,6 @@
 [package]
 name = "cantor-swift"
-description = "SwiftF0, a second pitch tracker for offline work, run with tract"
+description = "SwiftF0, the second pitch tracker, in plain Rust; tract runs it as the reference"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,11 @@ publish.workspace = true
 
 [dependencies]
 cantor-core.workspace = true
-tract-onnx = "0.23.9"
+tract-onnx = { version = "0.23.9", optional = true }
+
+[features]
+# The reference: the same model run with tract, native only.
+tract = ["dep:tract-onnx"]
 
 [lints]
 workspace = true

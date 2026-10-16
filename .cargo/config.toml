@@ -1,0 +1,4 @@
+# Every browser the app supports runs SIMD128 (Safari from 16.4), so every wasm module is
+# built with it; SwiftF0's sums in the ear want it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

@@ -5,9 +5,9 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 ## Layout
 - `crates/cantor-core`: the listening core (pitch, onsets, scoring, the practice session). Pure functions, no I/O, no wall clock, `#![forbid(unsafe_code)]`.
 - `crates/cantor-wasm`: a C ABI over the core for the browser, bundled into one ES module.
-- `crates/cantor-ear`: the browser's ear, `ear.wasm`, run in a worker: the core tracks the take as it arrives (the page's live trace) and listens to the whole of it when it stops, with the NSDF tracker alone. `web/e2e/ear.spec.ts` plays a take written by `cantor take` through the fake microphone and holds the page to what `cantor eval --nsdf-only` heard.
+- `crates/cantor-ear`: the browser's ear, `ear.wasm`, run in a worker: the core tracks the take as it arrives (the page's live trace) with SwiftF0 streamed behind it, and listens to the whole of it with both when it stops. `web/e2e/ear.spec.ts` plays a take written by `cantor take` through the fake microphone and holds the page to what `cantor eval` heard.
 - `crates/cantor-cli`: the `cantor` command for offline work: score, align, synthesize, evaluate.
-- `crates/cantor-swift`: SwiftF0 (MIT, its model bundled) run with tract, the second tracker the command listens with beside the core's; `--nsdf-only` drops it.
+- `crates/cantor-swift`: SwiftF0 (MIT, its model bundled), the second tracker beside the core's (`--nsdf-only` drops it), its graph run in plain Rust from the model's weights. The `tract` feature (native only, never in wasm) runs the same model with tract as the reference: `cantor swift-parity` holds the port to it frame for frame, within 0.001 semitone and 1e-4 confidence, and on x86-64 glibc Linux the tests hold the spectrograms to tract's bit for bit.
 - `crates/cantor-crepe`: CREPE run with tract, an offline oracle too slow to listen with; `cantor eval --oracle` labels the takes with it and counts where it and the scorer disagree. `scripts/crepe.py` (`make oracle`) builds its model into `vendor/crepe/`.
 - `web/`: the app (Vite, TypeScript, no UI framework), its audio pipeline and AudioWorklet host, Playwright tests. `index.html` is the psalm pointer; `sing.html` the practice page.
 - `worker/`: the Cloudflare Worker (Hono), D1 migrations, queue consumers, worker tests.
@@ -17,7 +17,7 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 
 ## Commands
 - `make setup` once per clone; `make check` before every push; CI runs the same.
-- `make eval` runs the listening gates (expert, student and guide-bleed controls; see `crates/cantor-cli/src/eval.rs`) and the scorecard against `evals/baseline.json`, then again with the NSDF tracker alone (`--nsdf-only`, as the browser listens) against `evals/baseline-nsdf.json`; `cantor eval --write-baseline` (with `--nsdf-only` for the second) updates them in a deliberate commit. `make eval TAKES=../cantor-content/evals/takes` adds the real takes, which never enter this repository; `ORACLE=1` adds the oracle's ungated comparison.
+- `make eval` runs the listening gates (expert, student and guide-bleed controls; see `crates/cantor-cli/src/eval.rs`) and the scorecard against `evals/baseline.json`, then again with the NSDF tracker alone (`--nsdf-only`) against `evals/baseline-nsdf.json`, then `cantor swift-parity`; `cantor eval --write-baseline` (with `--nsdf-only` for the second) updates them in a deliberate commit. `make eval TAKES=../cantor-content/evals/takes` adds the real takes, which never enter this repository; `ORACLE=1` adds the oracle's ungated comparison.
 - Until the gates pass on the real takes, the app shows pitch traces and no verdicts.
 - Outputs land in `out/`.
 

@@ -1,6 +1,6 @@
 [package]
 name = "cantor-ear"
-description = "The browser's ear: the core's listening, a C ABI run in a worker"
+description = "The browser's ear: the core's listening and SwiftF0, a C ABI run in a worker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cantor-core.workspace = true
+cantor-swift.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

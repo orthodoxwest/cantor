@@ -16,7 +16,7 @@ path = "src/main.rs"
 cantor-core.workspace = true
 cantor-crepe.workspace = true
 cantor-ear.workspace = true
-cantor-swift.workspace = true
+cantor-swift = { workspace = true, features = ["tract"] }
 claxon.workspace = true
 hound.workspace = true
 serde.workspace = true

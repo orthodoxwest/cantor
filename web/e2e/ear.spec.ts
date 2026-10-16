@@ -1,6 +1,6 @@
 // The page's ear against `cantor eval`: a synthetic take with planted faults plays through the
-// fake microphone, the page listens to it in its worker with the core's NSDF tracker, and the
-// take judged there must be heard and marked as `cantor eval --nsdf-only` heard and marked it.
+// fake microphone, the page listens to it in its worker with the NSDF tracker and SwiftF0, and
+// the take judged there must be heard and marked as `cantor eval` heard and marked it.
 import { expect, test } from "@playwright/test";
 import { readTake, TAKE_WAV, takeSeconds } from "./fixtures/take.mjs";
 
@@ -55,7 +55,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
     marks: [marks(want.verdict), marks(got.verdict)],
     key: [want.verdict.key_cents, got.verdict.key_cents],
     sampleRate: heard!.sampleRate,
-    msPerFrame: Number(heard!.msPerFrame.toFixed(3)),
+    busy: Number(heard!.busy.toFixed(3)),
     stopMs: Number(heard!.stopMs.toFixed(1)),
     frames: heard!.frames,
     seconds: heard!.seconds,
