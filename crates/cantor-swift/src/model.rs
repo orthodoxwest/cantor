@@ -24,6 +24,8 @@ const BINS: usize = 128;
 const PITCHES: usize = 95;
 /// The network's spectrogram rows kept for pitch, from the lowest.
 const PITCH_ROWS: usize = 96;
+/// Values of a frame's column: its bins in the three spectrograms.
+pub(crate) const COLUMN: usize = 3 * BINS;
 /// The graph's floor under each filterbank sum before its log.
 const LOG_FLOOR: f32 = 1e-8;
 
@@ -43,14 +45,62 @@ struct Spectrum {
 }
 
 /// cos and -sin of 2π((i·j) mod n)/n over `rows` × `cols`, as the graph makes them: the
-/// product reduced modulo `n` in integers, then scaled in f32.
+/// product reduced modulo `n` in integers, scaled in f32, then [`trig`].
 fn angles(rows: usize, cols: usize, n: usize) -> (Vec<f32>, Vec<f32>) {
-    let step = TAU / n as f32;
-    let angle = |i: usize| ((i / cols * (i % cols)) % n) as f32 * step;
-    let cos = (0..rows * cols).map(|i| angle(i).cos()).collect();
-    let nsin = (0..rows * cols).map(|i| -angle(i).sin()).collect();
+    let k = |i: usize| (i / cols * (i % cols)) % n;
+    let cos = (0..rows * cols).map(|i| trig(n, k(i), false)).collect();
+    let nsin = (0..rows * cols).map(|i| -trig(n, k(i), true)).collect();
     (cos, nsin)
 }
+
+/// The cos, or sin, of the f32 angle `k`·(2π/`n`) as tract takes it on Linux, where the port
+/// is held to it: glibc's `cosf` and `sinf`. Those are the true value correctly rounded but
+/// for the angles in [`GLIBC`], where they round to the other neighbour. Taking them so here,
+/// rather than from the platform's own, keeps the port's tables the same everywhere, the
+/// browser included.
+fn trig(n: usize, k: usize, sine: bool) -> f32 {
+    let a = f64::from(k as f32 * (TAU / n as f32));
+    let exact = if sine { a.sin() } else { a.cos() };
+    let near = exact as f32;
+    let other = GLIBC
+        .iter()
+        .any(|(m, s, ks)| *m == n && *s == sine && ks.iter().any(|j| usize::from(*j) == k));
+    if !other {
+        return near;
+    }
+    let up = exact > f64::from(near);
+    let bits = near.to_bits();
+    f32::from_bits(if up == (near > 0.0) { bits + 1 } else { bits - 1 })
+}
+
+/// Of the angles the graph takes, those whose glibc cos (false) or sin (true) is not the
+/// nearest f32 to the true value, by `n` and `k`.
+const GLIBC: [(usize, bool, &[u16]); 7] = [
+    (64, true, &[3]),
+    (512, false, &[49, 86, 105, 110, 167, 187, 401, 429]),
+    (512, true, &[24, 46]),
+    (
+        1024,
+        false,
+        &[98, 145, 171, 172, 210, 220, 221, 301, 317, 334, 337, 374, 655, 727, 795, 802, 858],
+    ),
+    (1024, true, &[31, 39, 48, 92, 245, 395, 399, 419, 429, 453, 539, 559, 563, 627, 991]),
+    (
+        2048,
+        false,
+        &[
+            196, 290, 342, 344, 420, 431, 440, 442, 602, 634, 668, 674, 748, 1299, 1301, 1307, 1310, 1369, 1454, 1590, 1604, 1625, 1716,
+        ],
+    ),
+    (
+        2048,
+        true,
+        &[
+            61, 62, 78, 89, 95, 96, 133, 184, 185, 239, 490, 790, 798, 838, 858, 906, 1053, 1078, 1118, 1126, 1133, 1179, 1217, 1254, 1815,
+            1817, 1857, 1859, 1965, 1967, 1973, 1982, 2027,
+        ],
+    ),
+];
 
 impl Spectrum {
     fn new(window: Vec<f32>, outer: usize, inner: usize, scatter: (Vec<i32>, Vec<f32>)) -> Result<Spectrum, String> {
@@ -123,23 +173,22 @@ impl Spectrum {
         let mut sums = vec![0.0f32; 4 * inner];
         for k1 in 0..outer {
             let (r, m) = (&re[k1 * inner..][..inner], &im[k1 * inner..][..inner]);
+            // Only the bins up to n/2 are kept: k2 below this.
+            let kept = (rows - k1).div_ceil(outer).min(inner);
             sums.fill(0.0);
             let (rc, rest) = sums.split_at_mut(inner);
             let (ms, rest) = rest.split_at_mut(inner);
             let (rs, mc) = rest.split_at_mut(inner);
             for b in 0..inner {
-                let (c, s) = (&self.second.0[b * inner..][..inner], &self.second.1[b * inner..][..inner]);
-                fused_axpy(r[b], c, rc);
-                fused_axpy(m[b], s, ms);
-                fused_axpy(r[b], s, rs);
-                fused_axpy(m[b], c, mc);
+                let (c, s) = (&self.second.0[b * inner..][..kept], &self.second.1[b * inner..][..kept]);
+                fused_axpy(r[b], c, &mut rc[..kept]);
+                fused_axpy(m[b], s, &mut ms[..kept]);
+                fused_axpy(r[b], s, &mut rs[..kept]);
+                fused_axpy(m[b], c, &mut mc[..kept]);
             }
-            for k2 in 0..inner {
-                let k = k2 * outer + k1;
-                if k < rows {
-                    let (real, imag) = (rc[k2] - ms[k2], rs[k2] + mc[k2]);
-                    magnitude[k] = (real * real + imag * imag).sqrt();
-                }
+            for k2 in 0..kept {
+                let (real, imag) = (rc[k2] - ms[k2], rs[k2] + mc[k2]);
+                magnitude[k2 * outer + k1] = (real * real + imag * imag).sqrt();
             }
         }
         for (bin, filter) in out.iter_mut().zip(&self.filters) {
@@ -388,35 +437,53 @@ impl Model {
         })
     }
 
+    /// Samples a frame's spectrograms reach on either side of its centre.
+    pub(crate) fn reach(&self) -> usize {
+        self.spectra.iter().map(|s| s.outer * s.inner / 2).max().unwrap_or(0)
+    }
+
+    /// Frames a frame's pitch and confidence reach on either side through the network.
+    pub(crate) fn context(&self) -> usize {
+        let pairs: usize = self.blocks.iter().map(|(a, b)| a.pw + b.pw).sum();
+        let heads = self.head.1.pw.max(self.score.pw) + self.confidence.0.pw + self.confidence.1.pw;
+        self.stem.pw + pairs + self.head.0.pw + heads
+    }
+
+    /// The column of frame `f` of `audio` (16 kHz, zero beyond it) into `out`: its bins in the
+    /// three log spectrograms, [`COLUMN`] values.
+    pub(crate) fn column(&self, audio: &[f32], f: usize, out: &mut [f32]) {
+        for (spectrum, bins) in self.spectra.iter().zip(out.chunks_exact_mut(BINS)) {
+            spectrum.frame(audio, f, bins);
+        }
+    }
+
     /// The three log spectrograms of `audio` (16 kHz), channels × bins × frames: one frame
     /// per [`HOP`] samples, at least one.
     pub(crate) fn spectrogram(&self, audio: &[f32]) -> Map {
         let frames = (audio.len() / HOP).max(1);
-        let mut input = Map {
-            c: 3,
-            h: BINS,
-            w: frames,
-            data: vec![0.0; 3 * BINS * frames],
-        };
-        let mut bins = [0.0f32; BINS];
-        for (c, spectrum) in self.spectra.iter().enumerate() {
-            for f in 0..frames {
-                spectrum.frame(audio, f, &mut bins);
-                for (y, v) in bins.iter().enumerate() {
-                    input.data[(c * BINS + y) * frames + f] = *v;
-                }
-            }
+        let mut columns = vec![0.0; frames * COLUMN];
+        for (f, column) in columns.chunks_exact_mut(COLUMN).enumerate() {
+            self.column(audio, f, column);
         }
-        input
+        transposed(&columns)
     }
 
     /// Pitch in hertz and confidence for each frame of `audio` (16 kHz), as the graph gives
     /// them with `fmin` [`FMIN`] and `fmax` [`FMAX`]: one frame per [`HOP`] samples, at least
     /// one.
     pub fn run(&self, audio: &[f32]) -> (Vec<f64>, Vec<f32>) {
-        let input = self.spectrogram(audio);
+        self.network(&self.spectrogram(audio))
+    }
+
+    /// The network and the decoding over `columns`, one [`COLUMN`] per frame, as one run of
+    /// the graph over those frames would.
+    pub(crate) fn network_of(&self, columns: &[f32]) -> (Vec<f64>, Vec<f32>) {
+        self.network(&transposed(columns))
+    }
+
+    fn network(&self, input: &Map) -> (Vec<f64>, Vec<f32>) {
         let frames = input.w;
-        let mut x = self.stem.apply(&input).relu();
+        let mut x = self.stem.apply(input).relu();
         for (a, b) in &self.blocks {
             let y = b.apply(&a.apply(&x).relu());
             x = y.add(&x).relu();
@@ -493,6 +560,23 @@ impl Model {
     }
 }
 
+/// `columns`, [`COLUMN`] values a frame, as the network's input.
+fn transposed(columns: &[f32]) -> Map {
+    let frames = columns.len() / COLUMN;
+    let mut data = vec![0.0; COLUMN * frames];
+    for (f, column) in columns.chunks_exact(COLUMN).enumerate() {
+        for (row, v) in column.iter().enumerate() {
+            data[row * frames + f] = *v;
+        }
+    }
+    Map {
+        c: 3,
+        h: BINS,
+        w: frames,
+        data,
+    }
+}
+
 /// The index of the first greatest value, as ONNX's ArgMax gives it.
 fn first_max(values: impl Iterator<Item = f32>) -> usize {
     let mut best = (0, f32::NEG_INFINITY);
@@ -502,4 +586,61 @@ fn first_max(values: impl Iterator<Item = f32>) -> usize {
         }
     }
     best.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fused_sums_round_once() {
+        let mut state = 9u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 32) as u32
+        };
+        let (mut sums, mut twice) = (0, 0);
+        for _ in 0..2_000 {
+            // y·2^e plus (1 + 2^-23)·x, x within 2^-46 of half y's ulp, either side: the f64
+            // sum is a midpoint between two f32s, which rounding again settles by evenness
+            // rather than by the side the exact sum is on.
+            let scale = 2f32.powi((next() % 120) as i32 - 60);
+            let k = 1.0 + f32::EPSILON;
+            let y: Vec<f32> = (0..19).map(|_| f32::from_bits(0x3f80_0000 | next() >> 9) * scale).collect();
+            let x: Vec<f32> = y
+                .iter()
+                .map(|y| {
+                    let half = (f32::from_bits(y.to_bits() + 1) - y) / 2.0;
+                    let x = half * if next() & 1 == 0 { 1.0 - f32::EPSILON } else { 1.0 + f32::EPSILON };
+                    if next() & 1 == 0 { x } else { -x }
+                })
+                .collect();
+            let mut got = y.clone();
+            fused_axpy(k, &x, &mut got);
+            for ((g, x), y) in got.iter().zip(&x).zip(&y) {
+                let want = k.mul_add(*x, *y);
+                assert_eq!(g.to_bits(), want.to_bits(), "{k} · {x} + {y}");
+                sums += 1;
+                twice += usize::from((f64::from(k) * f64::from(*x) + f64::from(*y)) as f32 != want);
+            }
+        }
+        // Rounding twice is wrong for about a quarter of them.
+        assert!(twice > sums / 5, "{twice} of {sums}");
+    }
+
+    /// The tables are what tract builds where it is the reference.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn the_tables_are_glibcs() {
+        for n in [16, 32, 64, 512, 1024, 2048] {
+            for k in 0..n {
+                // At run time, as tract takes them: the compiler would fold them correctly rounded.
+                let a = std::hint::black_box(k as f32 * (TAU / n as f32));
+                assert_eq!(trig(n, k, false).to_bits(), a.cos().to_bits(), "cos {k}/{n}");
+                assert_eq!(trig(n, k, true).to_bits(), a.sin().to_bits(), "sin {k}/{n}");
+            }
+        }
+    }
 }

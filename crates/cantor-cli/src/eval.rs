@@ -1023,7 +1023,7 @@ mod tests {
     #[test]
     fn the_browser_ear_hears_a_take_as_the_eval_does_wherever_its_frames_fall() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let ear = Ear::new(true).expect("ear");
+        let ear = Ear::new(false).expect("ear");
         let marks = |v: &Verdict| v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>();
         for rate in [44_100.0, 48_000.0] {
             let (samples, want) = take(&root, &ear, "student-notes", 0, rate).expect("take");
@@ -1032,12 +1032,13 @@ mod tests {
             for quarter in 0..4 {
                 let mut padded = vec![0.0; quarter * hop / 4];
                 padded.extend(&samples);
-                let mut listening = cantor_core::Listening::new(rate);
-                listening.push(&padded);
-                let (padded, frames) = listening.finish(None, None);
-                let onset = cantor_ear::onset(&padded, rate).expect("sound");
-                let offset = want.lead_in_s + onset - want.onset_s.expect("sound");
-                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &frames);
+                let mut hearing = cantor_ear::Hearing::new(rate).expect("rate");
+                for block in padded.chunks(1_024) {
+                    hearing.push(block).expect("push");
+                }
+                let heard = hearing.finish().expect("heard");
+                let offset = want.lead_in_s + heard.onset.expect("sound") - want.onset_s.expect("sound");
+                let got = cantor_ear::judge_gabc(&want.gabc, want.pulse_s, offset, &heard.frames);
                 let at = format!("{rate} Hz, {quarter}/4 hop");
                 let heard = (got.report.heard_fraction - want.report.heard_fraction).abs();
                 let key = (got.verdict.key_cents.expect("key") - want.verdict.key_cents.expect("key")).abs();

@@ -72,7 +72,7 @@ impl Reference {
 
     /// As [`crate::SwiftF0::raw`].
     pub fn raw(&self, samples: &[f32], sample_rate: f32) -> Result<Vec<Raw>, String> {
-        windows(samples, sample_rate, |window| {
+        windows(samples, sample_rate, &|window| {
             self.run(window).map_err(|e| format!("SwiftF0 in tract: {e}"))
         })
     }
