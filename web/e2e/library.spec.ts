@@ -66,7 +66,7 @@ test("the library draws a page of results at a time", async ({ page }) => {
   await expect(page.locator("#results > li > a").nth(40)).toBeFocused();
 });
 
-test("a piece the visitor may not see is not in their library", async ({ page }) => {
+test("a piece the library does not hold is not shown", async ({ page }) => {
   await page.goto("/library#not-here");
   await expect(page.locator("#count")).toHaveText("That piece is not in the library.");
   await expect(page.locator("#piece")).toBeHidden();
@@ -85,4 +85,14 @@ test("a signed-in visitor is not offered a sign-in", async ({ page }) => {
   await page.goto("/library");
   await expect(page.locator("#results > li").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+});
+
+test("a piece that cannot be opened returns to the list and says so", async ({ page }) => {
+  await page.goto("/library#lumen-gentium");
+  await expect(page.locator("#piece")).toBeVisible();
+  await page.route("/api/chants/ubi-caritas", (route) => route.fulfill({ status: 500, json: { error: "down" } }));
+  await page.evaluate(() => (location.hash = "#ubi-caritas"));
+  await expect(page.locator("#count")).toHaveText("That piece could not be opened.");
+  await expect(page.locator("#piece")).toBeHidden();
+  await expect(page.locator("#browse")).toBeVisible();
 });

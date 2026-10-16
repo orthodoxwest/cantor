@@ -26,21 +26,30 @@ export async function identity(headers: Headers, env: IdentityEnv, now = Date.no
     const id = headers.get("X-Dev-User");
     return id ? { id, email: null } : null;
   }
-  const jwt = headers.get("Cf-Access-Jwt-Assertion") ?? cookie(headers, "CF_Authorization");
-  if (!jwt || !env.ACCESS_TEAM || !env.ACCESS_AUD) return null;
-  try {
-    return await verifyAccessJwt(jwt, env.ACCESS_TEAM.replace(/\/+$/, ""), env.ACCESS_AUD, now);
-  } catch {
-    return null;
-  }
-}
-
-function cookie(headers: Headers, name: string): string | null {
-  for (const pair of (headers.get("Cookie") ?? "").split(";")) {
-    const at = pair.indexOf("=");
-    if (at > 0 && pair.slice(0, at).trim() === name) return pair.slice(at + 1).trim() || null;
+  if (!env.ACCESS_TEAM || !env.ACCESS_AUD) return null;
+  const team = env.ACCESS_TEAM.replace(/\/+$/, "");
+  const header = headers.get("Cf-Access-Jwt-Assertion");
+  // The browser may hold more than one cookie of the name (another path or a parent domain);
+  // the first that verifies names the caller.
+  for (const jwt of header ? [header] : cookies(headers, "CF_Authorization").slice(0, 3)) {
+    try {
+      const who = await verifyAccessJwt(jwt, team, env.ACCESS_AUD, now);
+      if (who) return who;
+    } catch {
+      // A malformed token names nobody.
+    }
   }
   return null;
+}
+
+function cookies(headers: Headers, name: string): string[] {
+  const found: string[] = [];
+  for (const pair of (headers.get("Cookie") ?? "").split(";")) {
+    const at = pair.indexOf("=");
+    const value = at > 0 && pair.slice(0, at).trim() === name ? pair.slice(at + 1).trim() : "";
+    if (value) found.push(value);
+  }
+  return found;
 }
 
 const decoder = new TextDecoder();

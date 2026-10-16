@@ -33,7 +33,7 @@ app.get("/api/chants", async (c) => {
 
 // One chant with its GABC; a private one is not found by a stranger.
 app.get("/api/chants/:slug", async (c) => {
-  const find = (table: string) =>
+  const find = (table: "chants" | "private_chants") =>
     c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM ${table} WHERE slug = ?`)
       .bind(c.req.param("slug"))
       .first<ChantRow & { gabc: string }>();
@@ -42,9 +42,11 @@ app.get("/api/chants/:slug", async (c) => {
     c.header("Cache-Control", "public, max-age=300");
     return c.json(row);
   }
+  // From here the answer depends on who asks, found or not.
+  c.header("Cache-Control", "private, no-store");
+  c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
   const hidden = (await identity(c.req.raw.headers, c.env)) ? await find("private_chants") : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
-  c.header("Cache-Control", "private, no-store");
   return c.json(hidden);
 });
 

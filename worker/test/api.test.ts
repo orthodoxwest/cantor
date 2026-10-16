@@ -30,7 +30,9 @@ describe("api", () => {
   });
 
   it("finds a private chant for a known caller and for nobody else", async () => {
-    expect((await get("/api/chants/private-test")).status).toBe(404);
+    const hidden = await get("/api/chants/private-test");
+    expect(hidden.status).toBe(404);
+    expect(hidden.headers.get("Cache-Control")).toBe("private, no-store");
     const res = await get("/api/chants/private-test", { "X-Dev-User": "student" });
     expect(res.status).toBe(200);
     const row = await res.json<{ slug: string; gabc: string }>();
@@ -144,6 +146,8 @@ describe("api", () => {
         false,
         ["sign"],
       ) as CryptoKeyPair).privateKey);
+      const stale = await token({ ...good(), exp: now() - 1 });
+      expect((await get("/api/me", { Cookie: `CF_Authorization=${stale}; CF_Authorization=${jwt}` }, prod)).status).toBe(200);
       for (const Cookie of [`CF_Authorization=${forged}`, `CF_Authorization=${await token({ ...good(), exp: now() - 1 })}`, `XCF_Authorization=${jwt}`, "CF_Authorization="]) {
         expect((await get("/api/me", { Cookie }, prod)).status).toBe(401);
         expect((await get("/api/chants/private-test", { Cookie }, prod)).status).toBe(404);

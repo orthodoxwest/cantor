@@ -56,9 +56,12 @@ function fromRow(row: Row): LibraryChant {
   return { ...row, mode: Number.isInteger(n) && n >= 1 && n <= 8 ? ROMAN[n]! : row.mode || null, words: row.words ?? "" };
 }
 
-// Titles in the order a reader looks for them: "℣. Rest eternal" under R, case ignored.
-const collator = new Intl.Collator("en", { sensitivity: "base", ignorePunctuation: true });
-const byTitle = (a: LibraryChant, b: LibraryChant) => collator.compare(a.title, b.title) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+// Titles in the order a reader looks for them: case ignored, and a leading ℣, ℟ or number
+// ("℣. Rest eternal", "1. Israel's King") passed over.
+const collator = new Intl.Collator("en", { sensitivity: "base" });
+const sortKey = (title: string) => title.replace(/^[\s℣℟\d.]+/u, "") || title;
+export const byTitle = (a: Pick<LibraryChant, "title" | "slug">, b: Pick<LibraryChant, "title" | "slug">) =>
+  collator.compare(sortKey(a.title), sortKey(b.title)) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 
 let list: Promise<LibraryChant[]> | null = null;
 
