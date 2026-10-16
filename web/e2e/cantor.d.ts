@@ -7,6 +7,7 @@ declare global {
       frames: Array<{ midi: number | null }>;
       timeline: Timeline;
       visited: number[];
+      following: boolean;
       chunks: Array<[number, number, number]>;
       pitch: number[];
       drone: number | null;

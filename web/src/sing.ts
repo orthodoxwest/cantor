@@ -1043,6 +1043,10 @@ if (test) {
       return score.timeline;
     },
     visited: guide?.visited ?? [],
+    /** Whether a play has started and the cursor follows it. */
+    get following() {
+      return guide?.following ?? false;
+    },
     get chunks() {
       return guide?.chunks ?? [];
     },

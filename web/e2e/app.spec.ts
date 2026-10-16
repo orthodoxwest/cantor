@@ -3,6 +3,21 @@ import type { Timeline } from "neuma";
 
 const PULSE = 0.5;
 
+/** Installs a fake clock that moves only by `runFor`. One left to flow with real time catches
+ * up with it whenever the page reads it inside a timer, and `runFor` then sets it back to the
+ * next timer's due time: on a slow machine the cursor could step back. */
+async function holdClock(page: Page): Promise<void> {
+  const now = Date.now();
+  await page.clock.install({ time: now });
+  // Far enough ahead that it is still to come when the pause reaches the page.
+  await page.clock.pauseAt(now + 60_000);
+}
+
+/** Waits for a play to start, so that the cursor follows the clock from here. */
+async function following(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => window.__cantor.following)).toBe(true);
+}
+
 /** Opens the practice page and waits until it has its voice (or has given up on one). */
 async function open(page: Page, query = ""): Promise<Timeline> {
   await page.goto(`/sing.html?test=1${query}`);
@@ -21,9 +36,10 @@ test("renders every note of the timeline", async ({ page }) => {
 });
 
 test("play moves the cursor across every note", async ({ page }) => {
-  await page.clock.install();
+  await holdClock(page);
   const timeline = await open(page);
   await page.getByRole("button", { name: "Play" }).click();
+  await following(page);
   await page.clock.runFor(PULSE * 1000);
   await expect(page.locator("#score .cantor-current")).toHaveCount(1);
   await expect(page.locator("#score .cursor")).toBeVisible();
@@ -99,7 +115,7 @@ test("drone holds the reciting note until pressed again, and never sounds in a t
 });
 
 test("speed and pitch move the guide, the cursor, Start note and Drone, and stay in the address", async ({ page }) => {
-  await page.clock.install();
+  await holdClock(page);
   const timeline = await open(page);
   const first = await page.evaluate(() => window.__cantor.timeline.notes[0]!.semitones);
   const drone = page.getByRole("button", { name: "Drone" });
@@ -122,6 +138,7 @@ test("speed and pitch move the guide, the cursor, Start note and Drone, and stay
   // The guide sings slower, and the cursor takes as long to cross: at the steady pulse it
   // would be done by now, at the slow one not.
   await page.getByRole("button", { name: "Play" }).click();
+  await following(page);
   await page.clock.runFor((timeline.duration * 0.5 + 0.5) * 1000);
   await expect(page.locator("#score .cursor")).toBeVisible();
   expect(await page.evaluate(() => window.__cantor.sung.map((n) => n.midi % 12)[0])).toBe((((60 + first + 2) % 12) + 12) % 12);
@@ -154,7 +171,7 @@ test("speed and pitch move the guide, the cursor, Start note and Drone, and stay
 });
 
 test("a phrase tapped plays over and over with the cursor, a bar loops the phrase it ends", async ({ page }) => {
-  await page.clock.install();
+  await holdClock(page);
   const timeline = await open(page);
   // Lumen gentium: a mediant before note 3, a half bar before note 12, a double bar at the end.
   const ids = timeline.notes.map((n) => n.id);
@@ -163,6 +180,7 @@ test("a phrase tapped plays over and over with the cursor, a bar loops the phras
   await expect(page.locator("#loop-text")).toHaveText("Play goes over notes 3 to 11 until you stop it.");
   const play = page.getByRole("button", { name: "Play" });
   await play.click();
+  await following(page);
   const times = await page.evaluate(() => window.__cantor.timed(0.5));
   const length = times[10]!.start + times[10]!.duration - times[2]!.start;
   await page.clock.runFor((length + 0.3) * 1000);
@@ -171,8 +189,10 @@ test("a phrase tapped plays over and over with the cursor, a bar loops the phras
   expect(await page.evaluate(() => window.__cantor.visited)).toEqual(ids.slice(2, 11));
   await expect(page.locator("#score .cursor")).toBeHidden();
   await expect(play).toHaveAttribute("aria-pressed", "true");
-  // After a breath it goes round again, the cursor back at the phrase's first note.
-  await page.clock.runFor(1000 + 500);
+  // After a breath (two pulses: 1 s) it goes round again, the cursor back at the phrase's first note.
+  await page.clock.runFor(1000 + 300);
+  await following(page);
+  await page.clock.runFor(300);
   await expect(page.locator("#score .cursor")).toBeVisible();
   const again = await page.evaluate(() => window.__cantor.visited);
   expect(again[0]).toBe(ids[2]);
