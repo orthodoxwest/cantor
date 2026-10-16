@@ -62,6 +62,42 @@ test("start note sounds the first note, then the reciting tone, and stops Play",
   await expect.poll(() => page.evaluate(() => window.__cantor.pitch.map((m) => m % 12))).toEqual([5, 9]);
 });
 
+test("drone holds the reciting note until pressed again, and never sounds in a take", async ({ page }) => {
+  await page.clock.install();
+  await open(page);
+  const drone = page.getByRole("button", { name: "Drone" });
+  await drone.click();
+  await expect(drone).toHaveAttribute("aria-pressed", "true");
+  // Lumen gentium, mode viii, ends on G: its reciting note is C.
+  await expect.poll(() => page.evaluate(() => window.__cantor.drone)).not.toBeNull();
+  expect((await page.evaluate(() => window.__cantor.drone))! % 12).toBe(0);
+  // It goes on under Play.
+  await page.getByRole("button", { name: "Play" }).click();
+  await page.clock.runFor(2000);
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  expect(await page.evaluate(() => window.__cantor.drone)).not.toBeNull();
+  await drone.click();
+  await expect(drone).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.drone)).toBeNull();
+  // A verse of the first tone, by its own header, drones on its reciting tone, A.
+  await page.evaluate(() => window.__cantor.practise("mode:1;\n%%\n(c4) Glo(f)ry(hr) be(h) to(h) the(h) Fa(g)ther(d) (::)", 0.5));
+  await drone.click();
+  await expect.poll(() => page.evaluate(() => (window.__cantor.drone ?? 0) % 12)).toBe(9);
+  // Pressed off it fades; a take begun as it fades cuts it at once, and holds Drone off.
+  const [fading, inTake] = await page.evaluate(() => {
+    document.getElementById("drone")!.click();
+    const fading = window.__cantor.drones;
+    document.getElementById("take")!.click();
+    return [fading, window.__cantor.drones];
+  });
+  expect(fading).toBeGreaterThan(0);
+  expect(inTake).toBe(0);
+  await expect(drone).toBeDisabled();
+  await expect(drone).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(drone).toBeEnabled();
+});
+
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());

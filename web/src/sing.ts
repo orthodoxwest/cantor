@@ -1,4 +1,4 @@
-import { Chant, init } from "neuma";
+import { Chant, init, summarize } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { type Entry, Listener } from "./listen";
@@ -11,6 +11,7 @@ import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
+import { Drone, droneNote, modeNumber } from "./drone";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
@@ -323,11 +324,57 @@ async function soundPitch(): Promise<void> {
   }
 }
 
+// Drone holds the reciting note (droneNote) under Play, Start note or the singer's own
+// practice, until it is pressed again or a take begins.
+const droneButton = byId<HTMLButtonElement>("drone");
+let drone: Drone | null = null;
+/** Counts presses of Drone, so one pressed again while it is starting does not go on. */
+let drones = 0;
+
+function stopDrone(fade = true): void {
+  drones++;
+  drone?.stop(fade);
+  // Before a take, a drone still fading is cut too.
+  if (!fade) Drone.cutAll();
+  drone = null;
+  droneButton.setAttribute("aria-pressed", "false");
+}
+
+async function startDrone(): Promise<void> {
+  if (!guide) return;
+  const press = ++drones;
+  droneButton.setAttribute("aria-pressed", "true");
+  try {
+    const ctx = await audioContext();
+    if (press !== drones) return;
+    const { notes, pauses } = score.timeline;
+    // The chant's body ends at its first double bar, before any verse and repeat cue.
+    const double = pauses.find((p) => p.kind === "double");
+    const sung = guide.notes();
+    const mode = summarize(score.source).mode?.number ?? modeNumber(piece.mode);
+    const midi = droneNote(
+      notes.map((n, i) => ({ semitones: n.semitones, midi: sung[i]!.midi, recitation: n.recitation })),
+      mode !== null && mode >= 1 && mode <= 8 ? mode : null,
+      double ? double.beforeNote - 1 : notes.length - 1,
+    );
+    if (midi === null) return stopDrone();
+    drone = new Drone(ctx, midi);
+  } catch (error) {
+    if (press !== drones) return;
+    stopDrone();
+    setStatus(`The drone could not sound: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 if (!guide) {
-  playButton.title = noteButton.title = "The guide voice could not load.";
+  playButton.title = noteButton.title = droneButton.title = "The guide voice could not load.";
   setStatus(playButton.title);
 } else {
-  playButton.disabled = noteButton.disabled = false;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = false;
+  droneButton.addEventListener("click", () => {
+    if (droneButton.getAttribute("aria-pressed") === "true") return stopDrone();
+    void startDrone();
+  });
   playButton.addEventListener("click", () => {
     if (guide.playing) return guide.stop();
     stopPitch();
@@ -440,12 +487,14 @@ async function takeScored(): Promise<void> {
   // A take that is no longer going leaves the page alone: whatever stopped it has seen to it.
   const going = () => taking && take === takes;
   taking = true;
+  document.body.classList.add("taking");
   timing = null;
   // Nothing else sounds or listens during a take.
   guide.stop();
   stopPitch();
+  stopDrone(false);
   listener.stop();
-  playButton.disabled = noteButton.disabled = picker.disabled = headphonesBox.disabled = true;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = picker.disabled = headphonesBox.disabled = true;
   takeButton.textContent = "Stop";
   readout.textContent = "–";
   readout.setAttribute("aria-live", "off");
@@ -524,9 +573,10 @@ function stopTake(): void {
 
 function endTake(): void {
   taking = false;
+  document.body.classList.remove("taking");
   cueing?.stop();
   cueing = null;
-  playButton.disabled = noteButton.disabled = !guide;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   readout.setAttribute("aria-live", "polite");
   picker.disabled = headphonesBox.disabled = false;
@@ -555,6 +605,14 @@ if (test) {
     visited: guide?.visited ?? [],
     get chunks() {
       return guide?.chunks ?? [];
+    },
+    /** The drone's note while it sounds, as MIDI. */
+    get drone() {
+      return drone?.midi ?? null;
+    },
+    /** Drones not yet silent, fading ones included. */
+    get drones() {
+      return Drone.sounding.size;
     },
     /** The starting pitch's notes while it sounds, as MIDI. */
     get pitch() {

@@ -9,6 +9,8 @@ declare global {
       visited: number[];
       chunks: Array<[number, number, number]>;
       pitch: number[];
+      drone: number | null;
+      drones: number;
       voice: "neutral" | "recorded" | "none";
       heard: () =>
         | Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; startedAt: number | null; busy: number; stopMs: number }>
