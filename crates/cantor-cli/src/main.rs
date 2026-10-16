@@ -316,7 +316,7 @@ fn swift_parity_cmd(args: &[String]) -> Result<ExitCode, String> {
     println!("| take | frames | voiced by both | voiced by one | worst semitones | worst confidence |");
     println!("|---|--:|--:|--:|--:|--:|");
     let mut pass = true;
-    let mut worst = 0.0f32;
+    let (mut worst, mut worst_confidence) = (0.0f32, 0.0f32);
     for result in compared {
         let (name, frames, voiced, disagree, semitones, confidence) = result?;
         println!(
@@ -328,8 +328,12 @@ fn swift_parity_cmd(args: &[String]) -> Result<ExitCode, String> {
         }
         pass &= disagree.is_empty() && semitones <= SWIFT_PARITY_SEMITONES && confidence <= SWIFT_PARITY_CONFIDENCE;
         worst = worst.max(semitones);
+        worst_confidence = worst_confidence.max(confidence);
     }
-    println!("\nworst {worst:.6} semitones; {}", if pass { "pass" } else { "FAIL" });
+    println!(
+        "\nworst {worst:.6} semitones, confidence {worst_confidence:.6}; {}",
+        if pass { "pass" } else { "FAIL" }
+    );
     Ok(if pass { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 

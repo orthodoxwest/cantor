@@ -199,8 +199,8 @@ impl Spectrum {
 }
 
 /// `a·b + c` rounded once, as a fused multiply-add gives it, whether or not the machine has
-/// one (for finite sums; an infinite one is left as it is). The product is exact in f64; the sum, if it rounds there, is rounded to odd instead,
-/// so that rounding it again to f32 rounds as once.
+/// one. The product is exact in f64; the sum, if it rounds there, is rounded to odd instead,
+/// so that rounding it again to f32 rounds as once. An infinite sum is left as it is.
 #[inline(always)]
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     let p = f64::from(a) * f64::from(b);
