@@ -35,9 +35,11 @@ picker.addEventListener("change", () => {
 const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
-// After a scored take: the ribbon under the staff, the core's marks on the notes, the singer's key, the
-// note the ribbon is re-based on, and the words of the mark tapped.
+// After a scored take: the ribbon under the staff, the core's marks on the notes, the core's
+// two sentences on the take, the singer's key, the note the ribbon is re-based on, and the words
+// of the mark tapped.
 const result = byId<HTMLElement>("result");
+const summaryText = byId<HTMLParagraphElement>("summary");
 const keyText = byId<HTMLParagraphElement>("key");
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
@@ -55,6 +57,8 @@ function drawResult(): void {
   const judged = shown;
   const key = judged?.verdict.key_cents ?? null;
   result.hidden = !judged;
+  summaryText.textContent = judged?.summary.join(" ") ?? "";
+  summaryText.hidden = !summaryText.textContent;
   if (!judged || key === null) {
     score.showStrips(null);
     say("");

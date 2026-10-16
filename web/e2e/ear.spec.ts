@@ -116,6 +116,10 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
   // a mark tapped (or entered) shows the core's words for it, and only one is open at a time.
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
+  // So are the two sentences on the take as a whole.
+  expect(got.summary).toHaveLength(2);
+  expect(got.summary).toEqual(want.summary);
+  await expect(page.locator("#summary")).toHaveText(want.summary.join(" "));
   type Marked = { first: number; last: number };
   const notesOf = (marks: Marked[]) => marks.flatMap((m) => Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k));
   const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
@@ -192,6 +196,7 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
     Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
   );
   expect(ringed).toEqual(wanted);
+  await expect(page.locator("#summary")).toHaveText(want.summary.join(" "));
   // The next take clears this one's view, and Stop ends it.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).not.toHaveText("");

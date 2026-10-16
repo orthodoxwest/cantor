@@ -27,6 +27,9 @@ pub struct Note {
     /// The vowel the syllable is sung on, when known.
     #[serde(default)]
     pub vowel: Option<char>,
+    /// Sung on a reciting tone, at speech pace.
+    #[serde(default)]
+    pub recitation: bool,
 }
 
 impl Note {

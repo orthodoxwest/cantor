@@ -48,6 +48,7 @@ pub fn notes_from_gabc(gabc: &str, pulse_s: f32) -> Vec<Note> {
             verse: n.verse,
             phrase,
             vowel: n.vowel,
+            recitation: n.recitation,
         });
         clock += duration;
     }
@@ -120,6 +121,7 @@ mod tests {
         let durs: Vec<f32> = notes.iter().map(|n| n.dur_s).collect();
         assert_eq!(durs[0], 1.0);
         assert!((durs[3] - RECITATION).abs() < 1e-6, "{durs:?}");
+        assert!(notes[3].recitation && !notes[0].recitation);
         for w in notes.windows(2) {
             assert!(w[1].start_s >= w[0].end_s() - 1e-5, "{notes:?}");
         }
