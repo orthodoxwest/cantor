@@ -8,6 +8,8 @@ test("the library lists, filters and opens a piece, and practises it", async ({ 
   await expect(items.first().locator(".thumb svg")).toBeVisible();
 
   await page.getByRole("button", { name: /^Hymns/ }).click();
+  await expect(page.getByRole("button", { name: /^Hymns/ })).toBeFocused();
+  await expect(page.getByRole("button", { name: /^Hymns/ })).toHaveAttribute("aria-pressed", "true");
   const hymns = await items.count();
   expect(hymns).toBeGreaterThan(0);
   expect(hymns).toBeLessThan(total);

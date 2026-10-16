@@ -35,7 +35,8 @@ const els = {
 const ALL = "";
 let kind = ALL;
 
-const escape = (s: string) => s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
+const escape = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot", "'": "#39" }[c]};`);
 const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /** `text` with the first match of `q` marked. */
@@ -92,7 +93,7 @@ function drawResults(): void {
   <span class="kicker">${escape(kicker(c))}</span>
   <span class="name">${highlight(c.title, q)}${c.name ? ` <span class="latin">${highlight(c.name, q)}</span>` : ""}</span>
   ${c.book ? `<span class="src">${escape(c.book)}</span>` : ""}
-  <span class="thumb" data-slug="${c.slug}"></span></a></li>`,
+  <span class="thumb" data-slug="${escape(c.slug)}"></span></a></li>`,
         )
         .join("")
     : `<li class="empty">Nothing matches “${escape(els.q.value.trim())}”.</li>`;
@@ -103,7 +104,9 @@ els.kinds.addEventListener("click", (e) => {
   const button = (e.target as Element).closest<HTMLButtonElement>("[data-kind]");
   if (!button) return;
   kind = button.dataset.kind ?? ALL;
-  drawKinds();
+  // The chips stay, so the one pressed keeps the focus.
+  for (const b of els.kinds.querySelectorAll<HTMLButtonElement>("[data-kind]"))
+    b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
   drawResults();
 });
 els.q.addEventListener("input", drawResults);
@@ -114,6 +117,8 @@ let score: Score | null = null;
 let cursor: Cursor | null = null;
 let guide: Guide | null = null;
 let scrollBack = 0;
+/** Counts pieces opened and closed, so a voice that loads late goes to the piece still open. */
+let opens = 0;
 
 function stopGuide(): void {
   guide?.stop();
@@ -123,6 +128,10 @@ function stopGuide(): void {
 
 async function open(c: LibraryChant): Promise<void> {
   stopGuide();
+  // Play waits for this piece's guide; the last piece's is never played on this score.
+  guide = null;
+  els.play.disabled = true;
+  const opening = ++opens;
   els.browse.hidden = true;
   els.piece.hidden = false;
   els.bar.hidden = false;
@@ -131,7 +140,9 @@ async function open(c: LibraryChant): Promise<void> {
   els.title.innerHTML = `${escape(c.title)}${c.name ? ` <span class="incipit">${escape(c.name)}</span>` : ""}`;
   els.book.textContent = c.book ?? "";
   els.book.hidden = !c.book;
-  els.source.innerHTML = `Score from ${c.url ? `<a href="${escape(c.url)}" rel="noopener">GregoBase</a>` : "GregoBase"}, in the public domain (CC0).`;
+  // Only a web address from the score's header becomes a link.
+  const url = c.url && /^https:\/\//.test(c.url) ? c.url : null;
+  els.source.innerHTML = `Score from ${url ? `<a href="${escape(url)}" rel="noopener">GregoBase</a>` : "GregoBase"}, in the public domain (CC0).`;
   els.practise.href = `/sing?chant=${encodeURIComponent(c.slug)}`;
   els.status.textContent = "";
   window.scrollTo(0, 0);
@@ -142,6 +153,7 @@ async function open(c: LibraryChant): Promise<void> {
     cursor = new Cursor(score);
   }
   const table = await neutralTable().catch(() => undefined);
+  if (opening !== opens) return;
   if (!table) {
     els.status.textContent = "The guide voice could not load.";
     els.play.disabled = true;
@@ -161,6 +173,7 @@ async function open(c: LibraryChant): Promise<void> {
 
 function close(): void {
   stopGuide();
+  opens++;
   els.piece.hidden = true;
   els.bar.hidden = true;
   els.browse.hidden = false;

@@ -22,7 +22,7 @@
 }
 #readout {
   font-variant-numeric: tabular-nums lining-nums;
-  min-width: 7rem;
+  min-width: 5.5rem;
   text-align: right;
   color: var(--muted);
   font-size: 1.1rem;

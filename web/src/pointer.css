@@ -181,6 +181,18 @@
 }
 
 @media print {
+  /* Ink on paper, whatever the screen's theme. */
+  :root:root {
+    --bg: #fff;
+    --text: #000;
+    --muted: #444;
+    --rubric: #8b1a1a;
+    --titulus: #93412c;
+    --gold-line: #c9ac72;
+    --unsure: #a8650a;
+    --cur: transparent;
+    color-scheme: light;
+  }
   .print-title {
     display: block;
     font: 600 1.4rem var(--serif);

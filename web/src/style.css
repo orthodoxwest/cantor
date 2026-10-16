@@ -207,7 +207,8 @@ main {
   max-width: calc(var(--measure) + 2 * var(--gutter));
   margin: 0 auto;
   padding-inline: var(--gutter);
-  padding-block: 1.75rem 6rem;
+  /* Room under the last line for the bar, two rows high on a narrow phone. */
+  padding-block: 1.75rem calc(9rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* A page's head: a red-ochre titulus, the title in rubric, an italic lede. */
