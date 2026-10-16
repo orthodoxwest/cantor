@@ -108,9 +108,9 @@
     "recall": 1.0,
     "false_in_tune": 0,
     "key_error_cents": 38.20404,
-    "summary_errors": 3,
+    "summary_errors": 0,
     "unjudged": 4,
-    "in_tune": 529,
+    "in_tune": 618,
     "agreement": null
   },
   "student-notes": {

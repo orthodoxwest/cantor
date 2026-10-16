@@ -140,8 +140,28 @@ struct Judged {
     frames: Vec<Frame>,
     verdict: Verdict,
     report: cantor_core::Report,
-    /// The scorer's report on the oracle's labels, when the oracle listened.
-    oracle: Option<cantor_core::Report>,
+    /// The scorer's report on the oracle's labels and the judge's verdict on it, when the
+    /// oracle listened.
+    oracle: Option<OracleTake>,
+}
+
+#[derive(Serialize)]
+struct OracleTake {
+    report: cantor_core::Report,
+    verdict: Verdict,
+}
+
+impl OracleTake {
+    fn of(notes: &[Note], frames: &[Frame]) -> OracleTake {
+        let report = score(notes, frames);
+        let verdict = judge(notes, &report);
+        OracleTake { report, verdict }
+    }
+}
+
+/// Whether a verdict's steadiness disagrees with the drift planted.
+fn summary_wrong(v: &Verdict, planted_drift: f32) -> bool {
+    (planted_drift.abs() >= UNSTEADY_DRIFT && v.steady) || (planted_drift.abs() <= STEADY_DRIFT && !v.steady)
 }
 
 /// How the oracle's per-note pitch compares with the scorer's. It is never gated: it says
@@ -157,15 +177,26 @@ struct OracleStats {
     /// The oracle's mean distance from the truth over the notes it heard, where the truth
     /// is known (synthetic takes).
     tracking_cents: Option<f32>,
+    /// The judge's summaries and key on the oracle's labels, counted as for the scorer's.
+    summary_errors: u32,
+    key_error_cents: f32,
 }
 
 impl OracleStats {
     fn of(takes: &[Judged]) -> Option<OracleStats> {
         let (mut sung, mut heard, mut compared, mut disagreements) = (0u32, 0u32, 0u32, 0u32);
         let (mut errors, mut tracked) = (0.0f32, 0u32);
+        let (mut summary_errors, mut key_error_cents) = (0u32, 0.0f32);
         for take in takes {
             let oracle = take.oracle.as_ref()?;
-            for (i, (o, r)) in oracle.notes.iter().zip(&take.report.notes).enumerate() {
+            let v = &oracle.verdict;
+            if v.outcome == Outcome::Heard {
+                summary_errors += u32::from(summary_wrong(v, take.planted_drift));
+                if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
+                    key_error_cents = key_error_cents.max(fold(k - t).abs());
+                }
+            }
+            for (i, (o, r)) in oracle.report.notes.iter().zip(&take.report.notes).enumerate() {
                 if take.planted[i].silent {
                     continue;
                 }
@@ -187,6 +218,8 @@ impl OracleStats {
             compared,
             disagreements,
             tracking_cents: (tracked > 0).then(|| errors / tracked as f32),
+            summary_errors,
+            key_error_cents,
         })
     }
 }
@@ -291,9 +324,7 @@ impl Metrics {
                 caught += u32::from(v.marks.iter().any(|mark| catches(mark, i, &take.planted[i])));
             }
             if v.outcome == Outcome::Heard {
-                let wrong =
-                    (take.planted_drift.abs() >= UNSTEADY_DRIFT && v.steady) || (take.planted_drift.abs() <= STEADY_DRIFT && !v.steady);
-                m.summary_errors += u32::from(wrong);
+                m.summary_errors += u32::from(summary_wrong(v, take.planted_drift));
                 if let (Some(k), Some(t)) = (v.key_cents, take.true_key) {
                     m.key_error_cents = m.key_error_cents.max(fold(k - t).abs());
                 }
@@ -497,7 +528,7 @@ struct TakeOutput<'a> {
     verdict: &'a Verdict,
     report: &'a cantor_core::Report,
     #[serde(skip_serializing_if = "Option::is_none")]
-    oracle: Option<&'a cantor_core::Report>,
+    oracle: Option<&'a OracleTake>,
 }
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
@@ -546,7 +577,7 @@ pub fn run(
                 verdict: &j.verdict,
                 truth: &j.truth,
                 scored: &j.report.notes,
-                oracle: j.oracle.as_ref().map(|r| &r.notes[..]),
+                oracle: j.oracle.as_ref().map(|o| &o.report.notes[..]),
             });
             std::fs::write(&path, svg).map_err(|e| format!("{}: {e}", path.display()))?;
             if only.is_some() {
@@ -630,8 +661,8 @@ pub fn run(
         if let Some(o) = oracle {
             let cents = o.tracking_cents.map_or("-".to_string(), |c| format!("{c:.2}"));
             oracle_md.push_str(&format!(
-                "| {name} | {:.3} | {} | {} | {cents} |\n",
-                o.heard, o.compared, o.disagreements
+                "| {name} | {:.3} | {} | {} | {cents} | {} | {:.0} |\n",
+                o.heard, o.compared, o.disagreements, o.summary_errors, o.key_error_cents
             ));
         }
         outputs.push(SuiteOutput {
@@ -658,7 +689,7 @@ pub fn run(
 
     if !oracle_md.is_empty() {
         let table = format!(
-            "| suite | oracle heard | notes compared | disagree with the scorer | oracle \\|cents\\| |\n|---|--:|--:|--:|--:|\n{oracle_md}"
+            "| suite | oracle heard | notes compared | disagree with the scorer | oracle \\|cents\\| | oracle summary errors | oracle key error |\n|---|--:|--:|--:|--:|--:|--:|\n{oracle_md}"
         );
         println!("\nThe oracle (CREPE), not gated:\n{table}");
         md.push_str(&format!("\nThe oracle (CREPE), not gated:\n\n{table}"));
@@ -729,7 +760,7 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
     let frames = ear.listen(&take.samples, SAMPLE_RATE, guide)?;
     let report = score(&notes, &frames);
     let oracle = match oracle {
-        Some(o) => Some(score(&notes, &o.label(&take.samples, SAMPLE_RATE, &notes, &frames)?)),
+        Some(o) => Some(OracleTake::of(&notes, &o.label(&take.samples, SAMPLE_RATE, &notes, &frames)?)),
         None => None,
     };
     let verdict = judge(&notes, &report);
@@ -784,7 +815,7 @@ fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec
         let frames = ear.listen(&samples, rate, None)?;
         let report = score(&notes, &frames);
         let oracle = match oracle {
-            Some(o) => Some(score(&notes, &o.label(&samples, rate, &notes, &frames)?)),
+            Some(o) => Some(OracleTake::of(&notes, &o.label(&samples, rate, &notes, &frames)?)),
             None => None,
         };
         let verdict = judge(&notes, &report);

@@ -240,29 +240,33 @@ fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
 }
 
 /// The drift, in cents per second: a Theil-Sen line (the median of pairwise slopes) through
-/// the heard notes' errors from the key, fitted twice, the second time without the notes
-/// further than [`DRIFT_OUTLIER_CENTS`] from the first line, so faults do not tilt it. Only
-/// pairs within one verse count: a tone sinking moves within each verse, while a verse sung
-/// a tone high is level inside and would otherwise read as a slope across verses.
+/// the heard notes' errors from the key, fitted twice. The first fit pairs notes only within
+/// a verse: a tone sinking moves within each verse, while a verse sung off is level inside
+/// and would otherwise read as a slope across verses. The second leaves out the notes further
+/// than [`DRIFT_OUTLIER_CENTS`] from the first line, so faults and verses sung off do not
+/// tilt it, and pairs the rest across verses too: within one verse a singer's slow wander
+/// can rise or fall by tens of cents, which the first line would carry across the take.
 fn drift_slope(notes: &[Note], errors: &[Option<f32>], t0: f32) -> f32 {
     let points: Vec<(u32, f32, f32)> = errors
         .iter()
         .enumerate()
         .filter_map(|(i, e)| e.map(|e| (notes[i].verse, mid(&notes[i]), e)))
         .collect();
-    let first = theil_sen(&points);
+    let first = theil_sen(&points, true);
     let inliers: Vec<(u32, f32, f32)> = points
         .iter()
         .copied()
         .filter(|(_, t, e)| fold(e - first * (t - t0)).abs() < DRIFT_OUTLIER_CENTS)
         .collect();
-    theil_sen(&inliers)
+    theil_sen(&inliers, false)
 }
 
-fn theil_sen(points: &[(u32, f32, f32)]) -> f32 {
+/// The median slope over pairs of points at least [`DRIFT_MIN_DT_S`] apart, within one
+/// verse when `within`.
+fn theil_sen(points: &[(u32, f32, f32)], within: bool) -> f32 {
     let mut slopes = Vec::new();
     for (i, a) in points.iter().enumerate() {
-        for b in points[i + 1..].iter().filter(|b| b.0 == a.0) {
+        for b in points[i + 1..].iter().filter(|b| !within || b.0 == a.0) {
             let dt = b.1 - a.1;
             if dt.abs() >= DRIFT_MIN_DT_S {
                 slopes.push(fold(b.2 - a.2) / dt);
@@ -404,6 +408,17 @@ mod tests {
                 cents: Some(200.0)
             }]
         );
+    }
+
+    #[test]
+    fn a_rise_inside_each_verse_is_not_a_drift() {
+        // Each verse rises 32 cents and the next starts where the first did: a singer's
+        // wander, not a take sharpening by 32 cents a verse.
+        let c: Vec<Option<f32>> = (0..10).map(|i| Some(8.0 * (i % 5) as f32)).collect();
+        let v = judge(&notes(), &report(&c));
+        assert!(v.steady, "{}", v.drift_cents);
+        assert!(v.drift_cents.abs() < 30.0, "{}", v.drift_cents);
+        assert!(v.marks.is_empty(), "{v:?}");
     }
 
     #[test]
