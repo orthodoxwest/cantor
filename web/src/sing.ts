@@ -2,14 +2,18 @@ import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { Listener } from "./listen";
+import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
 import { kicker, library, chant as findChant } from "./library";
 import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
+import { offerSignIn } from "./beam";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
+
+void offerSignIn();
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
@@ -19,15 +23,26 @@ const test = params.get("test") === "1";
 // the guide sings the neutral vowel.
 const voiceUrl = params.get("voice");
 
-await init();
-// ?chant=SLUG picks a chant from the library; the first route's chant otherwise.
+// ?chant=SLUG picks a chant from the library; the first route's chant otherwise, bundled so
+// the page works when the library cannot be reached.
 const DEFAULT = "lumen-gentium";
-const piece = findChant(params.get("chant") ?? DEFAULT) ?? findChant(DEFAULT)!;
-byId("kicker").textContent = ["Practice", kicker(piece)].filter(Boolean).join(" · ");
+const asked = params.get("chant") ?? DEFAULT;
+const [, found] = await Promise.all([init(), findChant(asked).catch(() => null)]);
+const piece = found ?? { slug: DEFAULT, title: "A light to lighten the Gentiles", kind: "antiphon" as const, mode: "viii", name: "Lumen gentium", gabc: DEFAULT_GABC };
+if (!found && asked !== DEFAULT) byId("status").textContent = "That chant is not in the library, so here is the first one.";
+byId("kicker").textContent = ["Practice", kicker({ kind: piece.kind, mode: piece.mode })].filter(Boolean).join(" · ");
 byId("title").textContent = piece.title;
 document.title = `${piece.title} · Practice · Cantor`;
 const picker = byId<HTMLSelectElement>("chant");
-for (const c of library()) picker.add(new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c === piece));
+picker.add(new Option(`${piece.title}${piece.name ? ` (${piece.name})` : ""}`, piece.slug, true, true));
+// The rest of the library joins the picker when it comes.
+void library().then(
+  (all) => {
+    picker.replaceChildren(...all.map((c) => new Option(`${c.title}${c.name ? ` (${c.name})` : ""}`, c.slug, false, c.slug === piece.slug)));
+    if (picker.value !== piece.slug) picker.add(new Option(piece.title, piece.slug, true, true), 0);
+  },
+  () => {},
+);
 picker.addEventListener("change", () => {
   params.set("chant", picker.value);
   location.search = params.toString();

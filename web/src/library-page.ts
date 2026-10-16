@@ -1,16 +1,26 @@
-// The library page: the public chants, searched and browsed by kind, each with its opening
-// line in notation; a piece opens at #slug, to be heard in the guide voice and practised.
+// The library page: the chants the visitor may see (library.ts), searched and browsed by kind,
+// each with its opening line in notation; a piece opens at #slug, to be heard in the guide voice
+// and practised.
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
-import { kicker, kindName, library, type LibraryChant } from "./library";
+import { chant as fetchChant, kicker, kindName, library, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
+import { offerSignIn } from "./beam";
 import { neutralTable } from "./singer";
+
+void offerSignIn();
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-await init();
-const chants = library();
+const [, loaded] = await Promise.all([
+  init(),
+  library().catch((error: unknown) => {
+    console.error("library:", error);
+    return null;
+  }),
+]);
+const chants = loaded ?? [];
 
 const els = {
   browse: byId("browse"),
@@ -28,9 +38,14 @@ const els = {
   bar: byId("bar"),
   play: byId<HTMLButtonElement>("play"),
   practise: byId<HTMLAnchorElement>("practise"),
+  more: byId<HTMLButtonElement>("more"),
 };
 
 // ---- browsing ----------------------------------------------------------------------------
+
+/** Results drawn at a time; Show more draws as many again. */
+const PAGE = 40;
+let limit = PAGE;
 
 const ALL = "";
 let kind = ALL;
@@ -65,29 +80,37 @@ const thumbs = new IntersectionObserver(
       if (!entry.isIntersecting) continue;
       const el = entry.target as HTMLElement;
       thumbs.unobserve(el);
-      const c = chants.find((x) => x.slug === el.dataset.slug);
-      if (!c) continue;
-      const chant = new Chant(c.gabc);
-      const view = chant.view({ maxLines: 1, ids: false });
-      // Laid out wider than drawn, so the opening line carries more of the chant.
-      el.innerHTML = view.layout(el.clientWidth * 1.2).svg;
-      el.querySelector("svg")?.setAttribute("aria-hidden", "true");
-      view.free();
-      chant.free();
+      const slug = el.dataset.slug;
+      if (slug) void drawThumb(el, slug);
     }
   },
   { rootMargin: "400px 0px" },
 );
 
+/** Engraves a chant's opening line into `el`, once its GABC has come. */
+async function drawThumb(el: HTMLElement, slug: string): Promise<void> {
+  const c = await fetchChant(slug).catch(() => null);
+  if (!c || !el.isConnected) return;
+  const chant = new Chant(c.gabc);
+  const view = chant.view({ maxLines: 1, ids: false });
+  // Laid out wider than drawn, so the opening line carries more of the chant.
+  el.innerHTML = view.layout(el.clientWidth * 1.2).svg ?? "";
+  el.querySelector("svg")?.setAttribute("aria-hidden", "true");
+  view.free();
+  chant.free();
+}
+
 function drawResults(): void {
   const q = fold(els.q.value.trim());
   const shown = chants.filter(
-    (c) => (kind === ALL || kindOf(c) === kind) && (!q || fold(`${c.title} ${c.name ?? ""} ${c.text}`).includes(q)),
+    (c) => (kind === ALL || kindOf(c) === kind) && (!q || fold(`${c.title} ${c.name ?? ""} ${c.words}`).includes(q)),
   );
   els.count.textContent = shown.length === 1 ? "1 piece" : `${shown.length} pieces`;
   thumbs.disconnect();
+  els.more.hidden = shown.length <= limit;
   els.results.innerHTML = shown.length
     ? shown
+        .slice(0, limit)
         .map(
           (c) => `<li><a href="#${escape(c.slug)}">
   <span class="kicker">${escape(kicker(c))}</span>
@@ -107,9 +130,20 @@ els.kinds.addEventListener("click", (e) => {
   // The chips stay, so the one pressed keeps the focus.
   for (const b of els.kinds.querySelectorAll<HTMLButtonElement>("[data-kind]"))
     b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
+  limit = PAGE;
   drawResults();
 });
-els.q.addEventListener("input", drawResults);
+els.q.addEventListener("input", () => {
+  limit = PAGE;
+  drawResults();
+});
+els.more.addEventListener("click", () => {
+  // Focus goes to the first of the new results, where reading goes on.
+  const next = limit;
+  limit += PAGE;
+  drawResults();
+  els.results.querySelectorAll<HTMLAnchorElement>("li > a")[next]?.focus();
+});
 
 // ---- a piece -----------------------------------------------------------------------------
 
@@ -126,12 +160,23 @@ function stopGuide(): void {
   els.play.textContent = "Play";
 }
 
-async function open(c: LibraryChant): Promise<void> {
+async function open(listed: LibraryChant): Promise<void> {
   stopGuide();
   // Play waits for this piece's guide; the last piece's is never played on this score.
   guide = null;
   els.play.disabled = true;
   const opening = ++opens;
+  const c = await fetchChant(listed.slug).catch(() => null);
+  if (opening !== opens) return;
+  if (!c) {
+    close();
+    els.count.textContent = "That piece could not be opened.";
+    return;
+  }
+  show(c, opening);
+}
+
+async function show(c: FullChant, opening: number): Promise<void> {
   els.browse.hidden = true;
   els.piece.hidden = false;
   els.bar.hidden = false;
@@ -142,7 +187,11 @@ async function open(c: LibraryChant): Promise<void> {
   els.book.hidden = !c.book;
   // Only a web address from the score's header becomes a link.
   const url = c.url && /^https:\/\//.test(c.url) ? c.url : null;
-  els.source.innerHTML = `Score from ${url ? `<a href="${escape(url)}" rel="noopener">GregoBase</a>` : "GregoBase"}, in the public domain (CC0).`;
+  const source = c.source ?? "an unknown source";
+  els.source.innerHTML =
+    c.source === "GregoBase"
+      ? `Score from ${url ? `<a href="${escape(url)}" rel="noopener">GregoBase</a>` : "GregoBase"}, in the public domain (CC0).`
+      : `Score from ${escape(source)}; shown only to those signed in.`;
   els.practise.href = `/sing?chant=${encodeURIComponent(c.slug)}`;
   els.status.textContent = "";
   window.scrollTo(0, 0);
@@ -201,7 +250,11 @@ function route(): void {
   if (c) {
     if (els.piece.hidden) scrollBack = window.scrollY;
     void open(c);
-  } else close();
+  } else {
+    close();
+    // A piece the visitor may not see (or that is gone) is simply not in their library.
+    if (slug) els.count.textContent = "That piece is not in the library.";
+  }
 }
 byId("back").addEventListener("click", (e) => {
   e.preventDefault();
@@ -218,8 +271,9 @@ els.results.addEventListener("click", (e) => {
   history.pushState({ fromList: true }, "", a.getAttribute("href"));
   route();
 });
-window.addEventListener("popstate", route);
-
-drawKinds();
-drawResults();
-route();
+if (loaded) {
+  window.addEventListener("popstate", route);
+  drawKinds();
+  drawResults();
+  route();
+} else els.count.textContent = "The library could not be reached. Reload the page to try again.";

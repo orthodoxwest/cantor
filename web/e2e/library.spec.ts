@@ -3,21 +3,24 @@ import { expect, test } from "@playwright/test";
 test("the library lists, filters and opens a piece, and practises it", async ({ page }) => {
   await page.goto("/library");
   const items = page.locator("#results > li");
-  const total = await items.count();
+  const pieces = async () => Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0]);
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  const total = await pieces();
   expect(total).toBeGreaterThan(1);
   await expect(items.first().locator(".thumb svg")).toBeVisible();
 
   await page.getByRole("button", { name: /^Hymns/ }).click();
   await expect(page.getByRole("button", { name: /^Hymns/ })).toBeFocused();
   await expect(page.getByRole("button", { name: /^Hymns/ })).toHaveAttribute("aria-pressed", "true");
-  const hymns = await items.count();
+  const hymns = await pieces();
   expect(hymns).toBeGreaterThan(0);
   expect(hymns).toBeLessThan(total);
-  await page.getByRole("button", { name: /^All/ }).click();
+  await page.getByRole("button", { name: /^All\d/ }).click();
 
-  await page.getByPlaceholder("Search the words").fill("gentiles");
-  await expect(items).toHaveCount(1);
-  await items.first().locator("a").click();
+  await page.getByPlaceholder("Search the words").fill("light to lighten the gentiles");
+  await expect(items.first()).toContainText("A light to lighten the Gentiles");
+  expect(await items.count()).toBeLessThan(5);
+  await page.locator('#results a[href="#lumen-gentium"]').click();
   await expect(page).toHaveURL(/#lumen-gentium$/);
   await expect(page.locator("#piece-title")).toContainText("A light to lighten the Gentiles");
   await expect(page.locator("#score svg")).toBeVisible();
@@ -52,4 +55,46 @@ test("every page has the same pages in its header", async ({ page }) => {
     await expect(nav.getByRole("link")).toHaveText(["Psalms", "Library", "Practice"]);
     await expect(nav.locator("[aria-current=page]")).toHaveText(current);
   }
+});
+
+test("the library draws a page of results at a time", async ({ page }) => {
+  await page.goto("/library");
+  const items = page.locator("#results > li");
+  await expect(items).toHaveCount(40);
+  await page.getByRole("button", { name: "Show more" }).click();
+  await expect(items).toHaveCount(80);
+  await expect(page.locator("#results > li > a").nth(40)).toBeFocused();
+});
+
+test("a piece the library does not hold is not shown", async ({ page }) => {
+  await page.goto("/library#not-here");
+  await expect(page.locator("#count")).toHaveText("That piece is not in the library.");
+  await expect(page.locator("#piece")).toBeHidden();
+});
+
+test("a visitor the site does not know is offered a sign-in that returns them to the page", async ({ page }) => {
+  await page.route("/api/me", (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }));
+  await page.goto("/library#lumen-gentium");
+  const signIn = page.getByRole("link", { name: "Sign in" });
+  await expect(signIn).toHaveAttribute("href", "/signin?next=%2Flibrary%23lumen-gentium");
+  await expect(page.getByRole("navigation", { name: "Pages" }).getByRole("link")).toHaveCount(3);
+});
+
+test("a signed-in visitor is not offered a sign-in", async ({ page }) => {
+  await page.route("/api/me", (route) => route.fulfill({ json: { id: "abc", email: null } }));
+  const me = page.waitForResponse("**/api/me");
+  await page.goto("/library");
+  await me;
+  await expect(page.locator("#results > li").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
+});
+
+test("a piece that cannot be opened returns to the list and says so", async ({ page }) => {
+  await page.goto("/library#lumen-gentium");
+  await expect(page.locator("#piece")).toBeVisible();
+  await page.route("/api/chants/ubi-caritas", (route) => route.fulfill({ status: 500, json: { error: "down" } }));
+  await page.evaluate(() => (location.hash = "#ubi-caritas"));
+  await expect(page.locator("#count")).toHaveText("That piece could not be opened.");
+  await expect(page.locator("#piece")).toBeHidden();
+  await expect(page.locator("#browse")).toBeVisible();
 });

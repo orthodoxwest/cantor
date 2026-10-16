@@ -186,3 +186,7 @@
     margin-inline: calc(50% - var(--w) / 2);
   }
 }
+.more {
+  text-align: center;
+  margin: 1.3rem 0 0;
+}

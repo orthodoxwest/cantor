@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { identity } from "../src/identity";
 import app from "../src/index";
 
 const get = (path: string, headers?: HeadersInit, bindings: Env = env) =>
@@ -18,6 +19,37 @@ describe("api", () => {
     const rows = await res.json<{ slug: string; gabc?: string }[]>();
     expect(rows.map((r) => r.slug)).toEqual(["crux-fidelis", "ubi-caritas"]);
     expect(rows[0]).not.toHaveProperty("gabc");
+    expect(rows[0]).toMatchObject({ title: "Faithful Cross", name: "Crux fidelis", kind: "hymn", words: "Faithful Cross" });
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+    expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+  });
+
+  it("lists the private chants only to a known caller", async () => {
+    const res = await get("/api/chants", { "X-Dev-User": "student" });
+    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "ubi-caritas"]);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("finds a private chant for a known caller and for nobody else", async () => {
+    const hidden = await get("/api/chants/private-test");
+    expect(hidden.status).toBe(404);
+    expect(hidden.headers.get("Cache-Control")).toBe("private, no-store");
+    const res = await get("/api/chants/private-test", { "X-Dev-User": "student" });
+    expect(res.status).toBe(200);
+    const row = await res.json<{ slug: string; gabc: string }>();
+    expect(row.gabc).toContain("BOok");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {
+    const to = async (next: string) => (await get(`/signin?next=${encodeURIComponent(next)}`)).headers.get("Location");
+    expect(await to("/library?q=light#lumen-gentium")).toBe("/library?q=light#lumen-gentium");
+    for (const next of ["//evil.example", "/\\evil.example", "https://evil.example/", "/\t/evil.example", "library", ""])
+      expect(await to(next)).toBe("/");
+    const res = await get("/signin");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("returns one chant with its GABC", async () => {
@@ -103,6 +135,44 @@ describe("api", () => {
       expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
     });
 
+    it("names the caller from the Access cookie where no header is added", async () => {
+      const jwt = await token(good());
+      const res = await get("/api/me", { Cookie: `theme=dark; CF_Authorization=${jwt}` }, prod);
+      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
+      const list = await get("/api/chants", { Cookie: `CF_Authorization=${jwt}` }, prod);
+      expect((await list.json<{ slug: string }[]>()).map((r) => r.slug)).toContain("private-test");
+      expect((await get("/api/chants/private-test", { Cookie: `CF_Authorization=${jwt}` }, prod)).status).toBe(200);
+      const forged = await token(good(), (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        false,
+        ["sign"],
+      ) as CryptoKeyPair).privateKey);
+      const stale = await token({ ...good(), exp: now() - 1 });
+      expect((await get("/api/me", { Cookie: `CF_Authorization=${stale}; CF_Authorization=${jwt}` }, prod)).status).toBe(200);
+      for (const Cookie of [`CF_Authorization=${forged}`, `CF_Authorization=${await token({ ...good(), exp: now() - 1 })}`, `XCF_Authorization=${jwt}`, "CF_Authorization="]) {
+        expect((await get("/api/me", { Cookie }, prod)).status).toBe(401);
+        expect((await get("/api/chants/private-test", { Cookie }, prod)).status).toBe(404);
+      }
+    });
+
+    it("waits a few seconds after a team's keys fail to load before fetching them again", async () => {
+      const DOWN = "https://down.cloudflareaccess.com";
+      const down = { ...prod, ACCESS_TEAM: DOWN };
+      const headers = new Headers({ "Cf-Access-Jwt-Assertion": await token({ ...good(), iss: DOWN }) });
+      const calls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith(DOWN)).length;
+      const t = Date.now();
+      expect(await identity(headers, down, t)).toBeNull();
+      expect(await identity(headers, down, t + 9_999)).toBeNull();
+      expect(calls()).toBe(1);
+      expect(await identity(headers, down, t + 10_000)).toBeNull();
+      expect(calls()).toBe(2);
+    });
+
+    it("never lets /api/me be cached", async () => {
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token(good()) }, prod)).headers.get("Cache-Control")).toBe("private, no-store");
+      expect((await get("/api/me", {}, prod)).headers.get("Cache-Control")).toBe("private, no-store");
+    });
+
     it("takes a single audience as well as a list", async () => {
       const jwt = await token({ ...good(), aud: AUD });
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
@@ -133,6 +203,11 @@ describe("api", () => {
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": "not.a!.token" }, prod)).status).toBe(401);
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token({ ...good(), nbf: now() + 60 }) }, prod)).status).toBe(401);
       expect((await get("/api/pointing/116", { "X-Dev-User": "student" }, prod)).status).toBe(401);
+      // Nor does a bad token or a dev header reveal a private chant.
+      for (const headers of [{ "X-Dev-User": "student" }, { "Cf-Access-Jwt-Assertion": rejected[0]! }] as Record<string, string>[]) {
+        expect((await (await get("/api/chants", headers, prod)).json<{ slug: string }[]>()).map((r) => r.slug)).not.toContain("private-test");
+        expect((await get("/api/chants/private-test", headers, prod)).status).toBe(404);
+      }
       // Without the team and audience configured, nobody is signed in.
       const unset = { ...env, ENV: "prod", ACCESS_TEAM: "", ACCESS_AUD: "" };
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token(good()) }, unset)).status).toBe(401);

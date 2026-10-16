@@ -3,7 +3,10 @@
 import { Chant, type PsalmDisplay, type TimelineNote, init, psalm, psalmDisplay, toneLabel, toneNames } from "neuma";
 import { GLORIA, type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
 import { Player } from "./player";
+import { offerSignIn } from "./beam";
 import { decode, encode } from "./share";
+
+void offerSignIn();
 
 interface PsalterEntry {
   id: string;
