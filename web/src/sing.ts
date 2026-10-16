@@ -129,10 +129,13 @@ const cursor = new Cursor(score);
 
 // After a scored take: the ribbon under the staff, the core's marks on the notes, the core's
 // two sentences on the take, the singer's key, the note the ribbon is re-based on, and the words
-// of the mark tapped.
+// of the mark tapped. Where the chant has an aligned recording of the same notes, the ribbon
+// draws its trace under the singer's.
 const result = byId<HTMLElement>("result");
 const summaryText = byId<HTMLParagraphElement>("summary");
 const keyText = byId<HTMLParagraphElement>("key");
+const recordedText = byId<HTMLParagraphElement>("recorded");
+const recording = found?.recording ?? [];
 const baseLine = byId<HTMLParagraphElement>("base");
 const baseText = byId<HTMLSpanElement>("base-text");
 const why = byId<HTMLParagraphElement>("why");
@@ -155,15 +158,20 @@ function drawResult(): void {
     score.showStrips(null);
     say("");
     baseLine.hidden = true;
+    recordedText.hidden = true;
     if (judged) keyText.textContent = "Too little was heard to show.";
     return;
   }
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
+  // The recording is of the chant as the library gave it, so not of another put on the page.
+  const underlay = score.source === piece.gabc && recording.length === judged.ribbon.length ? recording : [];
+  // Re-based on a note the recording has no value for, the ribbon draws no recording.
+  recordedText.hidden = !underlay.some((b) => b.trace.length > 0) || (base !== null && (underlay[base]?.cents ?? null) === null);
   score.showStrips(
     (timeline, room) =>
       // The marks first, so that the keyboard reaches them before the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base),
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base, undefined, underlay),
   );
   say(open === null ? "" : (judged.told[open] ?? ""));
   keyText.textContent = `Your key: ${describeKey(key)}.`;

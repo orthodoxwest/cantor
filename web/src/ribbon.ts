@@ -2,9 +2,11 @@
 // its target at the centre, and the pitch heard over the note's sustained part. Each band is
 // measured in cents from the note itself, as the core's judge placed it in the singer's key,
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. The
-// ribbon itself draws no verdict: no zone of what counts as in tune, no colours; the core's
-// marks are drawn by marks.ts, on the notes in the engraving.
+// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. Where the
+// chant has an aligned recording, its trace is drawn under the singer's, each measured from its
+// own key, so the two compare as sung, wherever each was pitched. The ribbon itself draws no
+// verdict: no zone of what counts as in tune, no colours; the core's marks are drawn by
+// marks.ts, on the notes in the engraving.
 import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
@@ -74,7 +76,8 @@ const f = (x: number) => x.toFixed(1);
  * key; the traces are drawn `base` cents lower, a note's own value when the singer re-based on
  * it (so that note's trace sits on its centre), else 0; `baseIndex` is that note, the one
  * pressed. A heard band is a button to re-base on it; given `choose`, every band is a button
- * named by it instead. */
+ * named by it instead. Given `recorded`, the bands of a recording of the same notes, each
+ * note's recorded trace is drawn under the singer's, re-based on the same note. */
 export function drawRibbon(
   notes: readonly TimelineNote[],
   bands: readonly Band[],
@@ -82,8 +85,13 @@ export function drawRibbon(
   base = 0,
   baseIndex: number | null = null,
   choose?: (index: number) => string,
+  recorded: readonly Band[] = [],
 ): string {
   const at = places(notes);
+  // Re-based on a note the recording has no value for, the recording has no base to be drawn
+  // from, so it is not drawn.
+  const recordedBase = baseIndex === null ? 0 : (recorded.find((b) => b.index === baseIndex)?.cents ?? null);
+  const sung = new Map(recordedBase === null ? [] : recorded.map((b) => [b.index, b]));
   const out: string[] = [];
   for (const band of bands) {
     const p = at[band.index];
@@ -103,12 +111,15 @@ export function drawRibbon(
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
-    if (band.trace.length > 0 && band.to_s > band.from_s) {
+    const trace = (b: Band | undefined, by: number, cls: string) => {
+      if (!b || b.trace.length === 0 || b.to_s <= b.from_s) return;
       const inner = Math.max(w - 4, 0);
-      const x = (t: number) => p.left + (w - inner) / 2 + ((t - band.from_s) / (band.to_s - band.from_s)) * inner;
-      const points = band.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - base, top))}`).join(" ");
-      out.push(`<polyline class="band-trace" points="${points}"/>`);
-    }
+      const x = (t: number) => p.left + (w - inner) / 2 + ((t - b.from_s) / (b.to_s - b.from_s)) * inner;
+      const points = b.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - by, top))}`).join(" ");
+      out.push(`<polyline class="${cls}" points="${points}"/>`);
+    };
+    trace(sung.get(band.index), recordedBase ?? 0, "band-recorded");
+    trace(band, base, "band-trace");
     out.push("</g>");
   }
   return out.join("");

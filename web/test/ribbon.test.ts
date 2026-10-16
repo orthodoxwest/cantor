@@ -62,6 +62,43 @@ describe("ribbon", () => {
     ]);
   });
 
+  it("draws a recording's trace under the singer's, each from its own key, re-based on the same note", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    const t = (pts: Array<[number, number]>) => pts;
+    const bands = [
+      { index: 0, from_s: 0, to_s: 1, cents: 50, trace: t([[0.2, 50], [0.6, 50]]) },
+      { index: 1, from_s: 1, to_s: 2, cents: null, trace: [] },
+    ];
+    // The recording, sung at its own pace: its times are its own, its cents from its own key.
+    const recorded = [
+      { index: 0, from_s: 4, to_s: 6, cents: -20, trace: t([[4, -20], [6, -20]]) },
+      { index: 1, from_s: 6, to_s: 8, cents: 10, trace: t([[6, 10], [8, 10]]) },
+    ];
+    const lines = (svg: string, cls: string) =>
+      [...svg.matchAll(new RegExp(`<polyline class="${cls}" points="([^"]*)"`, "g"))].map((m) =>
+        m[1]!.split(" ").map((p) => p.split(",").map(Number)),
+      );
+    const svg = drawRibbon(notes, bands, () => 0, 0, null, undefined, recorded);
+    // Drawn first, so under the singer's; on the singer's unheard note too.
+    expect(svg.indexOf("band-recorded")).toBeLessThan(svg.indexOf("band-trace"));
+    const drawn = lines(svg, "band-recorded");
+    expect(drawn).toHaveLength(2);
+    expect(drawn[0]!.map((p) => p[1])).toEqual([yOf(-20, 0), yOf(-20, 0)].map((y) => Number(y.toFixed(1))));
+    // Across the band the singer's is drawn in (86 to 115, less 2 each side), whatever the
+    // recording's times.
+    expect(drawn[0]!.map((p) => p[0])).toEqual([88, 113]);
+    // Re-based on the first note: the singer's trace by the singer's 50, the recording's by its -20.
+    const rebased = lines(drawRibbon(notes, bands, () => 0, 50, 0, undefined, recorded), "band-recorded");
+    expect(rebased[0]!.map((p) => p[1])).toEqual([yOf(0, 0), yOf(0, 0)]);
+    expect(rebased[1]!.map((p) => p[1])).toEqual([yOf(30, 0), yOf(30, 0)].map((y) => Number(y.toFixed(1))));
+    expect(drawRibbon(notes, bands, () => 0)).not.toContain("band-recorded");
+    // Re-based on a note the recording has no value for, the recording is not drawn.
+    const missed = [{ ...recorded[0]!, cents: null }, recorded[1]!];
+    const unbased = drawRibbon(notes, bands, () => 0, 50, 0, undefined, missed);
+    expect(unbased).not.toContain("band-recorded");
+    expect(unbased).toContain("band-trace");
+  });
+
   it("names the key as a transposition", () => {
     expect(describeKey(-303.4)).toBe("3 semitones down, 3 cents flat");
     expect(describeKey(100)).toBe("1 semitone up");

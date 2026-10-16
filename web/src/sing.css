@@ -143,6 +143,13 @@
 .ribbon .unheard .band-target {
   stroke-dasharray: 2 3;
 }
+.ribbon .band-recorded {
+  fill: none;
+  stroke: color-mix(in srgb, currentColor 45%, transparent);
+  stroke-width: 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
 .ribbon .band-trace {
   fill: none;
   stroke: var(--trace);

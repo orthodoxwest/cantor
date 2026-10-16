@@ -1147,56 +1147,64 @@ pub fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R>
 }
 
 fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
-    let mut out = Vec::new();
-    for path in json_files(dir)? {
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        let base = path.parent().unwrap_or(dir);
-        let gabc_path = base.join(&take.gabc);
-        let gabc = std::fs::read_to_string(&gabc_path).map_err(|e| format!("{}: {e}", gabc_path.display()))?;
-        let mut notes = notes_from_gabc(&gabc, 1.0);
-        if notes.len() != take.notes.len() {
-            return Err(format!("{}: {} note times for {} notes", take.name, take.notes.len(), notes.len()));
-        }
-        for (i, (n, [start, end])) in notes.iter_mut().zip(&take.notes).enumerate() {
-            if end <= start {
-                return Err(format!("{}: note {i} ends at {end} before it starts at {start}", take.name));
-            }
-            n.start_s = *start;
-            n.dur_s = end - start;
-        }
-        // The page listens before the first note is due, so a take is timed as it would be.
-        if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
-            return Err(format!(
-                "{}: the first note starts at {} s, before the {PAGE_LEAD_S} s the page listens first",
-                take.name, first.start_s
-            ));
-        }
-        let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
-        let frames = ear.listen(&samples, rate, None)?;
-        let report = score(&notes, &frames);
-        let oracle = match oracle {
-            Some(o) => Some(OracleTake::of(&notes, &o.label(&samples, rate, &notes, &frames)?)),
-            None => None,
-        };
-        let verdict = judge(&notes, &report);
-        let timing = Timing::of(&notes, &samples, rate, &frames, &verdict, false);
-        let len = notes.len();
-        out.push(Judged {
-            name: format!("{REAL} {}", take.name),
-            notes,
-            planted: vec![Planted::default(); len],
-            truth: vec![None; len],
-            true_key: None,
-            planted_drift: 0.0,
-            frames,
-            verdict,
-            report,
-            oracle,
-            timing,
-        });
+    json_files(dir)?.iter().map(|path| real_take(ear, oracle, path)).collect()
+}
+
+/// The ribbon of the real take described by the file at `path`, as `ear` hears it: an aligned
+/// recording's trace, which the page draws under the singer's.
+pub fn recording(ear: &Ear, path: &Path) -> Result<Vec<cantor_core::Band>, String> {
+    let take = real_take(ear, None, path)?;
+    Ok(cantor_core::ribbon(&take.notes, &take.frames, &take.report, &take.verdict))
+}
+
+/// The real take described by the file at `path` (see [`RealTake`]), judged.
+fn real_take(ear: &Ear, oracle: Option<&Oracle>, path: &Path) -> Result<Judged, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let base = path.parent().unwrap_or(Path::new("."));
+    let gabc_path = base.join(&take.gabc);
+    let gabc = std::fs::read_to_string(&gabc_path).map_err(|e| format!("{}: {e}", gabc_path.display()))?;
+    let mut notes = notes_from_gabc(&gabc, 1.0);
+    if notes.len() != take.notes.len() {
+        return Err(format!("{}: {} note times for {} notes", take.name, take.notes.len(), notes.len()));
     }
-    Ok(out)
+    for (i, (n, [start, end])) in notes.iter_mut().zip(&take.notes).enumerate() {
+        if end <= start {
+            return Err(format!("{}: note {i} ends at {end} before it starts at {start}", take.name));
+        }
+        n.start_s = *start;
+        n.dur_s = end - start;
+    }
+    // The page listens before the first note is due, so a take is timed as it would be.
+    if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
+        return Err(format!(
+            "{}: the first note starts at {} s, before the {PAGE_LEAD_S} s the page listens first",
+            take.name, first.start_s
+        ));
+    }
+    let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
+    let frames = ear.listen(&samples, rate, None)?;
+    let report = score(&notes, &frames);
+    let oracle = match oracle {
+        Some(o) => Some(OracleTake::of(&notes, &o.label(&samples, rate, &notes, &frames)?)),
+        None => None,
+    };
+    let verdict = judge(&notes, &report);
+    let timing = Timing::of(&notes, &samples, rate, &frames, &verdict, false);
+    let len = notes.len();
+    Ok(Judged {
+        name: format!("{REAL} {}", take.name),
+        notes,
+        planted: vec![Planted::default(); len],
+        truth: vec![None; len],
+        true_key: None,
+        planted_drift: 0.0,
+        frames,
+        verdict,
+        report,
+        oracle,
+        timing,
+    })
 }
 
 /// Every suite in `dir`, by file name. A suite's keys other than `name`, `gate` and `takes`
@@ -1334,6 +1342,39 @@ mod tests {
         let mut values: Vec<f32> = trace.iter().map(|p| p.1).collect();
         values.sort_by(f32::total_cmp);
         values[values.len() / 2]
+    }
+
+    /// A take written as a real take is (its chant, audio and note times beside it) is heard
+    /// as the eval heard it, so a recording's ribbon is the one the eval would draw.
+    #[test]
+    fn a_recording_is_the_ribbon_of_its_take() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ear = Ear::new(false).expect("ear");
+        let suites = load_suites(&root.join("evals/suites")).expect("suites");
+        let spec = &suites.iter().find(|s| s.name == "expert-lead").expect("suite").takes[0];
+        let judged = run_take(&root, &ear, None, spec, "recording".into()).expect("take");
+        let samples = render_take(&judged.notes, &spec.profile, SAMPLE_RATE, spec.seed).samples;
+        let dir = std::env::temp_dir().join(format!("cantor-recording-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::copy(root.join(&spec.gabc), dir.join("chant.gabc")).expect("gabc");
+        crate::wav::write_mono(&dir.join("take.wav"), &samples, SAMPLE_RATE).expect("wav");
+        let notes: Vec<[f32; 2]> = judged.notes.iter().map(|n| [n.start_s, n.start_s + n.dur_s]).collect();
+        let file = serde_json::json!({ "name": "take", "gabc": "chant.gabc", "audio": "take.wav", "notes": notes });
+        std::fs::write(dir.join("take.json"), file.to_string()).expect("json");
+        let got = recording(&ear, &dir.join("take.json"));
+        std::fs::remove_dir_all(&dir).expect("clean");
+        let got = got.expect("recording");
+        let want = cantor_core::ribbon(&judged.notes, &judged.frames, &judged.report, &judged.verdict);
+        assert_eq!(got.len(), want.len());
+        assert!(want.iter().filter(|b| !b.trace.is_empty()).count() * 10 >= want.len() * 9);
+        for (g, w) in got.iter().zip(&want) {
+            assert_eq!(
+                (g.index, g.cents.is_some(), g.trace.len()),
+                (w.index, w.cents.is_some(), w.trace.len())
+            );
+            assert!((g.from_s - w.from_s).abs() < 1e-4 && (g.to_s - w.to_s).abs() < 1e-4);
+            assert!(g.cents.zip(w.cents).is_none_or(|(g, w)| (g - w).abs() < 0.5), "{g:?} {w:?}");
+        }
     }
 
     #[test]
