@@ -3,7 +3,7 @@ import { Cursor } from "./cursor";
 import { Guide } from "./guide";
 import { Listener } from "./listen";
 import { kicker, library, chant as findChant } from "./library";
-import { describePitch } from "./notes";
+import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
@@ -136,7 +136,9 @@ const failedListening = (error: unknown) =>
   setStatus(`Listening failed: ${error instanceof Error ? error.message : String(error)}`);
 const listener = new Listener(
   (frame) => {
-    const text = frame.midi === null ? "–" : describePitch(frame.midi);
+    // During a take the readout says only the note, quietly: the cents from concert pitch
+    // would read as a verdict, and the singer's key is their own.
+    const text = frame.midi === null ? "–" : taking ? noteName(frame.midi) : describePitch(frame.midi);
     if (readout.textContent !== text) readout.textContent = text;
   },
   (error) => {
@@ -292,6 +294,8 @@ async function takeScored(): Promise<void> {
   }
   playButton.disabled = listenButton.disabled = true;
   takeButton.textContent = "Stop";
+  readout.textContent = "–";
+  readout.setAttribute("aria-live", "off");
   showResult(null);
   setStatus("");
   try {
@@ -315,11 +319,16 @@ async function takeScored(): Promise<void> {
     }
     await listener.start();
     if (!going()) return;
-    setStatus(worn ? "Begin with the guide." : "Begin when the cursor appears.", true);
+    const prompt = worn ? "Begin with the guide." : "Begin when the cursor appears.";
+    setStatus(prompt, true);
     const started = await guide.play({ voice: worn, lead: LEAD });
     if (!going()) return;
     // A guide that did not start, or failed, has said why.
     if (!started) return listener.stop();
+    // Once the chant begins the page shows the cursor and the note alone.
+    void wait(started.origin + started.first - ctx.currentTime).then(() => {
+      if (going() && status.textContent === prompt) setStatus("");
+    });
     const finished = await started.ended;
     if (finished) await wait(TAIL);
     if (!going()) return;
@@ -351,6 +360,7 @@ function endTake(): void {
   playButton.disabled = !guide;
   listenButton.disabled = false;
   takeButton.textContent = "Sing a take";
+  readout.setAttribute("aria-live", "polite");
 }
 
 if (guide) {
