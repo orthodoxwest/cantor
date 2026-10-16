@@ -2,18 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Psalm pointer</title>
+    <title>Psalm pointer · Cantor</title>
     <meta name="description" content="Point an English psalm for any Gregorian tone, adjust the accents, hear it sung and take it away." />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" />
     <link rel="stylesheet" href="/src/style.css" />
     <link rel="stylesheet" href="/src/pointer.css" />
   </head>
   <body class="pointer">
+    <header class="beam">
+      <div class="beam-in">
+        <a class="brand" href="/"><span class="cross" aria-hidden="true">✠</span>Cantor</a>
+        <nav aria-label="Pages">
+          <a href="/" aria-current="page">Psalms</a>
+          <a href="/library">Library</a>
+          <a href="/sing">Practice</a>
+        </nav>
+      </div>
+    </header>
     <main>
-      <header>
-        <h1>Psalm pointer</h1>
+      <header class="head">
+        <p class="titulus">Psalms</p>
+        <h1 class="title">Psalm pointer</h1>
         <p class="lede">
           Choose a psalm and a tone. Each half-verse's cadence is underlined, its accents in bold:
           drag an accent, or focus it and use the arrow keys, to move it.
@@ -42,7 +55,7 @@
       </figure>
 
       <div class="toolbar" role="toolbar" aria-label="Playback">
-        <button id="play" type="button" aria-pressed="false">Play</button>
+        <button id="play" class="btn primary" type="button" aria-pressed="false">Play</button>
         <label>Speed
           <select id="speed">
             <option value="0.36">Slow</option>
@@ -54,8 +67,8 @@
           <select id="pitch"></select>
         </label>
         <span class="spacer"></span>
-        <button id="undo" type="button" disabled>Undo</button>
-        <button id="check" type="button" hidden></button>
+        <button id="undo" class="btn" type="button" disabled>Undo</button>
+        <button id="check" class="btn" type="button" hidden></button>
       </div>
       <p id="status" class="status" aria-live="polite"></p>
 
@@ -63,11 +76,11 @@
 
       <div class="toolbar export" role="toolbar" aria-label="Export">
         <span class="label">Export</span>
-        <button id="copy" type="button" title="Copies the pointed verses with their red marks, to paste into Word">Copy for Word</button>
-        <button id="download-text" type="button">Text</button>
-        <button id="download-gabc" type="button">GABC</button>
-        <button id="download-svg" type="button">SVG</button>
-        <button id="print" type="button">Print</button>
+        <button id="copy" class="btn" type="button" title="Copies the pointed verses with their red marks, to paste into Word">Copy for Word</button>
+        <button id="download-text" class="btn" type="button">Text</button>
+        <button id="download-gabc" class="btn" type="button">GABC</button>
+        <button id="download-svg" class="btn" type="button">SVG</button>
+        <button id="print" class="btn" type="button">Print</button>
       </div>
 
       <details id="notation">
