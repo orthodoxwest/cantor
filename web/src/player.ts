@@ -46,7 +46,7 @@ export class Player {
       const onError = (error: unknown) => {
         console.error("pointer:", error);
         if (!current()) return;
-        options.onError?.("The voice failed while singing, so it stopped.");
+        options.onError?.("The voice failed while singing. Press Play to try again.");
         this.stop();
       };
       singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC, onError });

@@ -76,34 +76,61 @@ export function chunksDue(next: number, horizon: number, size: number, total: nu
   return out;
 }
 
+/** A renderer and the voice loaded into it. A call that traps leaves the renderer's state
+ * mid-use for good (it aborts without unwinding), so after one nothing more is asked of it. */
+interface Renderer {
+  wasm: Exports;
+  voice: number;
+  centre: number;
+  trapped: boolean;
+}
+
+/** Calls into `r`, marking it trapped if the call throws. */
+function call<T>(r: Renderer, f: (wasm: Exports) => T): T {
+  try {
+    return f(r.wasm);
+  } catch (error) {
+    r.trapped = true;
+    throw error;
+  }
+}
+
 /** A set of sung vowels to sing with. */
 export class VoiceTable {
   private constructor(
-    private readonly wasm: Exports,
-    private readonly voice: number,
+    private renderer: Renderer,
+    private readonly open: () => Promise<Renderer>,
   ) {}
 
   /** The neutral voice: every syllable on one made vowel. */
   static async neutral(wasmUrl = WASM_URL): Promise<VoiceTable> {
-    const wasm = await instantiate(fetchBytes(wasmUrl));
-    return new VoiceTable(wasm, wasm.cantor_voice_neutral());
+    const module = await compile(wasmUrl);
+    const open = async () => renderer(await instantiate(module), (wasm) => wasm.cantor_voice_neutral());
+    return new VoiceTable(await open(), open);
   }
 
   /** The voice file at `voiceUrl`, given up on after `timeoutMs`. */
   static async load(voiceUrl: string, wasmUrl = WASM_URL, timeoutMs = 20_000): Promise<VoiceTable> {
-    const [wasm, file] = await Promise.all([
-      instantiate(fetchBytes(wasmUrl)),
-      fetchBytes(voiceUrl, AbortSignal.timeout(timeoutMs)),
-    ]);
-    write(wasm, new Uint8Array(file));
-    const voice = wasm.cantor_voice_new();
-    if (!voice) throw new Error(`${voiceUrl}: not a voice file`);
-    return new VoiceTable(wasm, voice);
+    const [module, file] = await Promise.all([compile(wasmUrl), fetchBytes(voiceUrl, AbortSignal.timeout(timeoutMs))]);
+    const bytes = new Uint8Array(file);
+    const open = async () =>
+      renderer(await instantiate(module), (wasm) => {
+        write(wasm, bytes);
+        const voice = wasm.cantor_voice_new();
+        if (!voice) throw new Error(`${voiceUrl}: not a voice file`);
+        return voice;
+      });
+    return new VoiceTable(await open(), open);
   }
 
   /** The pitch (MIDI) the voice is at home at. */
   get centre(): number {
-    return this.wasm.cantor_voice_centre(this.voice);
+    return this.renderer.centre;
+  }
+
+  /** Replaces a renderer that has trapped with a fresh one, so the voice sings again. */
+  async renew(): Promise<void> {
+    if (this.renderer.trapped) this.renderer = await this.open();
   }
 
   /** A part to sing. `gabc` is read only for its `language:` header; without one the language
@@ -114,32 +141,40 @@ export class VoiceTable {
     const bytes = new Uint8Array(g.length + n.length);
     bytes.set(g);
     bytes.set(n, g.length);
-    write(this.wasm, bytes);
-    return new Part(this.wasm, this.voice, this.wasm.cantor_part_new(g.length));
+    const r = this.renderer;
+    return new Part(
+      r,
+      call(r, (wasm) => {
+        write(wasm, bytes);
+        return wasm.cantor_part_new(g.length);
+      }),
+    );
   }
 }
 
 export class Part {
   constructor(
-    private readonly wasm: Exports,
-    private readonly voice: number,
+    private readonly renderer: Renderer,
     private handle: number,
   ) {}
 
   /** Samples the whole part lasts at `sampleRate`. */
   length(sampleRate: number): number {
-    return this.wasm.cantor_part_length(this.handle, sampleRate);
+    return call(this.renderer, (wasm) => wasm.cantor_part_length(this.handle, sampleRate));
   }
 
   /** `len` samples from sample `from`, a copy of the module's output. */
   sing(sampleRate: number, from: number, len: number): Float32Array<ArrayBuffer> {
-    const ptr = this.wasm.cantor_sing(this.voice, this.handle, sampleRate, from, len);
-    return new Float32Array(this.wasm.memory.buffer, ptr, len).slice();
+    const { voice } = this.renderer;
+    const ptr = call(this.renderer, (wasm) => wasm.cantor_sing(voice, this.handle, sampleRate, from, len));
+    return new Float32Array(this.renderer.wasm.memory.buffer, ptr, len).slice();
   }
 
+  /** Lets the part go; a renderer that has trapped is left alone, to be replaced whole. */
   free(): void {
-    this.wasm.cantor_part_free(this.handle);
+    const handle = this.handle;
     this.handle = 0;
+    if (handle && !this.renderer.trapped) call(this.renderer, (wasm) => wasm.cantor_part_free(handle));
   }
 }
 
@@ -213,7 +248,7 @@ export class Singing {
       if (next >= total) this.release();
     };
     // A chunk that cannot be sung (the renderer trapped, the audio graph refused it) silences
-    // what is scheduled and frees the part.
+    // what is scheduled and lets the part go; the next `sing` replaces a trapped renderer.
     try {
       fill();
     } catch (error) {
@@ -234,24 +269,30 @@ export class Singing {
 
   /** Stops rendering and silences the voice, at once or once what is scheduled has played. */
   stop(letRing = false): void {
-    this.release();
     const nodes = this.nodes.splice(0);
     const silence = () => nodes.forEach((node) => node.disconnect());
     const left = this.end - this.ctx.currentTime;
     if (letRing && left > 0) setTimeout(silence, left * 1000);
     else silence();
+    this.release();
   }
 
   private release(): void {
     clearInterval(this.timer);
-    this.part?.free();
+    const part = this.part;
     this.part = null;
+    try {
+      part?.free();
+    } catch (error) {
+      console.error("singer:", error);
+    }
   }
 }
 
 /** Sings `notes` (times in seconds from a moment from now) on the audio context. */
 export async function sing(ctx: AudioContext, notes: readonly SungNote[], options: SingOptions = {}): Promise<Singing> {
   const table = options.table ?? (await neutralTable());
+  await table.renew();
   return new Singing(ctx, table.part(notes, options.gabc), options.output, options.onError);
 }
 
@@ -272,9 +313,19 @@ async function fetchBytes(url: string, signal?: AbortSignal): Promise<ArrayBuffe
   return r.arrayBuffer();
 }
 
-async function instantiate(module: Promise<ArrayBuffer>): Promise<Exports> {
-  const { instance } = await WebAssembly.instantiate(await module, {});
+async function compile(url: string): Promise<WebAssembly.Module> {
+  return WebAssembly.compile(await fetchBytes(url));
+}
+
+async function instantiate(module: WebAssembly.Module): Promise<Exports> {
+  const instance = await WebAssembly.instantiate(module, {});
   return instance.exports as unknown as Exports;
+}
+
+/** A renderer for `wasm` with the voice `load` puts in it. */
+function renderer(wasm: Exports, load: (wasm: Exports) => number): Renderer {
+  const voice = load(wasm);
+  return { wasm, voice, centre: wasm.cantor_voice_centre(voice), trapped: false };
 }
 
 function write(wasm: Exports, bytes: Uint8Array): void {

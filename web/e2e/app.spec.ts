@@ -80,6 +80,21 @@ for (const [voice, query] of [
   });
 }
 
+test("a renderer that traps stops the guide, which sings again on the next play", async ({ page }) => {
+  const { trapFourthChunk } = await import("./fixtures/trap.mjs");
+  await page.addInitScript(trapFourthChunk);
+  await open(page);
+  const play = page.getByRole("button", { name: "Play" });
+  await play.click();
+  await expect(page.locator("#status")).toHaveText(/failed\. Press Play to try again/, { timeout: 10_000 });
+  await expect(play).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  await play.click();
+  await expect(page.locator("#status")).toHaveText("");
+  // A fresh renderer sings past where the last one trapped.
+  await expect.poll(() => page.evaluate(() => window.__cantor.chunks.length), { timeout: 10_000 }).toBeGreaterThan(3);
+});
+
 test("a voice file with nothing to sing falls back to the neutral vowel", async ({ page }) => {
   const empty = Buffer.alloc(12);
   empty.write("CVOX", 0);

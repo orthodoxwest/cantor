@@ -36,66 +36,82 @@ describe("chunksDue", () => {
 });
 
 describe("Singing", () => {
-  // A part 4 s long at 8 kHz whose renderer traps on its `failAt`th chunk, on an audio context
-  // that records what is scheduled. The first fill schedules three chunks.
-  function setup(failAt: number) {
+  // A part 4 s long at 8 kHz on an audio context that records what is scheduled; the first
+  // fill schedules three chunks. The `failAt`th chunk fails: the renderer traps, which leaves
+  // it unable to free anything, as cantor.wasm's traps do, or the audio graph refuses it.
+  function setup(failAt: number, failure: "trap" | "audio") {
     let calls = 0;
+    let trapped = false;
     const freed: number[] = [];
     const wasm = {
       memory: new WebAssembly.Memory({ initial: 1 }),
       cantor_part_length: () => 32_000,
       cantor_sing: () => {
-        if (++calls === failAt) throw new WebAssembly.RuntimeError("unreachable");
+        if (++calls === failAt && failure === "trap") {
+          trapped = true;
+          throw new WebAssembly.RuntimeError("unreachable");
+        }
         return 0;
       },
-      cantor_part_free: (handle: number) => freed.push(handle),
+      cantor_part_free: (handle: number) => {
+        if (trapped) throw new WebAssembly.RuntimeError("already borrowed");
+        freed.push(handle);
+      },
     };
     const node = () => ({ disconnected: false, connect: (n: unknown) => n, disconnect() { this.disconnected = true; } });
-    const sources: Array<ReturnType<typeof node>> = [];
+    const nodes: Array<ReturnType<typeof node>> = [];
+    const made = <T extends ReturnType<typeof node>>(n: T) => (nodes.push(n), n);
     const ctx = {
       sampleRate: 8000,
       currentTime: 0,
       destination: node(),
-      createGain: () => ({ ...node(), gain: { value: 1 } }),
-      createBuffer: () => ({ copyToChannel() {} }),
-      createBufferSource: () => {
-        const src = { ...node(), buffer: null, start() {} };
-        sources.push(src);
-        return src;
+      createGain: () => made({ ...node(), gain: { value: 1 } }),
+      createBuffer: () => {
+        if (calls === failAt && failure === "audio") throw new RangeError("refused");
+        return { copyToChannel() {} };
       },
+      createBufferSource: () => made({ ...node(), buffer: null, start() {} }),
     };
-    const part = new Part(wasm as unknown as ConstructorParameters<typeof Part>[0], 1, 7);
-    return { ctx, part, freed, sources, calls: () => calls };
+    const renderer = { wasm, voice: 1, centre: 55, trapped: false };
+    const part = new Part(renderer as unknown as ConstructorParameters<typeof Part>[0], 7);
+    return { ctx, part, renderer, freed, nodes, calls: () => calls };
   }
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("silences and frees the part when the first fill fails", () => {
-    const { ctx, part, freed, sources } = setup(2);
-    expect(() => new Singing(ctx as unknown as AudioContext, part, undefined)).toThrow("unreachable");
-    expect(sources).toHaveLength(1);
-    expect(sources.every((s) => s.disconnected)).toBe(true);
-    expect(freed).toEqual([7]);
-  });
+  for (const failure of ["trap", "audio"] as const) {
+    // A trapped renderer is not asked to free the part; it is replaced whole.
+    const freedAfter = failure === "trap" ? [] : [7];
 
-  it("silences, frees the part and reports when a later fill fails", () => {
-    vi.useFakeTimers();
-    const { ctx, part, freed, sources, calls } = setup(4);
-    const errors: unknown[] = [];
-    const singing = new Singing(ctx as unknown as AudioContext, part, undefined, (e) => errors.push(e));
-    expect(singing.chunks).toHaveLength(3);
-    ctx.currentTime = 1;
-    vi.advanceTimersByTime(250);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toBeInstanceOf(WebAssembly.RuntimeError);
-    expect(sources).toHaveLength(3);
-    expect(sources.every((s) => s.disconnected)).toBe(true);
-    expect(freed).toEqual([7]);
-    vi.advanceTimersByTime(5000);
-    expect(calls()).toBe(4);
-    singing.stop();
-    expect(freed).toEqual([7]);
-  });
+    it(`silences what is scheduled when the first fill fails (${failure})`, () => {
+      const { ctx, part, renderer, freed, nodes } = setup(2, failure);
+      expect(() => new Singing(ctx as unknown as AudioContext, part, undefined)).toThrow();
+      // The gain and the one chunk scheduled.
+      expect(nodes).toHaveLength(2);
+      expect(nodes.every((n) => n.disconnected)).toBe(true);
+      expect(freed).toEqual(freedAfter);
+      expect(renderer.trapped).toBe(failure === "trap");
+    });
+
+    it(`silences what is scheduled and reports when a later fill fails (${failure})`, () => {
+      vi.useFakeTimers();
+      const { ctx, part, freed, nodes, calls } = setup(4, failure);
+      const errors: unknown[] = [];
+      const singing = new Singing(ctx as unknown as AudioContext, part, undefined, (e) => errors.push(e));
+      expect(singing.chunks).toHaveLength(3);
+      ctx.currentTime = 1;
+      vi.advanceTimersByTime(250);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(failure === "trap" ? WebAssembly.RuntimeError : RangeError);
+      expect(nodes).toHaveLength(4);
+      expect(nodes.every((n) => n.disconnected)).toBe(true);
+      expect(freed).toEqual(freedAfter);
+      vi.advanceTimersByTime(5000);
+      expect(calls()).toBe(4);
+      expect(() => singing.stop()).not.toThrow();
+      expect(freed).toEqual(freedAfter);
+    });
+  }
 });

@@ -82,7 +82,7 @@ export class Guide {
   private fail(play: number, error: unknown): void {
     console.error("guide:", error);
     if (!this.playing || play !== this.plays) return;
-    this.options.onError?.("The guide voice failed, so the guide stopped.");
+    this.options.onError?.("The guide voice failed. Press Play to try again.");
     this.halt(false);
   }
 
