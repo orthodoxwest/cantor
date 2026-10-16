@@ -205,3 +205,79 @@ test("copies the pointing for a word processor", async ({ page, context }) => {
   expect(html).toContain("color:#a3211c;font-weight:bold\">·</span>");
   expect(html).toContain("shépherd");
 });
+
+test("shows a booklet's pointing for those who may see it, and suggests its own otherwise", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("#status")).toContainText("Suggested pointing");
+  await expect(page.locator("#source-label")).toBeHidden();
+  // A made-up setting stands in for the private ones.
+  const setting = {
+    id: "test/001",
+    label: "i.4",
+    tone: "1.a",
+    nearest: "1.a",
+    match: "exact",
+    section: "Test",
+    verses: [
+      { n: 1, pointed: "The Lord is my shepherd · thérefore * can I lack · nóthing." },
+      { n: 2, pointed: "He shall feed me in a · gréen pasture * and lead me forth beside the waters · of cómfort." },
+      { n: 7, pointed: "Glory be to the Father, and · to the Són * and to · the Holy Ghóst.", gloria: true },
+      { n: 8, pointed: "As it was in the beginning, is now, and ever · sháll be * world without · end. Amén.", gloria: true },
+    ],
+  };
+  await page.route("**/api/pointing/23", (route) => route.fulfill({ json: [setting] }));
+  await open(page, "#psalm=23&tone=8.G&verses=1-2");
+  await expect(page.locator("#source-label")).toBeVisible();
+  await page.locator("#source").selectOption("test/001");
+  await expect(page.locator("#tone")).toHaveValue("1.a");
+  await expect(page.locator("#status")).toContainText("Booklet pointing, i.4");
+  expect(await text(page)).toBe(
+    [...setting.verses.map((v) => (v.gloria ? v.pointed : `${v.n} ${v.pointed}`))].join("\n"),
+  );
+  await expect(page).toHaveURL(/setting=test%2F001/);
+  // A shared link opens on the setting.
+  await page.reload();
+  await expect(page.locator("#source")).toHaveValue("test/001");
+  await expect(page.locator("#status")).toContainText("Booklet pointing, i.4");
+  // Another tone is the pointer's own suggestion again.
+  await page.locator("#tone").selectOption("8.G");
+  await expect(page.locator("#source")).toHaveValue("");
+  await expect(page.locator("#status")).toContainText("Suggested pointing");
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator("#source")).toHaveValue("test/001");
+  // An edit to a booklet's text stays out of the address.
+  await accents(page, 0, "termination").focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#status")).toContainText("pointing edited");
+  await page.waitForTimeout(400);
+  expect(page.url()).not.toContain("text=");
+  // Someone the route turns away gets the pointer's own suggestion from the same link.
+  const link = page.url();
+  await page.unroute("**/api/pointing/23");
+  await page.route("**/api/pointing/23", (route) => route.fulfill({ status: 401, json: { error: "unauthorized" } }));
+  await page.goto("about:blank");
+  await page.goto(link);
+  await expect(page.locator(".verse").first()).toBeVisible();
+  await expect(page.locator("#status")).toContainText("Suggested pointing");
+  expect(await text(page)).not.toContain(setting.verses[0]!.pointed);
+});
+
+test("a psalm chosen while a linked setting loads keeps its own pointing", async ({ page }) => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/pointing/23", async (route) => {
+    await held;
+    await route.fulfill({
+      json: [{ id: "test/001", label: "i.4", tone: "1.a", nearest: "1.a", match: "exact", section: null, verses: [{ n: 1, pointed: "The Lord is my shepherd · thérefore * can I lack · nóthing." }] }],
+    });
+  });
+  await page.goto("/?test=1#psalm=23&tone=1.a&setting=test%2F001");
+  await expect(page.locator("#psalm option").first()).toBeAttached();
+  await page.locator("#psalm").selectOption("1");
+  await expect(page.locator(".verse").first()).toBeVisible();
+  release();
+  await page.waitForTimeout(300);
+  await expect(page.locator("#psalm")).toHaveValue("1");
+  await expect(page.locator("#status")).toContainText("Suggested pointing");
+  expect(await text(page)).toMatch(/^1 Blessed is the man/);
+});

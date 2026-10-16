@@ -14,6 +14,8 @@ export interface Shared {
   own?: string;
   /** The pointed text, when it differs from what pointing the source would give. */
   text?: string;
+  /** A booklet setting's id, when its pointing is shown. */
+  setting?: string;
 }
 
 async function pipe(bytes: Uint8Array, stream: CompressionStream | DecompressionStream): Promise<Uint8Array> {
@@ -44,6 +46,7 @@ export async function encode(state: Shared): Promise<string> {
   if (!state.gloria) params.set("gloria", "0");
   if (state.transpose) params.set("pitch", String(state.transpose));
   if (state.verses) params.set("verses", state.verses.join("-"));
+  if (state.setting) params.set("setting", state.setting);
   if (state.own !== undefined) params.set("own", await packText(state.own));
   if (state.text !== undefined) params.set("text", await packText(state.text));
   return "#" + params.toString();
@@ -76,6 +79,7 @@ export async function decode(hash: string): Promise<Shared | null> {
     transpose: Number.isInteger(transpose) && Math.abs(transpose) <= 7 ? transpose : 0,
     verses,
     ...(own !== undefined ? { own } : {}),
+    ...(params.get("setting") ? { setting: params.get("setting")! } : {}),
     text,
   };
 }
