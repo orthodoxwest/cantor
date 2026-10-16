@@ -75,19 +75,25 @@ pub fn track_with(samples: &[f32], sample_rate: f32, frame: usize, hop: usize, m
     }
     let mut start = 0;
     while start + frame <= samples.len() {
-        let d = detect(&samples[start..start + frame], sample_rate, min_rms, DEFAULT_MIN_CLARITY);
-        frames.push(Frame {
-            t: (start as f32 + frame as f32 / 2.0) / sample_rate,
-            midi: d.midi,
-            clarity: d.clarity,
-            rms: d.rms,
-            masked: false,
-            quiet: d.rms < min_rms,
-            other: None,
-        });
+        frames.push(frame_at(samples, start, sample_rate, frame, min_rms));
         start += hop;
     }
     frames
+}
+
+/// The frame of `frame` samples from sample `start`, as [`track_with`] tracks it; `samples`
+/// must hold all of it.
+pub fn frame_at(samples: &[f32], start: usize, sample_rate: f32, frame: usize, min_rms: f32) -> Frame {
+    let d = detect(&samples[start..start + frame], sample_rate, min_rms, DEFAULT_MIN_CLARITY);
+    Frame {
+        t: (start as f32 + frame as f32 / 2.0) / sample_rate,
+        midi: d.midi,
+        clarity: d.clarity,
+        rms: d.rms,
+        masked: false,
+        quiet: d.rms < min_rms,
+        other: None,
+    }
 }
 
 /// The pitch of one frame. A frame quieter than `min_rms`, with no NSDF peak, whose chosen

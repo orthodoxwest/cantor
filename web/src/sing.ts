@@ -30,8 +30,8 @@ listenButton.addEventListener("click", async () => {
     listener.stop();
     listenButton.setAttribute("aria-pressed", "false");
     listener.heard?.then(
-      (h) => (status.textContent = `Heard ${h.seconds.toFixed(1)} s with both ears.`),
-      (error: unknown) => (status.textContent = `The second ear failed: ${error instanceof Error ? error.message : String(error)}`),
+      (h) => (status.textContent = `Heard ${h.seconds.toFixed(1)} s.`),
+      (error: unknown) => (status.textContent = `Listening failed: ${error instanceof Error ? error.message : String(error)}`),
     );
     return;
   }

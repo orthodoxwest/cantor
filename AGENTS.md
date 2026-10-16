@@ -5,7 +5,7 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 ## Layout
 - `crates/cantor-core`: the listening core (pitch, onsets, scoring, the practice session). Pure functions, no I/O, no wall clock, `#![forbid(unsafe_code)]`.
 - `crates/cantor-wasm`: a C ABI over the core for the browser, bundled into one ES module.
-- `crates/cantor-ear`: the browser's ear, `ear.wasm`, run in a worker: SwiftF0 tracks the take as it arrives, and the core listens with both trackers when it stops. `.cargo/config.toml` gives tract's `rand` its browser build. `web/e2e/ear.spec.ts` plays a take written by `cantor take` through the fake microphone and holds the page to what `cantor eval` heard.
+- `crates/cantor-ear`: the browser's ear, `ear.wasm`, run in a worker: the core tracks the take as it arrives (the page's live trace) and listens to the whole of it when it stops, with the NSDF tracker alone. `web/e2e/ear.spec.ts` plays a take written by `cantor take` through the fake microphone and holds the page to what `cantor eval --nsdf-only` heard.
 - `crates/cantor-cli`: the `cantor` command for offline work: score, align, synthesize, evaluate.
 - `crates/cantor-swift`: SwiftF0 (MIT, its model bundled) run with tract, the second tracker the command listens with beside the core's; `--nsdf-only` drops it.
 - `crates/cantor-crepe`: CREPE run with tract, an offline oracle too slow to listen with; `cantor eval --oracle` labels the takes with it and counts where it and the scorer disagree. `scripts/crepe.py` (`make oracle`) builds its model into `vendor/crepe/`.

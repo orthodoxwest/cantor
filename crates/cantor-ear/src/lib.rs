@@ -1,21 +1,24 @@
 //! The browser's ear, a hand-written C ABI run in a worker beside the page: the take arrives a
-//! block at a time while it is sung and SwiftF0 tracks it as it comes, so its work keeps pace
-//! with the take; when the take stops, the core listens with the NSDF tracker and SwiftF0's
-//! track beside it, as `cantor eval` does. The page then asks for the take scored and judged
-//! against a chant's notes. Results and errors are left in the output buffer as JSON or text.
+//! block at a time while it is sung, and the core tracks each frame as soon as its samples are
+//! in ([`Listening`]), so the page can trace the pitch as it comes and stopping costs only what
+//! needs the whole take. The page then asks for the take scored and judged against a chant's
+//! notes. It listens with the NSDF tracker alone, as `cantor eval --nsdf-only` does. Results
+//! and errors are left in the output buffer as JSON or text.
 
 use std::cell::RefCell;
 
-use cantor_core::{Frame, Note, Report, Verdict, judge, listen_with, notes_from_gabc, score};
-use cantor_swift::{Stream, SwiftF0};
+use cantor_core::{Frame, Listening, Note, Report, Verdict, judge, notes_from_gabc, score};
 use serde::Serialize;
 
 /// A sample at least this loud is the take's first sound.
 const ONSET_PEAK: f32 = 1e-3;
 
+/// Numbers a frame is sent to the page as, by [`ear_frames`].
+pub const FRAME_FIELDS: usize = 4;
+
 /// A take being heard, or heard.
 enum Take {
-    Hearing(Stream),
+    Hearing(Listening),
     Heard {
         samples: Vec<f32>,
         sample_rate: f32,
@@ -27,7 +30,7 @@ thread_local! {
     static SAMPLES: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static BYTES: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    static SWIFT: RefCell<Option<SwiftF0>> = const { RefCell::new(None) };
+    static FRAMES: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static TAKE: RefCell<Option<Take>> = const { RefCell::new(None) };
 }
 
@@ -102,77 +105,69 @@ pub extern "C" fn ear_output_len() -> u32 {
     OUTPUT.with(|o| o.borrow().len() as u32)
 }
 
-/// Starts a take at `sample_rate`, loading SwiftF0 the first time: 0, or -1 with the error
-/// in the output buffer.
+/// Frames as the page reads them: [`FRAME_FIELDS`] numbers each, the frame's centre in
+/// seconds from the take's start, its pitch (NaN when unvoiced), clarity and RMS.
+pub fn frame_fields(frames: &[Frame]) -> Vec<f32> {
+    frames
+        .iter()
+        .flat_map(|f| [f.t, f.midi.unwrap_or(f32::NAN), f.clarity, f.rms])
+        .collect()
+}
+
+/// Starts a take at `sample_rate`: 0, or -1 with the error in the output buffer.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_start(sample_rate: f32) -> i32 {
-    let loaded = SWIFT.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.is_none() {
-            *s = Some(SwiftF0::new().map_err(|e| format!("SwiftF0: {e}"))?);
-        }
-        Ok::<(), String>(())
-    });
-    if let Err(e) = loaded {
-        return fail(e);
+    if !(sample_rate.is_finite() && sample_rate >= 8_000.0) {
+        return fail(format!("no take at {sample_rate} Hz"));
     }
-    match Stream::new(sample_rate) {
-        Ok(stream) => {
-            TAKE.with(|t| *t.borrow_mut() = Some(Take::Hearing(stream)));
-            0
-        }
-        Err(e) => fail(format!("SwiftF0: {e}")),
-    }
+    TAKE.with(|t| *t.borrow_mut() = Some(Take::Hearing(Listening::new(sample_rate))));
+    0
 }
 
-/// Adds the sample buffer's first `len` samples to the take: the frames SwiftF0 has tracked
-/// so far, or -1 with the error in the output buffer.
+/// Adds the sample buffer's first `len` samples to the take: how many frames they complete,
+/// left in the frame buffer (see [`frame_fields`]), or -1 with the error in the output buffer.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_push(len: u32) -> i32 {
-    let pushed = SWIFT.with(|s| {
-        let s = s.borrow();
-        let swift = s.as_ref().ok_or("no take started")?;
-        TAKE.with(|t| match t.borrow_mut().as_mut() {
-            Some(Take::Hearing(stream)) => SAMPLES.with(|b| {
-                let b = b.borrow();
-                stream
-                    .push(swift, &b[..(len as usize).min(b.len())])
-                    .map_err(|e| format!("SwiftF0: {e}"))?;
-                Ok(stream.frames() as i32)
-            }),
-            _ => Err("no take started".to_string()),
-        })
+    let pushed = TAKE.with(|t| match t.borrow_mut().as_mut() {
+        Some(Take::Hearing(listening)) => SAMPLES.with(|b| {
+            let b = b.borrow();
+            let frames = listening.push(&b[..(len as usize).min(b.len())]);
+            FRAMES.with(|f| *f.borrow_mut() = frame_fields(frames));
+            Ok(frames.len() as i32)
+        }),
+        _ => Err("no take started".to_string()),
     });
     pushed.unwrap_or_else(fail)
 }
 
-/// Ends the take and listens to it: the core's frames, or -1 with the error in the output
-/// buffer.
+/// The frame buffer.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ear_frames() -> *const f32 {
+    FRAMES.with(|f| f.borrow().as_ptr())
+}
+
+/// Ends the take and listens to it: how many frames it has, or -1 with the error in the
+/// output buffer.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_stop() -> i32 {
-    let heard = SWIFT.with(|s| {
-        let s = s.borrow();
-        let swift = s.as_ref().ok_or("no take started")?;
-        let Some(Take::Hearing(stream)) = TAKE.with(|t| t.borrow_mut().take()) else {
-            return Err("no take started".to_string());
-        };
-        let sample_rate = stream.sample_rate();
-        let (samples, track) = stream.finish(swift).map_err(|e| format!("SwiftF0: {e}"))?;
-        let frames = listen_with(&samples, sample_rate, None, Some(&track));
-        let n = frames.len() as i32;
-        TAKE.with(|t| {
-            *t.borrow_mut() = Some(Take::Heard {
-                samples,
-                sample_rate,
-                frames,
-            })
-        });
-        Ok(n)
+    let Some(Take::Hearing(listening)) = TAKE.with(|t| t.borrow_mut().take()) else {
+        return fail("no take started".into());
+    };
+    let sample_rate = listening.sample_rate();
+    let (samples, frames) = listening.finish(None, None);
+    let n = frames.len() as i32;
+    TAKE.with(|t| {
+        *t.borrow_mut() = Some(Take::Heard {
+            samples,
+            sample_rate,
+            frames,
+        })
     });
-    heard.unwrap_or_else(fail)
+    n
 }
 
 /// The heard take's first sound in seconds, or -1 when it has none.
@@ -212,6 +207,59 @@ pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use cantor_core::{Profile, listen, render_take};
+
+    /// Pushes `samples` as the worker does, through the sample buffer; the frames they
+    /// complete.
+    fn push(samples: &[f32]) -> Vec<f32> {
+        ear_samples(samples.len() as u32);
+        SAMPLES.with(|b| b.borrow_mut().copy_from_slice(samples));
+        let n = ear_push(samples.len() as u32);
+        assert!(n >= 0);
+        FRAMES.with(|f| {
+            let f = f.borrow();
+            assert_eq!(f.len(), n as usize * FRAME_FIELDS);
+            f.clone()
+        })
+    }
+
+    #[test]
+    fn the_ear_hears_a_take_as_the_core_does() {
+        let sr = 48_000.0;
+        let gabc = "(c4) Al(f)le(gh)lu(g)ia.(f) (::)";
+        let notes: Vec<_> = notes_from_gabc(gabc, 0.5)
+            .into_iter()
+            .map(|mut n| {
+                n.start_s += 1.0;
+                n
+            })
+            .collect();
+        let take = render_take(&notes, &Profile::default(), sr, 5);
+        let whole = listen(&take.samples, sr, None);
+        assert_eq!(ear_push(1), -1, "nothing is heard before a take starts");
+        assert_eq!(ear_start(sr), 0);
+        let mut live = Vec::new();
+        for block in take.samples.chunks(1_024) {
+            live.extend(push(block));
+        }
+        assert!(whole.iter().filter(|f| f.midi.is_some()).count() > 50);
+        assert_eq!(ear_stop() as usize, whole.len());
+        assert_eq!(live.len(), whole.len() * FRAME_FIELDS);
+        for (f, w) in live.chunks(FRAME_FIELDS).zip(&whole) {
+            assert_eq!(f[0], w.t);
+            assert_eq!(f[2], w.clarity);
+        }
+        assert_eq!(ear_onset(), onset(&take.samples, sr).expect("sound"));
+        let bytes = gabc.as_bytes();
+        ear_bytes(bytes.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(bytes));
+        let len = ear_judge(bytes.len() as u32, 0.5, 1.0);
+        assert_eq!(len, ear_output_len() as i32);
+        let json = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
+        assert_eq!(json, judge_gabc(gabc, 0.5, 1.0, &whole));
+        assert!(json.contains("\"heard_fraction\""));
+    }
 
     #[test]
     fn the_onset_is_the_first_sound() {

@@ -1,4 +1,0 @@
-# tract's ONNX operators depend on rand, whose entropy source has no browser backend without
-# wasm-bindgen; the random operators are never run, so the source is left unsupported.
-[target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="unsupported"']

@@ -94,8 +94,19 @@ pub fn listen(samples: &[f32], sample_rate: f32, guide: Option<Guide>) -> Vec<Fr
 /// before the loudness floor and the guide's mask, which drop fused frames like any other.
 pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, other: Option<&Track>) -> Vec<Frame> {
     let frame = pitch::default_frame(sample_rate);
-    let hop = (pitch::DEFAULT_HOP_S * sample_rate).round() as usize;
-    let mut frames = pitch::track_with(samples, sample_rate, frame, hop, ABSOLUTE_FLOOR);
+    let hop = default_hop(sample_rate);
+    let frames = pitch::track_with(samples, sample_rate, frame, hop, ABSOLUTE_FLOOR);
+    hear(samples, sample_rate, frames, guide, other)
+}
+
+fn default_hop(sample_rate: f32) -> usize {
+    ((pitch::DEFAULT_HOP_S * sample_rate).round() as usize).max(1)
+}
+
+/// What [`listen_with`] does once the take is tracked: what needs the whole take.
+fn hear(samples: &[f32], sample_rate: f32, mut frames: Vec<Frame>, guide: Option<Guide>, other: Option<&Track>) -> Vec<Frame> {
+    let frame = pitch::default_frame(sample_rate);
+    let hop = default_hop(sample_rate);
     if let Some(other) = other {
         let half_s = pitch::DEFAULT_HOP_S / 2.0;
         for (j, f) in frames.iter_mut().enumerate() {
@@ -125,6 +136,59 @@ pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, othe
         mask(&mut frames, guide.samples, leak, frame, hop);
     }
     frames
+}
+
+/// A take heard as it arrives. [`Listening::push`] tracks each frame as soon as its samples
+/// are in, and [`Listening::finish`] does what needs the whole take (the second tracker, the
+/// loudness floor and the guide's mask), so its frames are [`listen_with`]'s exactly and
+/// stopping costs only that.
+#[derive(Clone, Debug)]
+pub struct Listening {
+    sample_rate: f32,
+    frame: usize,
+    hop: usize,
+    samples: Vec<f32>,
+    frames: Vec<Frame>,
+}
+
+impl Listening {
+    pub fn new(sample_rate: f32) -> Listening {
+        Listening {
+            sample_rate,
+            frame: pitch::default_frame(sample_rate),
+            hop: default_hop(sample_rate),
+            samples: Vec::new(),
+            frames: Vec::new(),
+        }
+    }
+
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
+    /// The take so far.
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    /// Adds `samples` to the take and returns the frames they complete, as tracked before
+    /// [`Listening::finish`]: at the loudness floor of digital silence, unfused and unmasked.
+    pub fn push(&mut self, samples: &[f32]) -> &[Frame] {
+        self.samples.extend_from_slice(samples);
+        let first = self.frames.len();
+        while self.frames.len() * self.hop + self.frame <= self.samples.len() {
+            let start = self.frames.len() * self.hop;
+            let f = pitch::frame_at(&self.samples, start, self.sample_rate, self.frame, ABSOLUTE_FLOOR);
+            self.frames.push(f);
+        }
+        &self.frames[first..]
+    }
+
+    /// The take and its frames, heard as [`listen_with`] hears it.
+    pub fn finish(self, guide: Option<Guide>, other: Option<&Track>) -> (Vec<f32>, Vec<Frame>) {
+        let frames = hear(&self.samples, self.sample_rate, self.frames, guide, other);
+        (self.samples, frames)
+    }
 }
 
 /// Whether two pitches agree to within [`AGREE_CENTS`], octaves aside.
@@ -300,6 +364,40 @@ mod tests {
         assert!(voiced_in_notes(&agreeing) > alone + 10, "{alone} -> {}", voiced_in_notes(&agreeing));
         assert_eq!(voiced_in_notes(&disagreeing), alone);
         assert!(agreeing.iter().filter(|f| f.t > 2.1).all(|f| f.other.is_some() || f.t > 4.9));
+    }
+
+    #[test]
+    fn a_take_heard_as_it_arrives_is_heard_as_a_whole() {
+        for sr in [SR, 48_000.0] {
+            let profile = Profile {
+                guide: GuideMode::Full,
+                bleed_db: -12.0,
+                bleed_delay_s: 0.08,
+                noise_rms: 0.01,
+                ..Profile::default()
+            };
+            let take = render_take(&notes(), &profile, sr, 3);
+            let guide = Guide {
+                samples: take.guide.as_deref().expect("guide"),
+                alone: (0.2, 1.6),
+            };
+            let other = track_off(&notes(), 0.0, take.samples.len() as f32 / sr);
+            let mut listening = Listening::new(sr);
+            let mut tracked = 0;
+            for (k, block) in take.samples.chunks(777).enumerate() {
+                let new = listening.push(block).len();
+                tracked += new;
+                if k == 0 {
+                    assert_eq!(new, 0, "a block shorter than a frame tracks nothing");
+                }
+            }
+            let (samples, frames) = listening.finish(Some(guide), Some(&other));
+            let whole = listen_with(&take.samples, sr, Some(guide), Some(&other));
+            assert_eq!(samples, take.samples);
+            assert_eq!(tracked, whole.len());
+            assert_eq!(frames, whole);
+            assert!(voiced_in_notes(&frames) > 0);
+        }
     }
 
     #[test]

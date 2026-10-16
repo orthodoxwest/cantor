@@ -29,8 +29,6 @@ const SILENCE_PEAK: f32 = 1e-3;
 const WINDOW_FRAMES: usize = 1875;
 const LEFT_FRAMES: usize = 11;
 const LOOKAHEAD_FRAMES: usize = 10;
-/// Frames a [`Stream`] runs at once: about a second.
-const STREAM_FRAMES: usize = 64;
 
 type Plan = Arc<TypedRunnableModel>;
 
@@ -98,47 +96,39 @@ impl SwiftF0 {
     }
 
     fn track_16k(&self, samples: &[f32]) -> TractResult<Track> {
-        let mut midi = Vec::new();
-        self.track_rest(samples, &mut midi)?;
-        Ok(track(midi))
-    }
-
-    /// Appends to `midi` the frames of 16 kHz `samples` from `midi.len()` to the end.
-    fn track_rest(&self, samples: &[f32], midi: &mut Vec<Option<f32>>) -> TractResult<()> {
         let n = (samples.len() / HOP).max(1);
-        while midi.len() < n {
-            let end = (midi.len() + WINDOW_FRAMES).min(n);
+        let mut midi = Vec::with_capacity(n);
+        let mut start = 0;
+        while start < n {
+            let end = (start + WINDOW_FRAMES).min(n);
+            let left = start.saturating_sub(LEFT_FRAMES);
             let to = if end < n {
                 ((end + LOOKAHEAD_FRAMES) * HOP).min(samples.len())
             } else {
                 samples.len()
             };
-            self.window(samples, end, to, midi)?;
+            let window = &samples[left * HOP..to];
+            let (pitch, confidence) = self.run(window)?;
+            for i in start - left..end - left {
+                let quiet = window
+                    .get(i * HOP..((i + 1) * HOP).min(window.len()))
+                    .is_none_or(|hop| hop.iter().all(|x| x.abs() < SILENCE_PEAK));
+                let voiced = !quiet && confidence.get(i).is_some_and(|c| *c >= VOICED);
+                midi.push(
+                    voiced
+                        .then(|| pitch.get(i).copied())
+                        .flatten()
+                        .filter(|hz| *hz > 0.0)
+                        .map(hz_to_midi),
+                );
+            }
+            start = end;
         }
-        Ok(())
-    }
-
-    /// Appends to `midi` the frames from `midi.len()` to `end`, run over 16 kHz `samples`
-    /// from [`LEFT_FRAMES`] before the first to sample `to`.
-    fn window(&self, samples: &[f32], end: usize, to: usize, midi: &mut Vec<Option<f32>>) -> TractResult<()> {
-        let start = midi.len();
-        let left = start.saturating_sub(LEFT_FRAMES);
-        let window = &samples[left * HOP..to];
-        let (pitch, confidence) = self.run(window)?;
-        for i in start - left..end - left {
-            let quiet = window
-                .get(i * HOP..((i + 1) * HOP).min(window.len()))
-                .is_none_or(|hop| hop.iter().all(|x| x.abs() < SILENCE_PEAK));
-            let voiced = !quiet && confidence.get(i).is_some_and(|c| *c >= VOICED);
-            midi.push(
-                voiced
-                    .then(|| pitch.get(i).copied())
-                    .flatten()
-                    .filter(|hz| *hz > 0.0)
-                    .map(hz_to_midi),
-            );
-        }
-        Ok(())
+        Ok(Track {
+            start_s: 0.0,
+            hop_s: HOP as f32 / SAMPLE_RATE,
+            midi,
+        })
     }
 
     fn run(&self, window: &[f32]) -> TractResult<(Vec<f32>, Vec<f32>)> {
@@ -158,96 +148,6 @@ impl SwiftF0 {
             |t: &TValue| -> TractResult<Vec<f32>> { Ok(t.cast_to::<f32>()?.to_plain_array_view::<f32>()?.iter().copied().collect()) };
         let (pitch, confidence) = (values(&out[0])?, values(&out[1])?);
         Ok((pitch, confidence))
-    }
-}
-
-fn track(midi: Vec<Option<f32>>) -> Track {
-    Track {
-        start_s: 0.0,
-        hop_s: HOP as f32 / SAMPLE_RATE,
-        midi,
-    }
-}
-
-/// SwiftF0 over audio as it arrives, a take at a time: each [`push`](Stream::push) runs the
-/// model over every [`STREAM_FRAMES`] frames whose audio and lookahead have arrived, so the
-/// work keeps pace with the take, and [`finish`](Stream::finish) runs the rest. The frames are
-/// those [`SwiftF0::track`] gives for the whole take: the resampler's output is taken only
-/// once its kernel is whole, and each run has the context a single run would.
-pub struct Stream {
-    sample_rate: f32,
-    input: Vec<f32>,
-    /// The input at 16 kHz so far, when it is at another rate.
-    resampled: Vec<f32>,
-    midi: Vec<Option<f32>>,
-}
-
-impl Stream {
-    pub fn new(sample_rate: f32) -> TractResult<Stream> {
-        if !RATES.contains(&sample_rate) {
-            tract_onnx::tract_core::internal::bail!("{sample_rate} Hz is not a sample rate SwiftF0 can take");
-        }
-        Ok(Stream {
-            sample_rate,
-            input: Vec::new(),
-            resampled: Vec::new(),
-            midi: Vec::new(),
-        })
-    }
-
-    /// The take's sample rate.
-    pub fn sample_rate(&self) -> f32 {
-        self.sample_rate
-    }
-
-    /// The take so far, at its own rate.
-    pub fn input(&self) -> &[f32] {
-        &self.input
-    }
-
-    /// The frames tracked so far.
-    pub fn frames(&self) -> usize {
-        self.midi.len()
-    }
-
-    /// Adds `samples` to the take and tracks what they complete.
-    pub fn push(&mut self, swift: &SwiftF0, samples: &[f32]) -> TractResult<()> {
-        self.input.extend_from_slice(samples);
-        let audio = if self.sample_rate == SAMPLE_RATE {
-            &self.input
-        } else {
-            let ratio = SAMPLE_RATE as f64 / self.sample_rate as f64;
-            let half = (RESAMPLE_HALF / (0.95 * ratio.min(1.0) as f32)) as f64;
-            let whole = |j: usize| ((j as f64 / ratio + half).floor() as usize) < self.input.len().saturating_sub(1);
-            while whole(self.resampled.len()) {
-                self.resampled.push(resampled_at(&self.input, ratio, self.resampled.len()));
-            }
-            &self.resampled
-        };
-        loop {
-            let end = self.midi.len() + STREAM_FRAMES;
-            let to = (end + LOOKAHEAD_FRAMES) * HOP;
-            if to > audio.len() {
-                return Ok(());
-            }
-            swift.window(audio, end, to, &mut self.midi)?;
-        }
-    }
-
-    /// The whole take, at its own rate, and its track.
-    pub fn finish(mut self, swift: &SwiftF0) -> TractResult<(Vec<f32>, Track)> {
-        let audio = if self.sample_rate == SAMPLE_RATE {
-            &self.input
-        } else {
-            let ratio = SAMPLE_RATE as f64 / self.sample_rate as f64;
-            let len = (self.input.len() as f64 * ratio).floor() as usize;
-            for j in self.resampled.len()..len {
-                self.resampled.push(resampled_at(&self.input, ratio, j));
-            }
-            &self.resampled
-        };
-        swift.track_rest(audio, &mut self.midi)?;
-        Ok((self.input, track(self.midi)))
     }
 }
 
@@ -400,49 +300,6 @@ mod tests {
             })
             .fold(0.0f32, f32::max);
         assert!(worst < 0.01, "{worst}");
-    }
-
-    #[test]
-    fn a_stream_tracks_as_the_whole_take_would() {
-        // A glissando with noise, pushed in uneven pieces, at the model's rate and another.
-        let swift = SwiftF0::new().expect("model");
-        for sr in [SAMPLE_RATE, 48_000.0] {
-            let n = (5.3 * sr) as usize;
-            let mut state = 1u32;
-            let samples: Vec<f32> = (0..n)
-                .map(|i| {
-                    let t = i as f32 / sr;
-                    let hz = 150.0 + 20.0 * t;
-                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                    0.1 * (2.0 * std::f32::consts::PI * hz * t).sin() + 0.02 * (state as f32 / u32::MAX as f32 - 0.5)
-                })
-                .collect();
-            let whole = swift.track(&samples, sr).expect("run").midi;
-            let mut stream = Stream::new(sr).expect("rate");
-            let mut pushed = 0;
-            for (k, piece) in samples.chunks(1_000 + 3_517 * (sr as usize / 16_000)).enumerate() {
-                stream.push(&swift, piece).expect("run");
-                pushed += piece.len();
-                if k == 5 {
-                    // Pushed so far, in frames.
-                    let heard = (pushed as f32 * SAMPLE_RATE / sr) as usize / HOP;
-                    assert!(
-                        stream.frames() >= STREAM_FRAMES && stream.frames() < heard,
-                        "{} of {heard}",
-                        stream.frames()
-                    );
-                }
-            }
-            let (input, streamed) = stream.finish(&swift).expect("run");
-            assert_eq!(input, samples);
-            assert_eq!(streamed.midi.len(), whole.len());
-            for (i, (a, b)) in streamed.midi.iter().zip(&whole).enumerate() {
-                assert_eq!(a.is_some(), b.is_some(), "frame {i} at {sr} Hz");
-                if let (Some(a), Some(b)) = (a, b) {
-                    assert!((a - b).abs() < 0.001, "frame {i} at {sr} Hz: {a} {b}");
-                }
-            }
-        }
     }
 
     #[test]

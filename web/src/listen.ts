@@ -1,25 +1,27 @@
-// The microphone into the pitch worklet; frames come back on the main thread for the live
-// trace, and the take goes on to the second ear (ear/worker.ts), which hears it with both
-// trackers when it stops.
+// The microphone into the capture worklet, which sends the take to the ear (ear/worker.ts);
+// the ear tracks it as it comes, its frames return here for the live trace, and it hears the
+// whole take when it stops.
 import { audioContext } from "./audio";
-import type { FromEar, ToEar } from "./ear/worker";
-import type { Frame } from "./worklet/processor";
+import type { Frame, FromEar, ToEar } from "./ear/worker";
 
 export type { Frame };
 
-/** What the second ear heard of a take. */
+/** What the ear heard of a take. */
 export type Heard = Extract<FromEar, { type: "heard" }>;
 
-/** The second ear's worker; one serves every take. */
+/** The ear's worker; one serves every take. */
 class Ear {
   private worker = new Worker(new URL("./ear/worker.ts", import.meta.url), { type: "module" });
-  private waiting: Array<(m: FromEar) => void> = [];
+  private waiting: Array<(m: Exclude<FromEar, { type: "frames" }>) => void> = [];
 
-  constructor() {
-    this.worker.onmessage = (e: MessageEvent<FromEar>) => this.waiting.shift()?.(e.data);
+  constructor(onFrames: (frames: Frame[]) => void) {
+    this.worker.onmessage = (e: MessageEvent<FromEar>) => {
+      if (e.data.type === "frames") onFrames(e.data.frames);
+      else this.waiting.shift()?.(e.data);
+    };
   }
 
-  private next<T extends FromEar["type"]>(type: T): Promise<Extract<FromEar, { type: T }>> {
+  private next<T extends "heard" | "judged">(type: T): Promise<Extract<FromEar, { type: T }>> {
     return new Promise((resolve, reject) =>
       this.waiting.push((m) => (m.type === type ? resolve(m as Extract<FromEar, { type: T }>) : reject(new Error(m.type === "error" ? m.message : m.type)))),
     );
@@ -51,12 +53,12 @@ export class Listener {
   private worklet: AudioWorkletNode | undefined;
   private module: Promise<void> | undefined;
   private ear: Ear | undefined;
-  /** The second ear's hearing of the take being sung, or of the last one. */
+  /** The ear's hearing of the take being sung, or of the last one. */
   heard: Promise<Heard> | undefined;
 
   constructor(private readonly onFrame: (frame: Frame) => void) {}
 
-  /** The last take judged by the second ear; see `Ear.judge`. */
+  /** The last take judged; see `Ear.judge`. */
   judge(gabc: string, pulse: number, offset: number): Promise<string> {
     if (!this.ear) return Promise.reject(new Error("nothing heard"));
     return this.ear.judge(gabc, pulse, offset);
@@ -83,13 +85,14 @@ export class Listener {
     }
     this.stream = stream;
     const source = ctx.createMediaStreamSource(this.stream);
-    const node = new AudioWorkletNode(ctx, "pitch");
-    node.port.onmessage = (e: MessageEvent<Frame>) => {
-      this.frames.push(e.data);
-      this.onFrame(e.data);
-    };
+    const node = new AudioWorkletNode(ctx, "capture");
     const channel = new MessageChannel();
-    this.ear ??= new Ear();
+    this.ear ??= new Ear((frames) => {
+      for (const frame of frames) {
+        this.frames.push(frame);
+        this.onFrame(frame);
+      }
+    });
     this.heard = this.ear.start(ctx.sampleRate, channel.port2);
     node.port.postMessage({ ear: channel.port1 }, [channel.port1]);
     // The node is pulled only when it reaches the destination; it outputs silence.
