@@ -6,6 +6,7 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 - `crates/cantor-core`: the listening core (pitch, onsets, scoring, the practice session). Pure functions, no I/O, no wall clock, `#![forbid(unsafe_code)]`.
 - `crates/cantor-wasm`: a C ABI over the core for the browser, bundled into one ES module.
 - `crates/cantor-cli`: the `cantor` command for offline work: score, align, synthesize, evaluate.
+- `crates/cantor-swift`: SwiftF0 (MIT, its model bundled) run with tract, the second tracker the command listens with beside the core's; `--nsdf-only` drops it.
 - `web/`: the app (Vite, TypeScript, no UI framework), its audio pipeline and AudioWorklet host, Playwright tests.
 - `worker/`: the Cloudflare Worker (Hono), D1 migrations, queue consumers, worker tests.
 - `content/`: the public chant library (GABC plus metadata) and its validation. Private content comes from the `cantor-content` repository or R2 and is never committed here.

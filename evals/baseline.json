@@ -4,7 +4,7 @@
     "heard_fraction": 0.0,
     "worst_take_heard": 0.0,
     "heard_all": 0.0,
-    "masked_fraction": 0.84189725,
+    "masked_fraction": 0.8656126,
     "tracking_cents": 0.0,
     "gross_error_rate": 0.0,
     "marks": 0,
@@ -15,25 +15,27 @@
     "key_error_cents": 0.0,
     "summary_errors": 0,
     "unjudged": 8,
-    "in_tune": 0
+    "in_tune": 0,
+    "agreement": 1.0
   },
   "control-wrong-singer": {
     "takes": 4,
-    "heard_fraction": 0.97887325,
-    "worst_take_heard": 0.9117647,
-    "heard_all": 0.9653979,
+    "heard_fraction": 1.0,
+    "worst_take_heard": 1.0,
+    "heard_all": 0.9965398,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.995856,
-    "gross_error_rate": 0.0035842294,
-    "marks": 15,
+    "tracking_cents": 7.8454266,
+    "gross_error_rate": 0.0034722222,
+    "marks": 16,
     "false_marks": 0,
     "faults": 38,
-    "recall": 0.9736842,
+    "recall": 1.0,
     "false_in_tune": 0,
     "key_error_cents": 8.168396,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 211
+    "in_tune": 211,
+    "agreement": 0.9909732
   },
   "expert-bleed": {
     "takes": 6,
@@ -41,7 +43,7 @@
     "worst_take_heard": 1.0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.4575796,
+    "tracking_cents": 7.433868,
     "gross_error_rate": 0.0,
     "marks": 0,
     "false_marks": 0,
@@ -51,7 +53,8 @@
     "key_error_cents": 6.8016357,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 390
+    "in_tune": 390,
+    "agreement": 0.9972603
   },
   "expert-dry": {
     "takes": 6,
@@ -69,7 +72,8 @@
     "key_error_cents": 13.270264,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 523
+    "in_tune": 523,
+    "agreement": 0.9980798
   },
   "expert-rooms": {
     "takes": 6,
@@ -77,35 +81,37 @@
     "worst_take_heard": 1.0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 8.481659,
+    "tracking_cents": 8.51979,
     "gross_error_rate": 0.0,
     "marks": 0,
     "false_marks": 0,
     "faults": 0,
     "recall": 1.0,
     "false_in_tune": 0,
-    "key_error_cents": 8.128723,
+    "key_error_cents": 8.813721,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 523
+    "in_tune": 523,
+    "agreement": 0.97777444
   },
   "research-hard": {
     "takes": 12,
-    "heard_fraction": 0.7083333,
-    "worst_take_heard": 0.20588236,
-    "heard_all": 0.80421686,
+    "heard_fraction": 0.99509805,
+    "worst_take_heard": 0.9411765,
+    "heard_all": 0.997992,
     "masked_fraction": 0.0,
-    "tracking_cents": 31.346561,
-    "gross_error_rate": 0.058676653,
+    "tracking_cents": 30.575903,
+    "gross_error_rate": 0.0583501,
     "marks": 0,
     "false_marks": 0,
     "faults": 0,
     "recall": 1.0,
     "false_in_tune": 0,
-    "key_error_cents": 38.20404,
-    "summary_errors": 3,
-    "unjudged": 4,
-    "in_tune": 529
+    "key_error_cents": 43.328857,
+    "summary_errors": 4,
+    "unjudged": 0,
+    "in_tune": 806,
+    "agreement": 0.9954623
   },
   "student-notes": {
     "takes": 4,
@@ -113,7 +119,7 @@
     "worst_take_heard": 1.0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.06078,
+    "tracking_cents": 7.0798507,
     "gross_error_rate": 0.0,
     "marks": 29,
     "false_marks": 0,
@@ -123,7 +129,8 @@
     "key_error_cents": 7.313965,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 255
+    "in_tune": 255,
+    "agreement": 0.99294484
   },
   "student-verses": {
     "takes": 7,
@@ -131,7 +138,7 @@
     "worst_take_heard": 1.0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.569776,
+    "tracking_cents": 7.5721717,
     "gross_error_rate": 0.0,
     "marks": 10,
     "false_marks": 0,
@@ -141,7 +148,8 @@
     "key_error_cents": 11.220581,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 629
+    "in_tune": 629,
+    "agreement": 0.99821347
   },
   "tracker-clean": {
     "takes": 1,
@@ -159,7 +167,8 @@
     "key_error_cents": 0.01171875,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 40
+    "in_tune": 40,
+    "agreement": 0.96827793
   },
   "tracker-drift": {
     "takes": 1,
@@ -177,7 +186,8 @@
     "key_error_cents": 0.4005127,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 40
+    "in_tune": 40,
+    "agreement": 0.9728507
   },
   "tracker-noisy": {
     "takes": 1,
@@ -195,6 +205,7 @@
     "key_error_cents": 0.5477295,
     "summary_errors": 0,
     "unjudged": 0,
-    "in_tune": 40
+    "in_tune": 40,
+    "agreement": 0.9967213
   }
 }

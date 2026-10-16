@@ -44,11 +44,75 @@ pub struct Guide<'a> {
     pub alone: (f32, f32),
 }
 
+/// Another tracker's pitches on the take's clock: frame `i` is centred at
+/// `start_s + i * hop_s`, `None` where it heard no pitch.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Track {
+    pub start_s: f32,
+    pub hop_s: f32,
+    pub midi: Vec<Option<f32>>,
+}
+
+impl Track {
+    /// The median of the voiced pitches whose centres lie within `half_s` of `t`, when at
+    /// least half of those frames are voiced.
+    fn at(&self, t: f32, half_s: f32) -> Option<f32> {
+        if self.hop_s <= 0.0 {
+            return None;
+        }
+        let first = ((t - half_s - self.start_s) / self.hop_s).ceil().max(0.0) as usize;
+        let last = ((t + half_s - self.start_s) / self.hop_s).floor();
+        if last < 0.0 {
+            return None;
+        }
+        let window = self.midi.get(first..=(last as usize).min(self.midi.len().saturating_sub(1)))?;
+        let mut voiced: Vec<f32> = window.iter().flatten().copied().collect();
+        if voiced.is_empty() || 2 * voiced.len() < window.len() {
+            return None;
+        }
+        voiced.sort_by(f32::total_cmp);
+        Some(voiced[voiced.len() / 2])
+    }
+}
+
+/// Two trackers agree on a frame when their pitches, folded into one octave, lie within this
+/// many cents.
+pub const AGREE_CENTS: f32 = 50.0;
+/// With a second tracker, a frame whose NSDF peak is at least this clear, though below the
+/// usual floor, is heard when the second tracker agrees with it.
+pub const WEAK_CLARITY: f32 = 0.5;
+
 /// Tracks `samples` at the default frame and hop, masking what the guide's bleed explains.
 pub fn listen(samples: &[f32], sample_rate: f32, guide: Option<Guide>) -> Vec<Frame> {
+    listen_with(samples, sample_rate, guide, None)
+}
+
+/// [`listen`] with a second tracker's opinion, `other`, recorded on each frame. A frame the
+/// NSDF tracker finds clear keeps its pitch whatever the other says; one it finds only
+/// [`WEAK_CLARITY`] clear is heard when the other agrees with it, so neither tracker alone
+/// can add a pitch the other contradicts.
+pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, other: Option<&Track>) -> Vec<Frame> {
     let frame = pitch::default_frame(sample_rate);
     let hop = (pitch::DEFAULT_HOP_S * sample_rate).round() as usize;
     let mut frames = pitch::track_with(samples, sample_rate, frame, hop, ABSOLUTE_FLOOR);
+    if let Some(other) = other {
+        let half_s = pitch::DEFAULT_HOP_S / 2.0;
+        for (j, f) in frames.iter_mut().enumerate() {
+            f.other = other.at(f.t, half_s);
+            let Some(o) = f.other else { continue };
+            if f.midi.is_some() || f.quiet {
+                continue;
+            }
+            let start = j * hop;
+            let weak = pitch::detect(&samples[start..start + frame], sample_rate, ABSOLUTE_FLOOR, WEAK_CLARITY);
+            if let Some(m) = weak.midi
+                && agree(m, o)
+            {
+                f.midi = Some(m);
+                f.clarity = weak.clarity;
+            }
+        }
+    }
     let floor = loud_level(&frames) * 10f32.powf(-FLOOR_DB / 20.0);
     for f in &mut frames {
         if f.rms < floor {
@@ -61,6 +125,11 @@ pub fn listen(samples: &[f32], sample_rate: f32, guide: Option<Guide>) -> Vec<Fr
         mask(&mut frames, guide.samples, leak, frame, hop);
     }
     frames
+}
+
+/// Whether two pitches agree to within [`AGREE_CENTS`], octaves aside.
+pub fn agree(a: f32, b: f32) -> bool {
+    crate::score::fold((a - b) * 100.0).abs() <= AGREE_CENTS
 }
 
 /// The 95th percentile of the frames' RMS.
@@ -127,6 +196,7 @@ fn rms(x: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::listen_with;
     use crate::synth::{GuideMode, Note, Profile, render_take};
 
     const SR: f32 = 16_000.0;
@@ -199,6 +269,49 @@ mod tests {
             let frames = listen(&take.samples, SR, Some(Guide { samples: guide, alone }));
             assert_eq!(voiced_in_notes(&frames), 0, "{alone:?}");
         }
+    }
+
+    /// A track that hears `cents` away from each note, every 16 ms.
+    fn track_off(notes: &[Note], cents: f32, len_s: f32) -> Track {
+        let hop_s = 0.016;
+        let midi = (0..(len_s / hop_s) as usize)
+            .map(|i| {
+                let t = i as f32 * hop_s;
+                notes
+                    .iter()
+                    .find(|n| t >= n.start_s && t < n.end_s())
+                    .map(|n| n.midi + cents / 100.0)
+            })
+            .collect();
+        Track { start_s: 0.0, hop_s, midi }
+    }
+
+    #[test]
+    fn a_second_tracker_hears_unclear_frames_only_when_it_agrees() {
+        let profile = Profile {
+            noise_rms: 0.06,
+            ..Profile::default()
+        };
+        let take = render_take(&notes(), &profile, SR, 3).samples;
+        let len_s = take.len() as f32 / SR;
+        let alone = voiced_in_notes(&listen(&take, SR, None));
+        let agreeing = listen_with(&take, SR, None, Some(&track_off(&notes(), 0.0, len_s)));
+        let disagreeing = listen_with(&take, SR, None, Some(&track_off(&notes(), 300.0, len_s)));
+        assert!(voiced_in_notes(&agreeing) > alone + 10, "{alone} -> {}", voiced_in_notes(&agreeing));
+        assert_eq!(voiced_in_notes(&disagreeing), alone);
+        assert!(agreeing.iter().filter(|f| f.t > 2.1).all(|f| f.other.is_some() || f.t > 4.9));
+    }
+
+    #[test]
+    fn a_track_is_read_at_the_frames_time() {
+        let track = Track {
+            start_s: 0.0,
+            hop_s: 0.016,
+            midi: vec![None, Some(60.0), Some(60.2), Some(59.9), None, None, None],
+        };
+        assert_eq!(track.at(0.032, 0.015), Some(60.2));
+        assert_eq!(track.at(0.08, 0.015), None);
+        assert_eq!(track.at(1.0, 0.015), None);
     }
 
     #[test]

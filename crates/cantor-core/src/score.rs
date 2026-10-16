@@ -138,6 +138,7 @@ mod tests {
                 rms: 0.1,
                 masked: false,
                 quiet: false,
+                other: None,
             })
             .collect()
     }
