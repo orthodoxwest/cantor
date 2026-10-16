@@ -60,7 +60,7 @@
   stroke-width: 1.5;
 }
 .ribbon .band-target {
-  stroke: color-mix(in srgb, currentColor 35%, transparent);
+  stroke: color-mix(in srgb, currentColor 45%, transparent);
   stroke-width: 1;
 }
 .ribbon .unheard .band-target {
@@ -72,4 +72,40 @@
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+/* The marks (marks.ts): a ring round each note the core marked, its reason below when tapped. */
+.marks .mark-hit {
+  fill: transparent;
+}
+.marks .mark-ring {
+  fill: transparent;
+  stroke: #b8452f;
+  stroke: light-dark(#b8452f, #ef8a73);
+  stroke-width: 1.5;
+}
+.marks .mark {
+  cursor: pointer;
+}
+.marks .mark[aria-expanded="true"] .mark-ring {
+  stroke-width: 2.5;
+}
+.marks .mark:focus {
+  outline: none;
+}
+.marks .mark:focus-visible .mark-ring {
+  stroke-dasharray: 3 2;
+}
+.why:empty {
+  padding: 0;
+  border: 0;
+}
+/* The tapped mark's words stay in view, just above the bar. */
+.why {
+  position: sticky;
+  bottom: 4.1rem;
+  margin: 0;
+  padding: 0.5rem 0;
+  background: var(--bg);
+  border-top: 1px solid var(--gold-line);
 }

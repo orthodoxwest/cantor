@@ -2,9 +2,11 @@
 // its target at the centre, and the pitch heard over the note's sustained part. Each band is
 // measured in cents from the note itself, as the core's judge placed it in the singer's key,
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. It draws
-// no verdict: no zone of what counts as in tune, no colours.
+// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. The
+// ribbon itself draws no verdict: no zone of what counts as in tune, no colours; the core's
+// marks are drawn by marks.ts, on the notes in the engraving.
 import type { TimelineNote } from "neuma";
+import type { Mark } from "./marks";
 
 /** One note's band, as cantor-core's `Band` serializes. */
 export interface Band {
@@ -17,16 +19,18 @@ export interface Band {
 
 /** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
 export interface Judged {
-  verdict: { key_cents: number | null };
+  verdict: { key_cents: number | null; marks: Mark[] };
   ribbon: Band[];
+  /** Each mark in words. */
+  told: string[];
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */
-export const STRIP = 44;
+export const STRIP = 76;
 /** Cents from a band's centre to its edge; a trace beyond it is drawn at the edge. */
 export const RANGE_CENTS = 200;
 /** The strip's margin above and below its bands. */
-const PAD = 6;
+const PAD = 8;
 /** The widest a band is drawn either side of its note, for a note alone on its line. */
 const LONE = 14;
 /** The narrowest a band is drawn, centred on its note (notes stacked in a neume overlap). */

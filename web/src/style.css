@@ -31,6 +31,8 @@
   --tap: 44px;
   --neuma-rubric: var(--rubric);
   color-scheme: light;
+  /* What scrolls into view stays clear of the bar and the mark's words above it. */
+  scroll-padding-bottom: 10rem;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {

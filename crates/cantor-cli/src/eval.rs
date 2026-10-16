@@ -825,6 +825,9 @@ pub struct TakeFile {
     pub verdict: Verdict,
     /// The take note by note, as the page draws it.
     pub ribbon: Vec<cantor_core::Band>,
+    /// Each of the verdict's marks in words, for a reader of the file (another ear's words
+    /// differ with its cents).
+    pub told: Vec<String>,
 }
 
 /// Take `index` of `suite`, as `ear` hears it in `cantor eval`, and its samples at `rate`.
@@ -861,6 +864,7 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
             lead_in_s: spec.lead_in_s,
             onset_s,
             ribbon: cantor_core::ribbon(&judged.notes, &judged.frames, &judged.report, &judged.verdict),
+            told: cantor_core::told(&judged.verdict),
             report: judged.report,
             verdict: judged.verdict,
         },
