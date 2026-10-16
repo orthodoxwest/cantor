@@ -30,12 +30,12 @@ export function halve(samples: Float32Array): Float32Array {
   const out = new Float32Array(Math.ceil(samples.length / 2));
   const mid = (TAPS - 1) / 2;
   for (let k = 0; k < out.length; k++) {
-    const centre = 2 * k;
+    // The taps that fall within the take; beyond it is silence.
+    const from = 2 * k - mid;
+    const lo = Math.max(0, -from);
+    const hi = Math.min(TAPS, samples.length - from);
     let acc = 0;
-    for (let j = 0; j < TAPS; j++) {
-      const s = samples[centre + j - mid];
-      if (s !== undefined) acc += s * HALF_BAND[j]!;
-    }
+    for (let j = lo; j < hi; j++) acc += samples[from + j]! * HALF_BAND[j]!;
     out[k] = acc;
   }
   return out;

@@ -100,11 +100,20 @@ const sendLine = byId<HTMLParagraphElement>("send-line");
 const sendButton = byId<HTMLButtonElement>("send");
 const sentText = byId<HTMLSpanElement>("sent");
 const known = signedIn();
-/** The take shown, as it would be sent, until it is sent or another is shown. */
-let toSend: { pulse: number; offset: number; judged: Judged } | null = null;
+/** The take shown, as it would be sent (judged against `gabc`, at `pulse` seconds a pulse,
+ * its first note at `offset`), until it is sent or another is shown. */
+interface ToSend {
+  gabc: string;
+  pulse: number;
+  offset: number;
+  judged: Judged;
+}
+let toSend: ToSend | null = null;
+/** Stops the send under way, when the take it sends is no longer shown. */
+let sending: AbortController | null = null;
 
-/** Offers to send the take just shown, sung at `pulse` with its first note at `offset`. */
-function offerSend(take: { pulse: number; offset: number; judged: Judged }): void {
+/** Offers to send the take just shown. */
+function offerSend(take: ToSend): void {
   toSend = take;
   void known.then((yes) => {
     if (toSend === take) sendLine.hidden = !yes;
@@ -116,15 +125,18 @@ sendButton.addEventListener("click", () => {
   if (!take) return;
   sendButton.disabled = true;
   sentText.textContent = "Sending…";
-  const link = listener.audio().then(({ wav, seconds }) =>
-    sendTake(wav, { slug: piece.slug, title: piece.title, gabc: score.source, pulse: take.pulse, offset: take.offset, seconds, judged: take.judged }),
-  );
+  const abort = (sending = new AbortController());
+  const link = listener.audio().then(({ wav, seconds }) => {
+    if (abort.signal.aborted) throw new Error("another take was shown");
+    const { gabc, pulse, offset, judged } = take;
+    return sendTake(wav, { slug: piece.slug, title: piece.title, gabc, pulse, offset, seconds, judged }, abort.signal);
+  });
   const copied = copyWhenReady(link);
   link.then(
     async (url) => {
       const done = await copied;
       if (toSend !== take) return;
-      toSend = null;
+      toSend = sending = null;
       sendButton.hidden = true;
       const a = document.createElement("a");
       a.href = a.textContent = url;
@@ -132,6 +144,7 @@ sendButton.addEventListener("click", () => {
     },
     (error: unknown) => {
       if (toSend !== take) return;
+      sending = null;
       sendButton.disabled = false;
       sentText.textContent = "";
       setStatus(`The take could not be sent: ${error instanceof Error ? error.message : String(error)}`);
@@ -144,7 +157,9 @@ function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
-  toSend = null;
+  // A take no longer shown is not sent: its link would go nowhere the singer could see.
+  sending?.abort();
+  toSend = sending = null;
   sendLine.hidden = true;
   sendButton.hidden = sendButton.disabled = false;
   sentText.textContent = "";
@@ -420,7 +435,7 @@ async function takeScored(): Promise<void> {
     if (!going()) return;
     const judged = JSON.parse(json) as Judged;
     showResult(judged);
-    offerSend({ pulse: guide.pulse, offset: at - started.first, judged });
+    offerSend({ gabc: score.source, pulse: guide.pulse, offset: at - started.first, judged });
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -492,7 +507,7 @@ if (test) {
       const json = await listener.judge(gabc, pulse, offset);
       const judged = JSON.parse(json) as Judged;
       showResult(judged);
-      offerSend({ pulse, offset, judged });
+      offerSend({ gabc, pulse, offset, judged });
       return json;
     },
   };

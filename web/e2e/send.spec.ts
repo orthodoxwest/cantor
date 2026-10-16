@@ -72,6 +72,27 @@ test("a take that cannot be sent says why and may be sent again", async ({ page 
   await expect(page.locator("#sent")).toHaveText("");
 });
 
+test("a send under way stops when another take is shown", async ({ page }) => {
+  let reached = false;
+  await page.route("**/api/takes", async (route) => {
+    reached = true;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await route.fulfill({ status: 201, json: { id: ID, url: `/take/${ID}` } }).catch(() => {});
+  });
+  await judgedTake(page);
+  // The clipboard is the browser's, shared with the tests before.
+  await page.evaluate(() => navigator.clipboard.writeText("before"));
+  await page.getByRole("button", { name: "Send to a director" }).click();
+  await expect.poll(() => reached).toBe(true);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect(page.locator("#result")).toBeHidden();
+  await page.waitForTimeout(3500);
+  await expect(page.locator("#sent")).toHaveText("");
+  await expect(page.locator("#status")).not.toHaveText(/could not be sent/);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("before");
+  await page.evaluate(() => void window.__cantor.listen());
+});
+
 test("a singer not signed in is not offered to send", async ({ page }) => {
   await judgedTake(page, false);
   await expect(page.locator("#key")).toBeVisible();

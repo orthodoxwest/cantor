@@ -1,7 +1,8 @@
 // Sent takes. A signed-in singer sends a take they sang: its audio (the microphone's, never the
 // guide's) and the judged result the core computed when it was sung, with the score it was
 // judged against. The answer is a capability id: whoever holds it may hear and read the take,
-// with no account. Nothing lists takes to a reader.
+// with no account. Nothing lists takes to a reader. A take of a private chant keeps its score
+// from a reader who is not signed in, as /api/chants does.
 import { Hono, type Context } from "hono";
 import { identity, type Identity } from "./identity";
 
@@ -9,10 +10,39 @@ const takes = new Hono<{ Bindings: Env }>();
 
 /** 24 random bytes, base64url: 192 bits. */
 const ID = /^[A-Za-z0-9_-]{32}$/;
-/** The largest take accepted: about three minutes at 24 kHz. */
+/** The largest take accepted: about five and a half minutes at 24 kHz. */
 export const MAX_AUDIO = 16 * 1024 * 1024;
 /** The largest judged result and score accepted, as JSON. */
 export const MAX_RECORD = 2 * 1024 * 1024;
+
+/** The largest request body read: the take, its record, and the form around them. */
+const MAX_BODY = MAX_AUDIO + MAX_RECORD + 64 * 1024;
+
+/** `request`'s body, read no further than `max` bytes; null when it is longer. */
+async function bounded(request: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(request.headers.get("Content-Length") ?? 0) > max) return null;
+  if (!request.body) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = request.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
 
 const audioKey = (id: string) => `takes/${id}.wav`;
 const recordKey = (id: string) => `takes/${id}.json`;
@@ -26,8 +56,8 @@ function newId(): string {
  * The Access cookie travels with requests from anywhere, so a write is taken only with an
  * Origin that is this site's, which a browser always sends on a POST and no other site can
  * forge. */
-export async function writer(c: Context<{ Bindings: Env }>): Promise<Identity | null> {
-  if (c.req.header("Origin") !== new URL(c.req.url).origin) return null;
+export async function writer(c: Context<{ Bindings: Env }>): Promise<Identity | "foreign" | null> {
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return "foreign";
   return identity(c.req.raw.headers, c.env);
 }
 
@@ -85,12 +115,13 @@ function isWav(bytes: Uint8Array): boolean {
 takes.post("/", async (c) => {
   c.header("Cache-Control", "no-store");
   const who = await writer(c);
+  if (who === "foreign") return c.json({ error: "forbidden" }, 403);
   if (!who) return c.json({ error: "unauthorized" }, 401);
-  const length = Number(c.req.header("Content-Length") ?? 0);
-  if (length > MAX_AUDIO + MAX_RECORD + 64 * 1024) return c.json({ error: "too large" }, 413);
+  const body = await bounded(c.req.raw, MAX_BODY);
+  if (!body) return c.json({ error: "too large" }, 413);
   let form: FormData;
   try {
-    form = await c.req.raw.formData();
+    form = await new Response(body, { headers: { "Content-Type": c.req.header("Content-Type") ?? "" } }).formData();
   } catch {
     return c.json({ error: "bad request" }, 400);
   }
@@ -102,14 +133,14 @@ takes.post("/", async (c) => {
   const bytes = new Uint8Array(await audio.arrayBuffer());
   if (!record || !isWav(bytes)) return c.json({ error: "bad request" }, 400);
   const id = newId();
-  await c.env.TAKES.put(audioKey(id), bytes, { httpMetadata: { contentType: "audio/wav" } });
-  await c.env.TAKES.put(recordKey(id), JSON.stringify(record), { httpMetadata: { contentType: "application/json" } });
   try {
+    await c.env.TAKES.put(audioKey(id), bytes, { httpMetadata: { contentType: "audio/wav" } });
+    await c.env.TAKES.put(recordKey(id), JSON.stringify(record), { httpMetadata: { contentType: "application/json" } });
     await c.env.DB.prepare("INSERT INTO takes (id, user_id, chant_slug, title, seconds) VALUES (?, ?, ?, ?, ?)")
       .bind(id, who.id, record.slug, record.title, record.seconds)
       .run();
   } catch (error) {
-    // A take with no row is never served; its files go too.
+    // A take with no row is never served; whatever of it was written goes too.
     await c.env.TAKES.delete([audioKey(id), recordKey(id)]).catch(() => {});
     throw error;
   }
@@ -134,30 +165,56 @@ takes.get("/:id", async (c) => {
   if (!found || !object) return c.json({ error: "not found" }, 404);
   const record = await object.json<TakeRecord>();
   const who = await identity(c.req.raw.headers, c.env);
-  return c.json({ id, ...record, created_at: found.created_at, mine: who?.id === found.user_id });
+  // A private chant's score (booklet-derived) goes only to a known caller.
+  const hidden = !who && (await c.env.DB.prepare("SELECT 1 FROM private_chants WHERE slug = ?").bind(record.slug).first()) !== null;
+  return c.json({ id, ...record, gabc: hidden ? null : record.gabc, created_at: found.created_at, mine: who?.id === found.user_id });
 });
+
+/** The one byte range `header` asks of `size` bytes: null for the whole (no header, a
+ * malformed one or several ranges), "unsatisfiable" for a range past the end. */
+export function byteRange(header: string | undefined, size: number): { offset: number; length: number } | null | "unsatisfiable" {
+  const m = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  if (m[1] === "") {
+    const suffix = Number(m[2]);
+    if (suffix === 0 || size === 0) return "unsatisfiable";
+    const length = Math.min(suffix, size);
+    return { offset: size - length, length };
+  }
+  const first = Number(m[1]);
+  if (first >= size) return "unsatisfiable";
+  const last = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (last < first) return null;
+  return { offset: first, length: last - first + 1 };
+}
 
 // A take's audio, to whoever holds its id, a range of it when asked (for seeking).
 takes.get("/:id/audio", async (c) => {
+  c.header("Cache-Control", "private, no-store");
   const id = c.req.param("id");
   const found = await row(c, id);
-  const object = found && (await c.env.TAKES.get(audioKey(id), { range: c.req.raw.headers }));
-  if (!found || !object || !("body" in object)) return c.json({ error: "not found" }, 404);
+  const head = found && (await c.env.TAKES.head(audioKey(id)));
+  if (!found || !head) return c.json({ error: "not found" }, 404);
   const headers = new Headers({
     "Content-Type": "audio/wav",
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
     "X-Robots-Tag": "noindex",
   });
-  const range = object.range as { offset?: number; length?: number; suffix?: number } | undefined;
-  if (range && c.req.header("Range")) {
-    const start = range.suffix !== undefined ? object.size - range.suffix : (range.offset ?? 0);
-    const length = range.suffix ?? range.length ?? object.size - start;
-    headers.set("Content-Range", `bytes ${start}-${start + length - 1}/${object.size}`);
-    headers.set("Content-Length", String(length));
+  const range = byteRange(c.req.header("Range"), head.size);
+  if (range === "unsatisfiable") {
+    headers.set("Content-Range", `bytes */${head.size}`);
+    return new Response(null, { status: 416, headers });
+  }
+  const object = await c.env.TAKES.get(audioKey(id), range ? { range } : {});
+  if (!object) return c.json({ error: "not found" }, 404);
+  if (range) {
+    headers.set("Content-Range", `bytes ${range.offset}-${range.offset + range.length - 1}/${head.size}`);
+    headers.set("Content-Length", String(range.length));
     return new Response(object.body, { status: 206, headers });
   }
-  headers.set("Content-Length", String(object.size));
+  headers.set("Content-Length", String(head.size));
   return new Response(object.body, { headers });
 });
 

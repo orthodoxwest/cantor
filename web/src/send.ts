@@ -24,13 +24,18 @@ export interface Sent {
   judged: unknown;
 }
 
+/** The largest take the Worker accepts (takes.ts `MAX_AUDIO`). */
+export const MAX_AUDIO = 16 * 1024 * 1024;
+
 /** Sends the take; resolves with the link to it. */
-export async function sendTake(wav: ArrayBuffer, take: Sent): Promise<string> {
+export async function sendTake(wav: ArrayBuffer, take: Sent, signal?: AbortSignal): Promise<string> {
+  if (wav.byteLength > MAX_AUDIO) throw new Error("the take is too long to send");
   const form = new FormData();
   form.append("audio", new Blob([wav], { type: "audio/wav" }), "take.wav");
   form.append("take", JSON.stringify(take));
-  const res = await fetch("/api/takes", { method: "POST", body: form });
+  const res = await fetch("/api/takes", { method: "POST", body: form, signal });
   if (res.status === 401) throw new Error("you are no longer signed in");
+  if (res.status === 403) throw new Error("the site could not tell that the take came from this page");
   if (res.status === 413) throw new Error("the take is too long to send");
   if (!res.ok) throw new Error(`the site answered ${res.status}`);
   const { url } = (await res.json()) as { url: string };
@@ -41,6 +46,8 @@ export async function sendTake(wav: ArrayBuffer, take: Sent): Promise<string> {
  * the page's to use (Safari allows the clipboard only then), with the text to come; resolves
  * whether it was copied. */
 export async function copyWhenReady(link: Promise<string>): Promise<boolean> {
+  // Whatever becomes of the link, it has said so; this only copies it.
+  link.catch(() => {});
   try {
     const blob = link.then((text) => new Blob([text], { type: "text/plain" }));
     await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);

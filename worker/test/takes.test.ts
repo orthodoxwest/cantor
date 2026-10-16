@@ -76,6 +76,49 @@ describe("takes", () => {
     expect(new Uint8Array(await part.arrayBuffer())).toEqual(wav().subarray(4, 12));
   });
 
+  it("serves byte ranges as asked, refusing one past the end", async () => {
+    const { id } = await (await send()).json<{ id: string }>();
+    const size = wav().length;
+    const ranged = async (range: string) => {
+      const res = await get(`/api/takes/${id}/audio`, { Range: range });
+      return { status: res.status, range: res.headers.get("Content-Range"), length: (await res.arrayBuffer()).byteLength };
+    };
+    expect(await ranged("bytes=0-")).toEqual({ status: 206, range: `bytes 0-${size - 1}/${size}`, length: size });
+    expect(await ranged("bytes=0-1")).toEqual({ status: 206, range: `bytes 0-1/${size}`, length: 2 });
+    expect(await ranged("bytes=10-99999")).toEqual({ status: 206, range: `bytes 10-${size - 1}/${size}`, length: size - 10 });
+    expect(await ranged("bytes=-4")).toEqual({ status: 206, range: `bytes ${size - 4}-${size - 1}/${size}`, length: 4 });
+    expect(await ranged("bytes=-99999")).toEqual({ status: 206, range: `bytes 0-${size - 1}/${size}`, length: size });
+    for (const unsatisfiable of [`bytes=${size}-`, "bytes=99999-", "bytes=-0"])
+      expect(await ranged(unsatisfiable)).toEqual({ status: 416, range: `bytes */${size}`, length: 0 });
+    for (const whole of ["bytes=10-5", "bytes=abc", "items=0-5", "bytes=0-1,5-6", "bytes=-"])
+      expect(await ranged(whole)).toEqual({ status: 200, range: null, length: size });
+  });
+
+  it("keeps a private chant's score from a reader who is not signed in", async () => {
+    const { id } = await (await send({ take: { ...record(), slug: "private-test", gabc: "(c4) BOok(f) (::)" } })).json<{ id: string }>();
+    expect((await (await get(`/api/takes/${id}`)).json<{ gabc: string | null }>()).gabc).toBeNull();
+    expect((await (await get(`/api/takes/${id}`, { "X-Dev-User": "director" })).json<{ gabc: string }>()).gabc).toBe("(c4) BOok(f) (::)");
+    // A public chant's score goes to anyone with the link.
+    const { id: open } = await (await send()).json<{ id: string }>();
+    expect((await (await get(`/api/takes/${open}`)).json<{ gabc: string }>()).gabc).toBe("(c4) WHere(f) (::)");
+  });
+
+  it("stops reading a body longer than any take, its length declared or not", async () => {
+    const big = new Uint8Array(MAX_AUDIO + 3 * 1024 * 1024);
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(big);
+        controller.close();
+      },
+    });
+    const res = await app.request(
+      "/api/takes",
+      { method: "POST", body, headers: { "X-Dev-User": "singer", Origin: ORIGIN, "Content-Type": "multipart/form-data; boundary=x" }, duplex: "half" } as RequestInit,
+      env,
+    );
+    expect(res.status).toBe(413);
+  });
+
   it("gives every take its own id", async () => {
     const ids = new Set<string>();
     for (let i = 0; i < 3; i++) ids.add((await (await send()).json<{ id: string }>()).id);
@@ -84,8 +127,9 @@ describe("takes", () => {
 
   it("takes a take only from a signed-in singer on a page of this site", async () => {
     expect((await send({ user: null })).status).toBe(401);
-    expect((await send({ origin: null })).status).toBe(401);
-    expect((await send({ origin: "https://evil.example" })).status).toBe(401);
+    expect((await send({ origin: null })).status).toBe(403);
+    expect((await send({ origin: "https://evil.example" })).status).toBe(403);
+    expect((await send({ origin: "null" })).status).toBe(403);
   });
 
   it("refuses a take that is not a WAV, or whose record is not one", async () => {

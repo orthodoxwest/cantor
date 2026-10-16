@@ -77,8 +77,8 @@ let sampleRate = 0;
 let start: number | undefined;
 let pushed = 0;
 let trackMs = 0;
-/** The take's samples as heard, silence filled in, kept to send when asked. */
-let kept: Float32Array[] = [];
+/** The take's samples as heard, silence filled in, kept (as 16-bit) to send when asked. */
+let kept: Int16Array[] = [];
 
 /** ear.wasm, loaded once; a load that fails is tried again on the next request. */
 function load(): Promise<Exports> {
@@ -108,16 +108,23 @@ function check(ear: Exports, result: number): number {
   return result;
 }
 
+/** `samples` as 16-bit, the depth they are sent at. */
+function toInt16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = Math.round(Math.max(-1, Math.min(1, samples[i]!)) * 32767);
+  return out;
+}
+
 /** Adds `samples` to the take and sends the page the frames they complete. */
 function push(ear: Exports, samples: Float32Array): void {
   // Each call may grow the memory, detaching its old buffer, so the buffer is read after.
-  kept.push(samples);
   const at = ear.ear_samples(samples.length);
   new Float32Array(ear.memory.buffer, at, samples.length).set(samples);
   const began = performance.now();
   const n = check(ear, ear.ear_push(samples.length));
   trackMs += performance.now() - began;
   pushed += samples.length;
+  kept.push(toInt16(samples));
   if (n === 0) return;
   const t0 = start ?? 0;
   const fieldsAt = ear.ear_frames();
@@ -200,7 +207,7 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       const samples = new Float32Array(pushed);
       let at = 0;
       for (const block of kept) {
-        samples.set(block, at);
+        for (let i = 0; i < block.length; i++) samples[at + i] = block[i]! / 32767;
         at += block.length;
       }
       const { wav } = takeFile(samples, sampleRate);
