@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import pkg from "../package.json";
+import diagnostics from "./diagnostics";
 import { identity } from "./identity";
 import { nameFrom } from "./people";
 import takes, { bounded } from "./takes";
@@ -135,6 +136,7 @@ app.get("/signin", (c) => {
 });
 
 app.route("/api/takes", takes);
+app.route("/api/diagnostics", diagnostics);
 
 // The page a take's link opens. The id is in the path, so the page is never cached by others
 // and gives no referrer to anything it links to; the page reads the take from /api/takes.
