@@ -1,5 +1,5 @@
 //! The `cantor` command: offline work on takes. `pitch` tracks a WAV file, `synth` renders a
-//! chant with planted faults, `sing` renders it with a sampled voice, `diction` lists the
+//! chant with planted faults, `sing` renders it with the guide voice, `diction` lists the
 //! vowels it would sing, `eval` scores the synthetic suites against the baseline.
 
 #![forbid(unsafe_code)]
@@ -17,7 +17,7 @@ const SAMPLE_RATE: f32 = 16_000.0;
 
 const USAGE: &str = "usage: cantor pitch FILE.wav
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
-       cantor sing CHANT.gabc --voice VOICE.cvox --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
+       cantor sing CHANT.gabc [--voice VOICE.cvox] --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
        cantor diction CHANT.gabc
        cantor eval [--write-baseline]
        cantor version";
@@ -102,7 +102,7 @@ fn synth_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Sings a chant with a sampled voice to a WAV file.
+/// Sings a chant with a voice file, or the neutral voice, to a WAV file.
 fn sing_cmd(args: &[String]) -> Result<(), String> {
     let mut chant = None;
     let mut voice_path = None;
@@ -124,15 +124,20 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
         }
     }
-    let (Some(chant), Some(voice_path), Some(pulse_s), Some(out)) = (chant, voice_path, pulse_s, out) else {
+    let (Some(chant), Some(pulse_s), Some(out)) = (chant, pulse_s, out) else {
         return Err(USAGE.into());
     };
     if rate.is_nan() || rate <= 0.0 {
         return Err("--rate must be positive".into());
     }
     let gabc = std::fs::read_to_string(&chant).map_err(|e| format!("{}: {e}", chant.display()))?;
-    let bytes = std::fs::read(&voice_path).map_err(|e| format!("{}: {e}", voice_path.display()))?;
-    let voice = Voice::parse(&bytes).map_err(|e| format!("{}: {e}", voice_path.display()))?;
+    let voice = match voice_path {
+        Some(path) => {
+            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Voice::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?
+        }
+        None => Voice::neutral(),
+    };
     let mut part = part_from_gabc(&gabc, pulse_s);
     for s in &mut part {
         s.note.midi += transpose;

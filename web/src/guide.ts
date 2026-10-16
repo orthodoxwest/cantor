@@ -1,35 +1,34 @@
-// Plays the timeline as a guide voice and moves the cursor with it: one oscillator per note
-// with a soft envelope, or, given a sampled voice, the chant sung on its vowels, rendered a
-// chunk at a time ahead of the audio clock. One pulse is PULSE seconds; pauses keep their
-// weight.
+// Sings the timeline with the guide voice and moves the cursor with it. The part is rendered
+// a chunk at a time ahead of the audio clock, each chunk a buffer started on time, so a long
+// chant never schedules more than a few seconds at once. One pulse is PULSE seconds; pauses
+// keep their weight.
 import { noteAtTime } from "neuma";
 import { audioContext } from "./audio";
 import type { Cursor } from "./cursor";
-import { DO, midiToFreq } from "./notes";
+import { DO } from "./notes";
 import type { Score } from "./score";
-import { chunksDue, notesText, octaveShift, type Part, type SampledVoice } from "./voice";
+import { chunksDue, notesText, octaveShift, type Part, type Voice } from "./voice";
 
 export const PULSE = 0.5;
-const ATTACK = 0.02;
-const RELEASE = 0.08;
 const LEVEL = 0.25;
-/** A sampled voice's chunk, and how far ahead of the clock chunks are rendered. */
+/** A chunk, and how far ahead of the clock chunks are rendered. */
 const CHUNK = 0.5;
 const AHEAD = 1.5;
 
 export interface GuideOptions {
+  /** The voice to sing with, and the chant's GABC, read for its language. */
+  voice: Voice;
+  gabc: string;
   /** Seconds, for the cursor; defaults to the audio context's clock. */
   clock?: () => number;
   onStop?: () => void;
-  /** Sings on the chant's vowels with this voice; `gabc` gives the language. */
-  voice?: { voice: SampledVoice; gabc: string };
 }
 
 export class Guide {
   playing = false;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
-  /** The sampled voice's chunks scheduled in this play, as [from, length, RMS]. */
+  /** The chunks scheduled in this play, as [from, length, RMS]. */
   readonly chunks: Array<[number, number, number]> = [];
   private nodes: AudioNode[] = [];
   private frame = 0;
@@ -39,7 +38,7 @@ export class Guide {
   constructor(
     private readonly score: Score,
     private readonly cursor: Cursor,
-    private readonly options: GuideOptions = {},
+    private readonly options: GuideOptions,
   ) {}
 
   async play(): Promise<void> {
@@ -54,8 +53,7 @@ export class Guide {
     this.nodes = [master];
     // On a sample boundary, so chunks laid end to end meet exactly.
     const t0 = Math.ceil((ctx.currentTime + 0.05) * ctx.sampleRate) / ctx.sampleRate;
-    if (this.options.voice) this.sing(ctx, master, t0, this.options.voice);
-    else this.oscillate(ctx, master, t0);
+    this.sing(ctx, master, t0);
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const origin = clock() + 0.05;
     const tick = () => {
@@ -66,28 +64,10 @@ export class Guide {
     tick();
   }
 
-  private oscillate(ctx: AudioContext, master: GainNode, t0: number): void {
-    for (const note of this.score.timeline.notes) {
-      const start = t0 + note.start * PULSE;
-      const end = start + note.duration * PULSE;
-      const osc = ctx.createOscillator();
-      osc.type = "triangle";
-      osc.frequency.value = midiToFreq(DO + note.semitones);
-      const env = ctx.createGain();
-      env.gain.setValueAtTime(0, start);
-      env.gain.linearRampToValueAtTime(1, start + ATTACK);
-      env.gain.setValueAtTime(1, Math.max(start + ATTACK, end - RELEASE));
-      env.gain.linearRampToValueAtTime(0, end);
-      osc.connect(env).connect(master);
-      osc.start(start);
-      osc.stop(end);
-      this.nodes.push(osc, env);
-    }
-  }
-
   /** Renders the part in chunks as the clock nears them, each a buffer started on time. */
-  private sing(ctx: AudioContext, master: GainNode, t0: number, { voice, gabc }: { voice: SampledVoice; gabc: string }): void {
+  private sing(ctx: AudioContext, master: GainNode, t0: number): void {
     const { timeline } = this.score;
+    const { voice, gabc } = this.options;
     const shift = octaveShift(
       timeline.notes.map((n) => DO + n.semitones),
       voice.centre,

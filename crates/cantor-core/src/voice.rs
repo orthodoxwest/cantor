@@ -1,9 +1,9 @@
-//! A sampled guide voice. A voice is a few sung vowels, each a short steady stretch of a
-//! real voice with its pitch periods marked; [`sing`] moves them to any pitch and length by
-//! pitch-synchronous overlap-add (TD-PSOLA), which keeps each vowel's formants where the
-//! singer put them. Voices are built elsewhere from recordings; this module reads them and
-//! sings with them, and renders any stretch of a part on its own so a player can schedule
-//! the guide in chunks.
+//! The guide voice. A voice is a few sung vowels, each a short steady stretch of voice with
+//! its pitch periods marked; [`sing`] moves them to any pitch and length by
+//! pitch-synchronous overlap-add (TD-PSOLA), which keeps each vowel's formants where they
+//! were. [`Voice::neutral`] is made here from textbook formants and sings every syllable on
+//! one vowel; recorded voices are built elsewhere and read from voice files. Any stretch of
+//! a part renders on its own, so a player can schedule the guide in chunks.
 //!
 //! A voice file is little-endian: the magic `CVOX`, a u16 version (1), a u16 unit count and
 //! a u32 sample rate, then per unit a u8 name length and the name (an ARPAbet vowel; units
@@ -36,6 +36,11 @@ const GLIDE_S: f64 = 0.05;
 const DIP_S: f64 = 0.07;
 /// The longest closing glide of a diphthong.
 const DIPHTHONG_S: f64 = 0.12;
+/// The neutral vowel, a schwa: formant centres and bandwidths in hertz.
+const NEUTRAL_FORMANTS: [(f64, f64); 4] = [(500.0, 80.0), (1500.0, 100.0), (2500.0, 140.0), (3500.0, 200.0)];
+/// The neutral voice's pitch: middle C, the guide's DO.
+const NEUTRAL_MIDI: f32 = 60.0;
+const NEUTRAL_RATE: f32 = 24_000.0;
 
 /// One sung vowel: a steady stretch of voice and its pitch marks.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,7 +91,56 @@ impl fmt::Display for VoiceError {
 
 impl std::error::Error for VoiceError {}
 
+impl Unit {
+    /// A vowel made rather than recorded: the harmonics of `midi`, falling 6 dB an octave,
+    /// shaped by resonances at `formants` (centre and bandwidth in hertz), 0.3 s long at
+    /// `sample_rate`, with a mark on every period's peak.
+    pub fn synthetic(vowel: Vowel, midi: f32, formants: &[(f64, f64)], sample_rate: f32) -> Unit {
+        let (f0, sr) = (midi_to_hz(midi) as f64, sample_rate as f64);
+        let n = (0.3 * sr) as usize;
+        let mut amps = Vec::new();
+        let mut k = 1.0;
+        while k * f0 < sr / 2.0 {
+            let f = k * f0;
+            let mut amp = 1.0 / k;
+            for &(fc, bw) in formants {
+                amp /= (1.0 + ((f - fc) / (bw / 2.0)).powi(2)).sqrt();
+            }
+            amps.push(amp);
+            k += 1.0;
+        }
+        let mut samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let w = 2.0 * std::f64::consts::PI * f0 * i as f64 / sr;
+                amps.iter().enumerate().map(|(k, a)| a * (w * (k + 1) as f64).cos()).sum::<f64>() as f32
+            })
+            .collect();
+        let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        if peak > 0.0 {
+            samples.iter_mut().for_each(|s| *s *= 0.5 / peak);
+        }
+        let period = sr / f0;
+        let marks = (1..)
+            .map(|k| (k as f64 * period).round() as u32)
+            .take_while(|&m| (m as usize) < n.saturating_sub(1))
+            .collect();
+        Unit {
+            vowel,
+            midi,
+            marks,
+            samples,
+        }
+    }
+}
+
 impl Voice {
+    /// The neutral voice: one made vowel, a schwa, that every syllable is sung on. It needs
+    /// no recording, so it ships with the app and guides until a recorded voice is given.
+    pub fn neutral() -> Voice {
+        let unit = Unit::synthetic(Vowel::Ah, NEUTRAL_MIDI, &NEUTRAL_FORMANTS, NEUTRAL_RATE);
+        Voice::new(NEUTRAL_RATE, vec![unit]).expect("the neutral unit is a valid unit")
+    }
+
     /// A voice from units, checked: each needs a finite pitch and at least three marks,
     /// increasing, at most 25 ms apart and inside its samples.
     pub fn new(sample_rate: f32, units: Vec<Unit>) -> Result<Voice, VoiceError> {
@@ -159,13 +213,17 @@ impl Voice {
             let sample_count = r.u32()? as usize;
             let marks: Vec<u32> = r
                 .take(mark_count.checked_mul(4).ok_or(VoiceError::Truncated)?)?
-                .chunks_exact(4)
-                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_le_bytes(*c))
                 .collect();
             let samples: Vec<f32> = r
                 .take(sample_count.checked_mul(2).ok_or(VoiceError::Truncated)?)?
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_le_bytes(*c) as f32 / 32768.0)
                 .collect();
             if let Some(vowel) = vowel {
                 units.push(Unit {
@@ -560,41 +618,8 @@ mod tests {
 
     const SR: f32 = 24_000.0;
 
-    /// A unit shaped like a vowel: a glottal-pulse-like source through resonances at the
-    /// given formants, sung at `midi`.
     fn formant_unit(vowel: Vowel, midi: f32, formants: &[(f64, f64)]) -> Unit {
-        let f0 = midi_to_hz(midi) as f64;
-        let n = (0.3 * SR) as usize;
-        let mut samples = vec![0.0f32; n];
-        for (i, s) in samples.iter_mut().enumerate() {
-            let t = i as f64 / SR as f64;
-            let mut v = 0.0;
-            let mut k = 1.0;
-            while k * f0 < SR as f64 / 2.0 {
-                let f = k * f0;
-                // Each harmonic's level follows the resonances and a -12 dB/octave source.
-                let mut amp = 1.0 / k;
-                for &(fc, bw) in formants {
-                    amp *= 1.0 / (1.0 + ((f - fc) / (bw / 2.0)).powi(2)).sqrt();
-                }
-                v += amp * (2.0 * std::f64::consts::PI * f * t).cos();
-                k += 1.0;
-            }
-            *s = v as f32;
-        }
-        let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-        samples.iter_mut().for_each(|s| *s *= 0.5 / peak);
-        let period = SR as f64 / f0;
-        let marks = (1..)
-            .map(|k| (k as f64 * period).round() as u32)
-            .take_while(|&m| (m as usize) < n - 1)
-            .collect();
-        Unit {
-            vowel,
-            midi,
-            marks,
-            samples,
-        }
+        Unit::synthetic(vowel, midi, formants, SR)
     }
 
     fn test_voice() -> Voice {
@@ -779,6 +804,28 @@ mod tests {
         assert!(rms(0.375, 0.395) < 0.5 * steady, "dip {} vs {steady}", rms(0.375, 0.395));
         assert!(rms(0.95, 1.15) < 1e-6, "rest {}", rms(0.95, 1.15));
         assert!(rms(1.25, 1.4) > 0.5 * steady);
+    }
+
+    #[test]
+    fn the_neutral_voice_sings_every_vowel_on_one() {
+        let v = Voice::neutral();
+        assert_eq!(v.units().len(), 1);
+        assert_eq!(v.centre(), Some(60.0));
+        for vowel in [Vowel::Aa, Vowel::Iy, Vowel::Uw, Vowel::Oy] {
+            assert_eq!(v.unit_for(vowel, 50.0), Some(0));
+        }
+        // A 24 kHz voice sung at 48 kHz, on pitch, loudest around the schwa's first formant.
+        let sr = 48_000.0;
+        for midi in [50.0, 60.0, 70.0] {
+            let part = [sung(midi, 0.0, 0.6, Vowel::Iy, true)];
+            let take = sing(&v, &part, sr, 0, length(&part, sr));
+            let d = detect(&take[9600..9600 + 4096], sr, DEFAULT_MIN_RMS, DEFAULT_MIN_CLARITY);
+            let cents = (d.midi.expect("voiced") - midi) * 100.0;
+            assert!(cents.abs() < 10.0, "at {midi}: {cents:.1} cents");
+        }
+        let take = whole(&v, &[sung(55.0, 0.0, 0.5, Vowel::Aa, true)]);
+        let low = band_share(&take[3000..3000 + 4096], 350.0, 700.0);
+        assert!(low > 0.4, "{low:.2}");
     }
 
     #[test]

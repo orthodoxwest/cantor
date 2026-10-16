@@ -5,31 +5,33 @@ import { Listener } from "./listen";
 import { describePitch } from "./notes";
 import { SAMPLE } from "./sample";
 import { Score } from "./score";
-import { SampledVoice } from "./voice";
+import { Voice } from "./voice";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
 // ?test=1 pins the cursor to the page's clock, which tests can fake.
 const test = params.get("test") === "1";
-// ?voice=URL sings the guide with a sampled voice file; without it, or if it fails to load,
-// the guide plays plain tones.
+// ?voice=URL sings the guide with a recorded voice file; without it, or if it fails to load,
+// the guide sings the neutral vowel.
 const voiceUrl = params.get("voice");
 
 await init();
 const score = new Score(byId("score"), new Chant(SAMPLE));
 const cursor = new Cursor(score);
-const voice = voiceUrl
-  ? await SampledVoice.load(voiceUrl).catch((error: unknown) => {
+const recorded = voiceUrl
+  ? await Voice.load(voiceUrl).catch((error: unknown) => {
       console.error("guide voice:", error);
       return undefined;
     })
   : undefined;
+const voice = recorded ?? (await Voice.neutral());
 
 const playButton = byId<HTMLButtonElement>("play");
 const guide = new Guide(score, cursor, {
+  voice,
+  gabc: SAMPLE,
   clock: test ? () => performance.now() / 1000 : undefined,
   onStop: () => playButton.setAttribute("aria-pressed", "false"),
-  voice: voice && { voice, gabc: SAMPLE },
 });
 playButton.addEventListener("click", () => {
   if (guide.playing) return guide.stop();
@@ -64,6 +66,6 @@ if (test) {
     timeline: score.timeline,
     visited: guide.visited,
     chunks: guide.chunks,
-    voice: Boolean(voice),
+    voice: recorded ? "recorded" : "neutral",
   };
 }

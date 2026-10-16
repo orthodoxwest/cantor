@@ -1,18 +1,22 @@
-// A sampled guide voice: cantor-core's renderer (cantor.wasm) singing a voice file of recorded
-// vowels. The voice file is private and loaded at runtime from a URL the page is given; the
-// page renders the part a chunk at a time, ahead of the audio clock.
+// The guide voice: cantor-core's renderer (cantor.wasm) singing either the neutral vowel it
+// makes itself or a voice file of recorded vowels, which is private and loaded at runtime
+// from a URL the page is given. The page renders the part a chunk at a time, ahead of the
+// audio clock.
 import type { Timeline } from "neuma";
 
 interface Exports {
   memory: WebAssembly.Memory;
   cantor_input(len: number): number;
   cantor_voice_new(): number;
+  cantor_voice_neutral(): number;
   cantor_voice_centre(voice: number): number;
   cantor_part_new(gabcLen: number): number;
   cantor_part_free(part: number): void;
   cantor_part_length(part: number, sampleRate: number): number;
   cantor_sing(voice: number, part: number, sampleRate: number, from: number, len: number): number;
 }
+
+const WASM_URL = `${import.meta.env.BASE_URL}cantor.wasm`;
 
 /** The notes in the form cantor.wasm reads: one per line, MIDI, start and duration in
  * seconds, word and syllable indexes, and the syllable's text, tab-separated. */
@@ -40,24 +44,25 @@ export function chunksDue(next: number, horizon: number, size: number, total: nu
   return out;
 }
 
-export class SampledVoice {
+export class Voice {
   private constructor(
     private readonly wasm: Exports,
     private readonly voice: number,
   ) {}
 
-  /** Loads cantor.wasm and the voice file at `voiceUrl`. */
-  static async load(voiceUrl: string, wasmUrl = `${import.meta.env.BASE_URL}cantor.wasm`): Promise<SampledVoice> {
-    const [module, file] = await Promise.all([
-      fetch(wasmUrl).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${wasmUrl}: ${r.status}`)))),
-      fetch(voiceUrl).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${voiceUrl}: ${r.status}`)))),
-    ]);
-    const { instance } = await WebAssembly.instantiate(module, {});
-    const wasm = instance.exports as unknown as Exports;
+  /** The neutral voice: every syllable on one made vowel. */
+  static async neutral(wasmUrl = WASM_URL): Promise<Voice> {
+    const wasm = await instantiate(fetchBytes(wasmUrl));
+    return new Voice(wasm, wasm.cantor_voice_neutral());
+  }
+
+  /** The voice file at `voiceUrl`. */
+  static async load(voiceUrl: string, wasmUrl = WASM_URL): Promise<Voice> {
+    const [wasm, file] = await Promise.all([instantiate(fetchBytes(wasmUrl)), fetchBytes(voiceUrl)]);
     write(wasm, new Uint8Array(file));
     const voice = wasm.cantor_voice_new();
     if (!voice) throw new Error(`${voiceUrl}: not a voice file`);
-    return new SampledVoice(wasm, voice);
+    return new Voice(wasm, voice);
   }
 
   /** The pitch (MIDI) the voice is at home at. */
@@ -99,6 +104,17 @@ export class Part {
     this.wasm.cantor_part_free(this.handle);
     this.handle = 0;
   }
+}
+
+async function fetchBytes(url: string): Promise<ArrayBuffer> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.arrayBuffer();
+}
+
+async function instantiate(module: Promise<ArrayBuffer>): Promise<Exports> {
+  const { instance } = await WebAssembly.instantiate(await module, {});
+  return instance.exports as unknown as Exports;
 }
 
 function write(wasm: Exports, bytes: Uint8Array): void {

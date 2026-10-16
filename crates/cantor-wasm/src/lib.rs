@@ -1,8 +1,8 @@
 //! A hand-written C ABI over `cantor-core` for the browser, in the style of neuma-wasm.
 //!
-//! The sampled guide voice: the page writes a voice file into the input buffer and makes a
-//! [`Voice`] of it, writes a chant's GABC and its timeline's notes (see [`parse_notes`]) and
-//! makes a part, then asks for the part a chunk at a time. Voices and parts are held here
+//! The guide voice: the page makes the neutral [`Voice`], or writes a voice file into the
+//! input buffer and makes one of it, writes a chant's GABC and its timeline's notes (see
+//! [`parse_notes`]) and makes a part, then asks for the part a chunk at a time. Voices and parts are held here
 //! behind handles (0 is none); samples are left in the output buffer for the page to copy
 //! before its next call.
 
@@ -108,6 +108,13 @@ pub extern "C" fn cantor_voice_new() -> u32 {
     }
 }
 
+/// The neutral voice, made rather than recorded.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn cantor_voice_neutral() -> u32 {
+    VOICES.with(|s| s.borrow_mut().put(Voice::neutral()))
+}
+
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn cantor_voice_free(voice: u32) {
@@ -204,6 +211,12 @@ mod tests {
         let part = cantor_part_new(gabc.len() as u32);
         assert_ne!(part, 0);
         assert!(cantor_part_length(part, 1000.0) > 1000);
+        let voice = cantor_voice_neutral();
+        assert_eq!(cantor_voice_centre(voice), 60.0);
+        cantor_sing(voice, part, 1000.0, 0, 1000);
+        OUTPUT.with(|b| assert!(b.borrow().iter().any(|&s| s != 0.0)));
+        cantor_voice_free(voice);
+        assert_eq!(cantor_voice_centre(voice), 0.0);
         cantor_part_free(part);
         assert_eq!(cantor_part_length(part, 1000.0), 0);
         let silent = cantor_sing(0, part, 1000.0, 0, 8);
