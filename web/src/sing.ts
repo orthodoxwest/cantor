@@ -9,6 +9,7 @@ import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
+import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
@@ -94,11 +95,85 @@ function drawResult(): void {
   if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
 }
 
+// A take shown may be sent, by a signed-in singer: the button gives a link to it.
+const sendLine = byId<HTMLParagraphElement>("send-line");
+const sendButton = byId<HTMLButtonElement>("send");
+const sentText = byId<HTMLSpanElement>("sent");
+const known = signedIn();
+/** The take shown, as it would be sent (judged against `gabc`, at `pulse` seconds a pulse,
+ * its first note at `offset`), until it is sent or another is shown. */
+interface ToSend {
+  gabc: string;
+  pulse: number;
+  offset: number;
+  judged: Judged;
+}
+let toSend: ToSend | null = null;
+/** Whether a take is being sent. */
+let sending = false;
+
+/** Offers to send the take just shown. */
+function offerSend(take: ToSend): void {
+  toSend = take;
+  void known.then((yes) => {
+    if (toSend === take) sendLine.hidden = !yes;
+  });
+}
+
+/** Holds a new take and the chant while the take being sent is read from the ear, which
+ * keeps only the last take, or lets them go. */
+function holdTake(on: boolean): void {
+  takeButton.disabled = on || !guide;
+  picker.disabled = on;
+}
+
+sendButton.addEventListener("click", () => {
+  const take = toSend;
+  if (!take || sending) return;
+  sendButton.disabled = true;
+  sentText.textContent = "Sending…";
+  sending = true;
+  holdTake(true);
+  const audio = listener.audio();
+  void audio.finally(() => holdTake(false)).catch(() => {});
+  const link = audio.then(({ wav, seconds }) => {
+    const { gabc, pulse, offset, judged } = take;
+    return sendTake(wav, { slug: piece.slug, title: piece.title, gabc, pulse, offset, seconds, judged });
+  });
+  const copied = copyWhenReady(link);
+  link.then(
+    async (url) => {
+      const done = await copied;
+      sending = false;
+      const told = done ? "Link copied. Anyone with it can hear this take: " : "Send this link; anyone with it can hear this take: ";
+      // A take no longer shown still gets its link, in the status line.
+      if (toSend !== take) return setStatus(`${told}${url}`, true);
+      toSend = null;
+      sendButton.hidden = true;
+      const a = document.createElement("a");
+      a.href = a.textContent = url;
+      sentText.replaceChildren(told, a);
+    },
+    (error: unknown) => {
+      sending = false;
+      if (toSend === take) {
+        sendButton.disabled = false;
+        sentText.textContent = "";
+      }
+      setStatus(`The take could not be sent: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  );
+});
+
 /** Shows a judged take, or clears it. */
 function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
+  toSend = null;
+  sendLine.hidden = true;
+  sendButton.hidden = sendButton.disabled = false;
+  sentText.textContent = "";
   // The ribbon says what was heard; the length of the take is no longer news (anything else
   // the status says stays).
   if (judged && status.textContent === heardLine) setStatus("");
@@ -367,8 +442,12 @@ async function takeScored(): Promise<void> {
     const entry = await listener.entry(due);
     if (!going()) return;
     timing = entry;
-    const json = await listener.judge(score.source, guide.pulse, entry.at - started.first);
-    if (going()) showResult(JSON.parse(json) as Judged);
+    const offset = entry.at - started.first;
+    const json = await listener.judge(score.source, guide.pulse, offset);
+    if (!going()) return;
+    const judged = JSON.parse(json) as Judged;
+    showResult(judged);
+    offerSend({ gabc: score.source, pulse: guide.pulse, offset, judged });
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -438,7 +517,9 @@ if (test) {
     show: async (gabc: string, pulse: number, offset: number) => {
       if (gabc !== score.source) score.setChant(new Chant(gabc));
       const json = await listener.judge(gabc, pulse, offset);
-      showResult(JSON.parse(json) as Judged);
+      const judged = JSON.parse(json) as Judged;
+      showResult(judged);
+      offerSend({ gabc, pulse, offset, judged });
       return json;
     },
   };

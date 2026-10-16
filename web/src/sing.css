@@ -53,6 +53,17 @@
   gap: 0.5rem 1rem;
   align-items: center;
 }
+/* Sending the take (send.ts): the button, then the link it made. */
+.send {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  color: var(--muted);
+}
+.send a {
+  overflow-wrap: anywhere;
+}
 
 /* The ribbon (ribbon.ts): a band per note, the singer's trace across it. */
 .ribbon .band-hit {

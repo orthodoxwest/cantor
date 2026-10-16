@@ -69,6 +69,12 @@ class Ear {
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
     return (await this.ask<"judged">({ type: "judge", gabc, pulse, offset })).json;
   }
+
+  /** The last take heard as a WAV file, and its length in seconds. */
+  async audio(): Promise<{ wav: ArrayBuffer; seconds: number }> {
+    const { wav, seconds } = await this.ask<"audio">({ type: "audio" });
+    return { wav, seconds };
+  }
 }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -112,6 +118,13 @@ export class Listener {
     if (!this.ear || !this.heard) throw new Error("nothing heard");
     await this.heard;
     return this.ear.judge(gabc, pulse, offset);
+  }
+
+  /** The last take heard, as a file to send; see `Ear.audio`. */
+  async audio(): Promise<{ wav: ArrayBuffer; seconds: number }> {
+    if (!this.ear || !this.heard) throw new Error("nothing heard");
+    await this.heard;
+    return this.ear.audio();
   }
 
   async start(): Promise<void> {
