@@ -52,14 +52,16 @@ test("a take started at once after another is heard on its own", async ({ page }
   await listen.click();
   await listen.click();
   await expect(listen).toHaveAttribute("aria-pressed", "true");
+  // Once the second take has reached the ear, a second of it.
+  await expect.poll(() => page.evaluate(() => window.__cantor.heard() !== undefined)).toBe(true);
   await page.waitForTimeout(1000);
   await listen.click();
   const heard = await page.evaluate(() => window.__cantor.heard());
   expect(heard).toBeDefined();
   // The second take alone, about a second: not the first (three) nor both (four).
-  expect(heard!.seconds).toBeGreaterThan(0.5);
+  expect(heard!.seconds).toBeGreaterThan(0.9);
   expect(heard!.seconds).toBeLessThan(2.5);
-  await expect(page.locator("#status")).toHaveText(/^Heard /);
+  await expect(page.locator("#status")).toHaveText(`Heard ${heard!.seconds.toFixed(1)} s.`);
 });
 
 for (const [voice, query] of [

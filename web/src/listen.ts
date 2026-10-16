@@ -34,6 +34,7 @@ class Ear {
       this.failed = new Error(e.message || "the ear failed");
       for (const waiter of this.waiting.values()) waiter.reject(this.failed);
       this.waiting.clear();
+      this.worker.terminate();
     };
   }
 
@@ -43,7 +44,12 @@ class Ear {
     const id = ++this.next;
     return new Promise((resolve, reject) => {
       this.waiting.set(id, { resolve: resolve as (m: Answer) => void, reject });
-      this.worker.postMessage({ ...request, id } as ToEar, transfer);
+      try {
+        this.worker.postMessage({ ...request, id } as ToEar, transfer);
+      } catch (error) {
+        this.waiting.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -75,6 +81,9 @@ export class Listener {
   private ear: Ear | undefined;
   /** The ear's hearing of the take being sung, or of the last one. */
   heard: Promise<Heard> | undefined;
+  /** The last take's hearing, settled either way, which the next take waits for. */
+  private last: Promise<unknown> = Promise.resolve();
+  private generation = 0;
 
   /** `onFrame` hears each frame as it is tracked; `onFailed` hears why a take failed while it
    * was being sung, after which listening has stopped. */
@@ -93,26 +102,34 @@ export class Listener {
   async start(): Promise<void> {
     if (this.listening) return;
     this.listening = true;
+    // Each start and stop moves the generation on; a start that finds it moved was stopped.
+    const generation = ++this.generation;
+    const stopped = () => generation !== this.generation;
     // The last take is heard before the next starts, so the ear hears one take at a time.
-    const last = this.heard;
+    const last = this.last;
     this.heard = undefined;
-    await last?.catch(() => undefined);
-    const ctx = await audioContext();
-    this.module ??= ctx.audioWorklet.addModule(WORKLET_URL);
-    await this.module;
     let stream: MediaStream;
     try {
+      await last;
+      const ctx = await audioContext();
+      this.module ??= ctx.audioWorklet.addModule(WORKLET_URL).catch((error: unknown) => {
+        this.module = undefined;
+        throw error;
+      });
+      await this.module;
+      if (stopped()) return;
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
     } catch (err) {
-      this.listening = false;
+      if (!stopped()) this.listening = false;
       throw err;
     }
-    if (!this.listening) {
+    if (stopped()) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
+    const ctx = await audioContext();
     this.stream = stream;
     const source = ctx.createMediaStreamSource(this.stream);
     const node = new AudioWorkletNode(ctx, "capture");
@@ -126,6 +143,7 @@ export class Listener {
     });
     const heard = this.ear.start(ctx.sampleRate, channel.port2);
     this.heard = heard;
+    this.last = heard.catch(() => undefined);
     heard.catch((error: Error) => {
       if (this.heard !== heard || !this.listening) return;
       this.stop();
@@ -141,6 +159,7 @@ export class Listener {
   stop(): void {
     if (!this.listening) return;
     this.listening = false;
+    this.generation++;
     this.worklet?.port.postMessage("stop");
     this.worklet = undefined;
     for (const node of this.nodes) node.disconnect();
