@@ -14,5 +14,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 cantor-core.workspace = true
 
-[lints]
-workspace = true
+# No workspace lint table: the C ABI needs `no_mangle` exports, which `forbid(unsafe_code)` rejects.
+[lints.rust]
+unsafe_code = "deny"
