@@ -7,10 +7,14 @@ const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A�
 
 export const midiToFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
 
+/** A pitch as its nearest note name, "A4". */
+export function noteName(midi: number): string {
+  const nearest = Math.round(midi);
+  return `${NAMES[((nearest % 12) + 12) % 12]}${Math.floor(nearest / 12) - 1}`;
+}
+
 /** A pitch as its nearest note name and the offset from it in cents, "A4 +3¢". */
 export function describePitch(midi: number): string {
-  const nearest = Math.round(midi);
-  const cents = Math.round((midi - nearest) * 100);
-  const name = `${NAMES[((nearest % 12) + 12) % 12]}${Math.floor(nearest / 12) - 1}`;
-  return `${name} ${cents >= 0 ? "+" : "−"}${Math.abs(cents)}¢`;
+  const cents = Math.round((midi - Math.round(midi)) * 100);
+  return `${noteName(midi)} ${cents >= 0 ? "+" : "−"}${Math.abs(cents)}¢`;
 }
