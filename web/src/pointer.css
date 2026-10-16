@@ -182,8 +182,11 @@
 
 @media print {
   /* Ink on paper, whatever the screen's theme. */
-  :root:root {
+  /* Three :roots, to outrank the dark theme's selectors in style.css whatever the order. */
+  :root:root:root {
     --bg: #fff;
+    --page-material: none;
+    --accent: #6b3a1f;
     --text: #000;
     --muted: #444;
     --rubric: #8b1a1a;
@@ -192,6 +195,9 @@
     --unsure: #a8650a;
     --cur: transparent;
     color-scheme: light;
+  }
+  .pointer main {
+    padding-bottom: 0;
   }
   .print-title {
     display: block;

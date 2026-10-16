@@ -89,7 +89,7 @@ function drawResults(): void {
   els.results.innerHTML = shown.length
     ? shown
         .map(
-          (c) => `<li><a href="#${c.slug}">
+          (c) => `<li><a href="#${escape(c.slug)}">
   <span class="kicker">${escape(kicker(c))}</span>
   <span class="name">${highlight(c.title, q)}${c.name ? ` <span class="latin">${highlight(c.name, q)}</span>` : ""}</span>
   ${c.book ? `<span class="src">${escape(c.book)}</span>` : ""}
@@ -191,7 +191,13 @@ els.play.addEventListener("click", () => {
 });
 
 function route(): void {
-  const c = chants.find((x) => x.slug === decodeURIComponent(location.hash.slice(1)));
+  let slug = "";
+  try {
+    slug = decodeURIComponent(location.hash.slice(1));
+  } catch {
+    // A malformed address names no piece.
+  }
+  const c = chants.find((x) => x.slug === slug);
   if (c) {
     if (els.piece.hidden) scrollBack = window.scrollY;
     void open(c);
