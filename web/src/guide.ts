@@ -20,8 +20,8 @@ export interface GuideOptions {
   onError?: (message: string) => void;
 }
 
-/** How a play goes: with the voice or the cursor alone, and how long the cursor waits on the
- * first note before it moves, in seconds. */
+/** How a play goes: with the voice or the cursor alone, and how long before the chant begins,
+ * in seconds, with the cursor hidden. */
 export interface PlayOptions {
   voice?: boolean;
   lead?: number;

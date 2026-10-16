@@ -112,7 +112,7 @@
 /* The tapped mark's words stay in view, just above the bar. */
 .why {
   position: sticky;
-  bottom: 4.1rem;
+  bottom: calc(4.1rem + env(safe-area-inset-bottom, 0px));
   margin: 0;
   padding: 0.5rem 0;
   background: var(--bg);

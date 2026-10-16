@@ -43,8 +43,11 @@ describe("timing", () => {
     // was due a little before it.
     const hummed = frames.map((f, i) => (i >= 10 && i < 20 ? { ...f, midi: 57 } : f));
     expect(firstSound(hummed, 10, null, 0.8)).toBeCloseTo(1.02, 6);
-    // A voice already going when the note fell due gives no entry.
+    // A voice already going when the note fell due gives no entry; a flicker across the bound
+    // does not hide the entry after it.
     expect(firstSound(frames, 10, null, 1.1)).toBeNull();
+    const flicker = frames.map((f, i) => (i === 26 || i === 27 ? { ...f, midi: 57 } : f));
+    expect(firstSound(flicker, 10, null, 0.8)).toBeCloseTo(1.02, 6);
   });
 
   it("knows headphones by the output's name, and says when it cannot tell", () => {

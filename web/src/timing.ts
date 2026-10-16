@@ -74,26 +74,26 @@ export function firstSound(
   loud: number | null,
   from = 0,
 ): number | null {
+  const bound = Math.max(from, 0);
   let run = 0;
-  let before = false;
+  let began = 0;
   for (const [i, frame] of frames.entries()) {
-    if (frame.t < start + from) {
-      before = frame.t >= start && frame.midi !== null;
+    if (frame.t < start || frame.midi === null) {
+      run = 0;
       continue;
     }
-    if (before && frame.midi !== null && run === 0) return null;
-    before = false;
-    run = frame.midi === null ? 0 : run + 1;
+    if (run++ === 0) began = i;
     if (run < VOICED_RUN) continue;
-    const voiced = frames[i - VOICED_RUN + 1]!.t - start;
-    return loud !== null && loud >= from && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
+    const voiced = frames[began]!.t - start;
+    if (voiced >= bound) return loud !== null && loud >= bound && loud <= voiced && voiced - loud <= SHARPEN ? loud : voiced;
+    // A voice that began before the bound and holds past it gives no entry.
+    if (frame.t - start >= bound) return null;
   }
   return null;
 }
 
 /** Output devices whose name says they are worn. */
 const WORN = /head(phone|set)|ear(bud|phone|pod)|airpods|\bbuds/i;
-
 /** An output named for speakers and headphones at once, whatever is plugged in. */
 const BOTH = /speakers?\s*\/\s*head(phone|set)|head(phone|set)s?\s*\/\s*speaker/i;
 
