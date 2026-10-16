@@ -104,7 +104,9 @@ fn synth_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Sings a chant with a voice file, or the neutral voice, to a WAV file.
+/// Sings a chant with a voice file, or the neutral voice, to a WAV file. Notes are timed as
+/// `notes_from_gabc` times them, recitation quickened; the web guide keeps the timeline's own
+/// timing, so a psalm here runs faster than the guide sings it.
 fn sing_cmd(args: &[String]) -> Result<(), String> {
     let mut chant = None;
     let mut voice_path = None;
@@ -129,6 +131,9 @@ fn sing_cmd(args: &[String]) -> Result<(), String> {
     let (Some(chant), Some(pulse_s), Some(out)) = (chant, pulse_s, out) else {
         return Err(USAGE.into());
     };
+    if !pulse_s.is_finite() || pulse_s <= 0.0 {
+        return Err("--tempo must be a positive number of seconds".into());
+    }
     if !(8_000..=384_000).contains(&rate) {
         return Err("--rate must be a whole number of hertz from 8000 to 384000".into());
     }

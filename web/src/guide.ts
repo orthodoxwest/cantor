@@ -42,19 +42,27 @@ export class Guide {
     if (this.playing) return;
     this.playing = true;
     const play = ++this.plays;
-    const ctx = await audioContext();
-    if (!this.playing || play !== this.plays) return;
-    this.visited.length = 0;
-    const { timeline } = this.score;
-    const { table, gabc } = this.options;
-    // The chant moves by whole octaves to where the voice is at home.
-    const shift = octaveShift(
-      timeline.notes.map((n) => DO + n.semitones),
-      table.centre,
-    );
-    const singing = await sing(ctx, fromTimeline(timeline.notes, PULSE, (s) => DO + s + shift), { table, gabc });
+    let ctx: AudioContext;
+    let singing: Singing;
+    try {
+      ctx = await audioContext();
+      if (!this.playing || play !== this.plays) return;
+      const { timeline } = this.score;
+      const { table, gabc } = this.options;
+      // The chant moves by whole octaves to where the voice is at home.
+      const shift = octaveShift(
+        timeline.notes.map((n) => DO + n.semitones),
+        table.centre,
+      );
+      singing = await sing(ctx, fromTimeline(timeline.notes, PULSE, (s) => DO + s + shift), { table, gabc });
+    } catch (error) {
+      console.error("guide:", error);
+      if (play === this.plays) this.halt(false);
+      return;
+    }
     if (!this.playing || play !== this.plays) return singing.stop();
     this.singing = singing;
+    this.visited.length = 0;
     const clock = this.options.clock ?? (() => ctx.currentTime);
     const origin = clock() + (singing.start - ctx.currentTime);
     const tick = () => {

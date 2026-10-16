@@ -2,7 +2,7 @@
 // table, either the neutral vowel it makes itself or a voice file of recorded vowels, which is
 // private and loaded at runtime from a URL the page is given. `sing` renders the part a chunk
 // at a time just ahead of the audio clock, so a long chant never schedules more than a couple
-// of seconds at once. It needs no score or cursor: the guide and the pointer both call it.
+// of seconds at once. It needs no score or cursor, so any page can sing a list of notes.
 import type { TimelineNote } from "neuma";
 
 interface Exports {
