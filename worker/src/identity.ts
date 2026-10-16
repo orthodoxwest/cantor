@@ -16,19 +16,31 @@ export interface IdentityEnv {
 /**
  * The caller, or null. Outside dev only a Cloudflare Access token whose signature, issuer,
  * audience and expiry all check out names one; with the team or audience unset, nobody does.
+ * Access adds the token as a header on the paths its application covers; elsewhere the
+ * browser still sends it as the CF_Authorization cookie, which is checked the same way. (The
+ * cookie travels with any request to the host, so a route that changes anything must not rely
+ * on it alone.)
  */
 export async function identity(headers: Headers, env: IdentityEnv, now = Date.now()): Promise<Identity | null> {
   if (env.ENV === "dev") {
     const id = headers.get("X-Dev-User");
     return id ? { id, email: null } : null;
   }
-  const jwt = headers.get("Cf-Access-Jwt-Assertion");
+  const jwt = headers.get("Cf-Access-Jwt-Assertion") ?? cookie(headers, "CF_Authorization");
   if (!jwt || !env.ACCESS_TEAM || !env.ACCESS_AUD) return null;
   try {
     return await verifyAccessJwt(jwt, env.ACCESS_TEAM.replace(/\/+$/, ""), env.ACCESS_AUD, now);
   } catch {
     return null;
   }
+}
+
+function cookie(headers: Headers, name: string): string | null {
+  for (const pair of (headers.get("Cookie") ?? "").split(";")) {
+    const at = pair.indexOf("=");
+    if (at > 0 && pair.slice(0, at).trim() === name) return pair.slice(at + 1).trim() || null;
+  }
+  return null;
 }
 
 const decoder = new TextDecoder();

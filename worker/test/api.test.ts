@@ -121,6 +121,24 @@ describe("api", () => {
       expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
     });
 
+    it("names the caller from the Access cookie where no header is added", async () => {
+      const jwt = await token(good());
+      const res = await get("/api/me", { Cookie: `theme=dark; CF_Authorization=${jwt}` }, prod);
+      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
+      const list = await get("/api/chants", { Cookie: `CF_Authorization=${jwt}` }, prod);
+      expect((await list.json<{ slug: string }[]>()).map((r) => r.slug)).toContain("private-test");
+      expect((await get("/api/chants/private-test", { Cookie: `CF_Authorization=${jwt}` }, prod)).status).toBe(200);
+      const forged = await token(good(), (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        false,
+        ["sign"],
+      ) as CryptoKeyPair).privateKey);
+      for (const Cookie of [`CF_Authorization=${forged}`, `CF_Authorization=${await token({ ...good(), exp: now() - 1 })}`, `XCF_Authorization=${jwt}`, "CF_Authorization="]) {
+        expect((await get("/api/me", { Cookie }, prod)).status).toBe(401);
+        expect((await get("/api/chants/private-test", { Cookie }, prod)).status).toBe(404);
+      }
+    });
+
     it("takes a single audience as well as a list", async () => {
       const jwt = await token({ ...good(), aud: AUD });
       expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
