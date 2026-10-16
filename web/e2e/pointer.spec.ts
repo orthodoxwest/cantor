@@ -161,6 +161,21 @@ test.describe("on a touch screen", () => {
     await half.nth(a).tap();
     await expect.poll(plain).toEqual([all[a - 1], all[a]]);
   });
+
+  test("a mouse press on an accent does not choose it for a later tap", async ({ page }) => {
+    await open(page);
+    await page.locator("#tone").selectOption("1.D");
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const plain = async () =>
+      (await accents(page, 1, "mediant").allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const all = (await half.allTextContents()).map((t) => t.normalize("NFD").replace(/\u0301/g, ""));
+    const [first, second] = await plain();
+    const b = all.indexOf(second!, all.indexOf(first!) + 1);
+    await accents(page, 1, "mediant").first().click();
+    // The syllable after the second accent: the nearer, the second, moves.
+    await half.nth(b + 1).tap();
+    await expect.poll(plain).toEqual([first, all[b + 1]]);
+  });
 });
 
 test("a new tone points the psalm again", async ({ page }) => {
