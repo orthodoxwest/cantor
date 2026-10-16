@@ -29,6 +29,15 @@ pub struct NoteResult {
     /// How many frames there were masked by the guide's bleed.
     #[serde(default)]
     pub masked_frames: usize,
+    /// How many frames there were below the take's loudness floor.
+    #[serde(default)]
+    pub quiet_frames: usize,
+    /// How many frames the sustained part spans.
+    #[serde(default)]
+    pub frames: usize,
+    /// The interquartile range of the voiced frames' errors, in cents: how much they agree.
+    #[serde(default)]
+    pub spread_cents: Option<f32>,
     /// The median cents error of those frames, or `None` when too few landed.
     pub cents: Option<f32>,
 }
@@ -76,15 +85,26 @@ fn score_note(index: usize, note: &Note, frames: &[Frame]) -> NoteResult {
     let from = note.start_s + SKIP_HEAD * note.dur_s;
     let to = note.start_s + (1.0 - SKIP_TAIL) * note.dur_s;
     let sustained = frames.iter().filter(|f| f.t >= from && f.t < to);
+    let count = sustained.clone().count();
     let masked_frames = sustained.clone().filter(|f| f.masked).count();
+    let quiet_frames = sustained.clone().filter(|f| f.quiet).count();
     let mut errors: Vec<f32> = sustained.filter_map(|f| f.midi.map(|m| fold((m - note.midi) * 100.0))).collect();
     let voiced_frames = errors.len();
-    let cents = (voiced_frames >= MIN_VOICED).then(|| median(&mut errors));
+    let heard = voiced_frames >= MIN_VOICED;
+    let cents = heard.then(|| median(&mut errors));
+    // `median` sorted the errors.
+    let spread_cents = heard.then(|| {
+        let q = |p: usize| errors[(errors.len() - 1) * p / 4];
+        q(3) - q(1)
+    });
     NoteResult {
         index,
         expected_midi: note.midi,
         voiced_frames,
         masked_frames,
+        quiet_frames,
+        frames: count,
+        spread_cents,
         cents,
     }
 }
@@ -117,6 +137,7 @@ mod tests {
                 clarity: 1.0,
                 rms: 0.1,
                 masked: false,
+                quiet: false,
             })
             .collect()
     }

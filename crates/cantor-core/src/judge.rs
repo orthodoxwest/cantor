@@ -2,10 +2,13 @@
 //! reciting tone held steady, and marks for faults a teacher would hear across the room.
 //!
 //! The rules are conservative by design. A take that was mostly not heard gets no marks and
-//! no notes in tune, only an outcome saying so. Otherwise a note is marked only when it is
-//! at least [`MARK_CENTS`] from the singer's key, lasts at least [`MARK_MIN_S`] and is past
-//! the first phrase; a verse is marked when most of it is off together (a verse a tone high)
-//! or none of it was sung. Smaller errors are left to the trace.
+//! no notes in tune, only an outcome saying so. Otherwise the key is set where the singer
+//! started (the first verse) and follows the singer's drift, so a sinking tenor is told the
+//! tone sank, not that each later note is flat. A note is marked only when it is at least
+//! [`MARK_CENTS`] from that line, lasts at least [`MARK_MIN_S`], is past the first phrase
+//! and its frames agree; a verse is marked when most of it is off together (a verse a tone
+//! high), or when it was silent throughout. A verse that was loud but not pitched (a clash
+//! with the guide, a noisy room) is not marked. Smaller errors are left to the trace.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,16 +27,22 @@ pub const IN_TUNE_CENTS: f32 = 50.0;
 pub const TAKE_HEARD_FLOOR: f32 = 0.5;
 /// The reciting tone moving this many cents over the take is unsteady.
 pub const DRIFT_CENTS: f32 = 60.0;
+/// A note is marked on its own only from at least this many voiced frames...
+const MARK_MIN_FRAMES: usize = 5;
+/// ...whose errors' interquartile range is under this many cents.
+const MARK_MAX_SPREAD: f32 = 100.0;
 /// The half-width of the window the key is chosen by.
 const KEY_WINDOW_CENTS: f32 = 50.0;
 /// The share of a verse's heard notes that must be off together for a verse mark.
 const VERSE_AGREE: f32 = 0.6;
 /// Notes this far off in a marked verse's direction count as agreeing.
 const VERSE_NOTE_CENTS: f32 = 100.0;
-/// A verse with less than this share of its notes heard (and not masked) was not sung.
-const VERSE_MISSING: f32 = 0.2;
-/// Notes further than this from the key are left out of the drift.
+/// A verse is silent when at least this share of its notes' frames were below the floor.
+const VERSE_SILENT: f32 = 0.8;
+/// Notes further than this from the drift line are left out of its second fit.
 const DRIFT_OUTLIER_CENTS: f32 = 100.0;
+/// Pairs of notes closer in time than this are left out of the drift's slope.
+const DRIFT_MIN_DT_S: f32 = 0.5;
 
 /// What became of the take as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +64,7 @@ pub enum MarkKind {
     Note,
     /// A verse off together.
     Verse,
-    /// A verse not sung.
+    /// A verse silent throughout.
     VerseMissing,
 }
 
@@ -79,16 +88,18 @@ impl Mark {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Verdict {
     pub outcome: Outcome,
-    /// The key sung, in cents from the score's (do at middle C), when heard.
+    /// The key the singer started in, in cents from the score's (do at middle C), folded
+    /// into `-600.0..600.0`, when heard.
     pub key_cents: Option<f32>,
-    /// How far the reciting tone moved from the first note to the last, in cents.
+    /// How far the reciting tone moved from the first heard note to the last, in cents: a
+    /// robust line through the notes' errors.
     pub drift_cents: f32,
     /// The drift is under [`DRIFT_CENTS`].
     pub steady: bool,
     pub marks: Vec<Mark>,
-    /// Each note's error from the key, in cents, when heard.
+    /// Each note's error from the key and the drift line, in cents, when heard.
     pub relative: Vec<Option<f32>>,
-    /// How many notes were heard in tune.
+    /// How many notes were heard in tune and not under a mark.
     pub in_tune: usize,
 }
 
@@ -99,7 +110,7 @@ impl Verdict {
     }
 }
 
-/// Judges a scored take of `notes`.
+/// Judges a scored take of `notes`. A report that does not match the notes is not heard.
 pub fn judge(notes: &[Note], report: &Report) -> Verdict {
     let silent = |outcome| Verdict {
         outcome,
@@ -111,10 +122,14 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         in_tune: 0,
     };
     let results = &report.notes;
+    if results.len() != notes.len() || results.iter().enumerate().any(|(i, r)| r.index != i) {
+        return silent(Outcome::NotHeard);
+    }
     let counted: Vec<usize> = (0..notes.len()).filter(|&i| notes[i].dur_s >= HEARD_MIN_S).collect();
     let counted = if counted.is_empty() { (0..notes.len()).collect() } else { counted };
     let heard = counted.iter().filter(|&&i| results[i].cents.is_some()).count();
-    if counted.is_empty() || (heard as f32) < TAKE_HEARD_FLOOR * counted.len() as f32 {
+    let any_heard = results.iter().any(|r| r.cents.is_some());
+    if counted.is_empty() || !any_heard || (heard as f32) < TAKE_HEARD_FLOOR * counted.len() as f32 {
         let unheard: Vec<&NoteResult> = counted.iter().map(|&i| &results[i]).filter(|r| r.cents.is_none()).collect();
         let masked = unheard.iter().filter(|r| is_masked(r)).count();
         return silent(if 2 * masked > unheard.len() {
@@ -124,16 +139,23 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         });
     }
 
-    let key = key_cents(notes, results);
-    let relative: Vec<Option<f32>> = results.iter().map(|r| r.cents.map(|c| fold(c - key))).collect();
+    let (key, t0) = key_cents(notes, results);
+    let errors: Vec<Option<f32>> = results.iter().map(|r| r.cents.map(|c| fold(c - key))).collect();
+    let slope = drift_slope(notes, &errors, t0);
+    let relative: Vec<Option<f32>> = errors
+        .iter()
+        .enumerate()
+        .map(|(i, e)| e.map(|e| fold(e - slope * (mid(&notes[i]) - t0))))
+        .collect();
 
     let mut marks = verse_marks(notes, results, &relative);
     for i in 0..notes.len() {
         if marks.iter().any(|m| m.covers(i)) {
             continue;
         }
-        let Some(rel) = relative[i] else { continue };
-        if notes[i].phrase > 0 && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS {
+        let (Some(rel), r) = (relative[i], &results[i]) else { continue };
+        let agreed = r.voiced_frames >= MARK_MIN_FRAMES && r.spread_cents.is_some_and(|s| s < MARK_MAX_SPREAD);
+        if notes[i].phrase > 0 && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS && agreed {
             marks.push(Mark {
                 kind: MarkKind::Note,
                 first: i,
@@ -144,8 +166,14 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
     }
     marks.sort_by_key(|m| (m.first, m.last));
 
-    let drift_cents = drift(notes, &relative, &marks);
-    let in_tune = relative.iter().flatten().filter(|c| c.abs() < IN_TUNE_CENTS).count();
+    let times: Vec<f32> = (0..notes.len()).filter(|&i| errors[i].is_some()).map(|i| mid(&notes[i])).collect();
+    let span = times.last().copied().unwrap_or(0.0) - times.first().copied().unwrap_or(0.0);
+    let drift_cents = slope * span;
+    let in_tune = relative
+        .iter()
+        .enumerate()
+        .filter(|(i, r)| r.is_some_and(|c| c.abs() < IN_TUNE_CENTS) && !marks.iter().any(|m| m.covers(*i)))
+        .count();
     Verdict {
         outcome: Outcome::Heard,
         key_cents: Some(key),
@@ -157,41 +185,94 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
     }
 }
 
+fn mid(n: &Note) -> f32 {
+    n.start_s + n.dur_s / 2.0
+}
+
 /// A note not heard whose sustained part was mostly masked.
 fn is_masked(r: &NoteResult) -> bool {
     r.cents.is_none() && r.masked_frames > r.voiced_frames
 }
 
-/// The key: the offset agreed by the most sung time. Each heard note's error is a candidate;
-/// the one with the most note duration within [`KEY_WINDOW_CENTS`] of it wins (the earliest
-/// on a tie), and the key is the median of the errors in its window. A verse sung a tone high
-/// is then a verse off the key, not a key between the two. Distances are octave-agnostic, as
-/// the errors are, and the key is folded into `-600.0..600.0`.
-fn key_cents(notes: &[Note], results: &[NoteResult]) -> f32 {
-    let heard: Vec<(f32, f32)> = results.iter().filter_map(|r| r.cents.map(|c| (c, notes[r.index].dur_s))).collect();
+/// The key the singer started in, and the time it holds at. Over the first verse with at
+/// least three heard notes (the whole take if none has), each heard note's error is a
+/// candidate; the one with the most note duration within [`KEY_WINDOW_CENTS`] of it wins (the
+/// earliest on a tie), and the key is the median of the errors in its window, at the mean
+/// time of those notes. A later verse sung a tone high is then a verse off the key, whatever
+/// share of the take it is. Distances are octave-agnostic, as the errors are.
+fn key_cents(notes: &[Note], results: &[NoteResult]) -> (f32, f32) {
+    let heard_in = |pick: &dyn Fn(&Note) -> bool| -> Vec<(f32, f32, f32)> {
+        results
+            .iter()
+            .filter(|r| pick(&notes[r.index]))
+            .filter_map(|r| r.cents.map(|c| (c, notes[r.index].dur_s, mid(&notes[r.index]))))
+            .collect()
+    };
+    let mut verses: Vec<u32> = notes.iter().map(|n| n.verse).collect();
+    verses.dedup();
+    let heard = verses
+        .iter()
+        .map(|&v| heard_in(&|n: &Note| n.verse == v))
+        .find(|h| h.len() >= 3)
+        .unwrap_or_else(|| heard_in(&|_: &Note| true));
     let support = |c: f32| -> f32 {
         heard
             .iter()
-            .filter(|(x, _)| fold(x - c).abs() <= KEY_WINDOW_CENTS)
-            .map(|(_, d)| d)
+            .filter(|(x, _, _)| fold(x - c).abs() <= KEY_WINDOW_CENTS)
+            .map(|(_, d, _)| d)
             .sum()
     };
     let mut best = (heard[0].0, f32::NEG_INFINITY);
-    for &(c, _) in &heard {
+    for &(c, _, _) in &heard {
         let s = support(c);
         if s > best.1 {
             best = (c, s);
         }
     }
-    let mut window: Vec<f32> = heard
+    let window: Vec<(f32, f32)> = heard
         .iter()
-        .map(|(x, _)| fold(x - best.0))
-        .filter(|d| d.abs() <= KEY_WINDOW_CENTS)
+        .map(|(x, _, t)| (fold(x - best.0), *t))
+        .filter(|(d, _)| d.abs() <= KEY_WINDOW_CENTS)
         .collect();
-    fold(best.0 + median(&mut window))
+    let mut offsets: Vec<f32> = window.iter().map(|w| w.0).collect();
+    let t0 = window.iter().map(|w| w.1).sum::<f32>() / window.len() as f32;
+    (fold(best.0 + median(&mut offsets)), t0)
 }
 
-/// Marks for verses off together and verses not sung.
+/// The drift, in cents per second: a Theil-Sen line (the median of pairwise slopes) through
+/// the heard notes' errors from the key, fitted twice, the second time without the notes
+/// further than [`DRIFT_OUTLIER_CENTS`] from the first line, so faults do not tilt it. Only
+/// pairs within one verse count: a tone sinking moves within each verse, while a verse sung
+/// a tone high is level inside and would otherwise read as a slope across verses.
+fn drift_slope(notes: &[Note], errors: &[Option<f32>], t0: f32) -> f32 {
+    let points: Vec<(u32, f32, f32)> = errors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| e.map(|e| (notes[i].verse, mid(&notes[i]), e)))
+        .collect();
+    let first = theil_sen(&points);
+    let inliers: Vec<(u32, f32, f32)> = points
+        .iter()
+        .copied()
+        .filter(|(_, t, e)| fold(e - first * (t - t0)).abs() < DRIFT_OUTLIER_CENTS)
+        .collect();
+    theil_sen(&inliers)
+}
+
+fn theil_sen(points: &[(u32, f32, f32)]) -> f32 {
+    let mut slopes = Vec::new();
+    for (i, a) in points.iter().enumerate() {
+        for b in points[i + 1..].iter().filter(|b| b.0 == a.0) {
+            let dt = b.1 - a.1;
+            if dt.abs() >= DRIFT_MIN_DT_S {
+                slopes.push(fold(b.2 - a.2) / dt);
+            }
+        }
+    }
+    if slopes.is_empty() { 0.0 } else { median(&mut slopes) }
+}
+
+/// Marks for verses off together and verses silent throughout.
 fn verse_marks(notes: &[Note], results: &[NoteResult], relative: &[Option<f32>]) -> Vec<Mark> {
     let mut marks = Vec::new();
     let mut start = 0;
@@ -203,8 +284,9 @@ fn verse_marks(notes: &[Note], results: &[NoteResult], relative: &[Option<f32>])
         }
         let count = end - start + 1;
         let mut heard: Vec<f32> = relative[start..=end].iter().flatten().copied().collect();
-        let masked = results[start..=end].iter().filter(|r| is_masked(r)).count();
-        if count >= 3 && (heard.len() as f32) < VERSE_MISSING * count as f32 && 2 * masked < count {
+        let frames: usize = results[start..=end].iter().map(|r| r.frames).sum();
+        let quiet: usize = results[start..=end].iter().map(|r| r.quiet_frames).sum();
+        if count >= 3 && frames > 0 && quiet as f32 >= VERSE_SILENT * frames as f32 {
             marks.push(Mark {
                 kind: MarkKind::VerseMissing,
                 first: start,
@@ -229,32 +311,6 @@ fn verse_marks(notes: &[Note], results: &[NoteResult], relative: &[Option<f32>])
         start = end + 1;
     }
     marks
-}
-
-/// The reciting tone's movement over the take: a least-squares line through the heard notes'
-/// errors against time, weighted by duration, leaving out marked notes and outliers; its rise
-/// from the first such note to the last.
-fn drift(notes: &[Note], relative: &[Option<f32>], marks: &[Mark]) -> f32 {
-    let points: Vec<(f32, f32, f32)> = relative
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !marks.iter().any(|m| m.covers(*i)))
-        .filter_map(|(i, r)| r.map(|c| (notes[i].start_s + notes[i].dur_s / 2.0, c, notes[i].dur_s)))
-        .filter(|(_, c, _)| c.abs() < DRIFT_OUTLIER_CENTS)
-        .collect();
-    if points.len() < 2 {
-        return 0.0;
-    }
-    let w: f32 = points.iter().map(|p| p.2).sum();
-    let mt = points.iter().map(|p| p.0 * p.2).sum::<f32>() / w;
-    let mc = points.iter().map(|p| p.1 * p.2).sum::<f32>() / w;
-    let sxx: f32 = points.iter().map(|p| p.2 * (p.0 - mt).powi(2)).sum();
-    if sxx <= 0.0 {
-        return 0.0;
-    }
-    let sxy: f32 = points.iter().map(|p| p.2 * (p.0 - mt) * (p.1 - mc)).sum();
-    let span = points.last().map_or(0.0, |p| p.0) - points[0].0;
-    sxy / sxx * span
 }
 
 /// The median of a non-empty slice, sorting it in place.
@@ -293,6 +349,10 @@ mod tests {
                     expected_midi: 60.0,
                     voiced_frames: if c.is_some() { 10 } else { 0 },
                     masked_frames: 0,
+                    // An unheard note here was silent.
+                    quiet_frames: if c.is_some() { 0 } else { 10 },
+                    frames: 10,
+                    spread_cents: c.map(|_| 20.0),
                     cents: c,
                 })
                 .collect(),
@@ -358,6 +418,54 @@ mod tests {
     }
 
     #[test]
+    fn a_verse_loud_but_unpitched_is_not_marked() {
+        let mut c = [Some(0.0); 10];
+        for x in &mut c[5..] {
+            *x = None;
+        }
+        let mut r = report(&c);
+        for n in &mut r.notes[5..] {
+            n.quiet_frames = 0;
+        }
+        assert!(judge(&notes(), &r).marks.is_empty());
+    }
+
+    #[test]
+    fn a_note_whose_frames_disagree_is_not_marked() {
+        let mut c = [Some(0.0); 10];
+        c[4] = Some(-570.0);
+        let mut r = report(&c);
+        r.notes[4].spread_cents = Some(400.0);
+        assert!(judge(&notes(), &r).marks.is_empty());
+        r.notes[4].spread_cents = Some(20.0);
+        r.notes[4].voiced_frames = 4;
+        assert!(judge(&notes(), &r).marks.is_empty());
+    }
+
+    #[test]
+    fn a_report_for_other_notes_is_not_heard() {
+        let r = report(&[Some(0.0); 9]);
+        assert_eq!(judge(&notes(), &r).outcome, Outcome::NotHeard);
+    }
+
+    #[test]
+    fn the_key_is_where_the_singer_started() {
+        // Verse 0 in tune, verse 1 (the longer) a tone high: verse 1 is off, not verse 0.
+        let notes: Vec<Note> = (0..12)
+            .map(|i| Note {
+                verse: u32::from(i >= 4),
+                phrase: (i / 2) as u32,
+                ..Note::new(60.0, 0.6 * i as f32, 0.5)
+            })
+            .collect();
+        let c: Vec<Option<f32>> = (0..12).map(|i| Some(if i >= 4 { 200.0 } else { 0.0 })).collect();
+        let v = judge(&notes, &report(&c));
+        assert_eq!(v.key_cents, Some(0.0));
+        assert_eq!(v.marks.len(), 1, "{v:?}");
+        assert_eq!((v.marks[0].kind, v.marks[0].first), (MarkKind::Verse, 4));
+    }
+
+    #[test]
     fn a_take_mostly_unheard_gets_only_an_outcome() {
         let mut c = [None; 10];
         c[0] = Some(0.0);
@@ -387,5 +495,10 @@ mod tests {
         assert!(v.marks.is_empty(), "{v:?}");
         assert!(!v.steady);
         assert!((v.drift_cents + 108.0).abs() < 1.0, "{}", v.drift_cents);
+        // Sinking four times as fast still marks nothing, and the drift is told in full.
+        let c: Vec<Option<f32>> = (0..10).map(|i| Some(-48.0 * i as f32)).collect();
+        let v = judge(&notes(), &report(&c));
+        assert!(v.marks.is_empty(), "{v:?}");
+        assert!((v.drift_cents + 432.0).abs() < 1.0, "{}", v.drift_cents);
     }
 }

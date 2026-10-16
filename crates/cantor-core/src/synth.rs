@@ -385,11 +385,10 @@ pub fn render_take(notes: &[Note], profile: &Profile, sample_rate: f32, seed: u6
 /// as a cue before the take and, in [`GuideMode::Full`], every note.
 fn render_guide(notes: &[Note], profile: &Profile, len: usize, sample_rate: f32) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
-    let cue_end = notes[0].start_s - CUE_GAP_S;
-    if cue_end > CUE_START_S + 0.2 {
+    if let Some((start, end)) = cue_span(notes) {
         let cue = Note {
-            start_s: CUE_START_S,
-            dur_s: cue_end - CUE_START_S,
+            start_s: start,
+            dur_s: end - start,
             ..notes[0]
         };
         let amps = harmonics(Voice::Pulse, &cue, profile.key_cents);
@@ -404,6 +403,13 @@ fn render_guide(notes: &[Note], profile: &Profile, len: usize, sample_rate: f32)
         }
     }
     out
+}
+
+/// When the guide's cue sounds, if the lead-in before the first note leaves room for one:
+/// from [`CUE_START_S`] to [`CUE_GAP_S`] before the first note.
+pub fn cue_span(notes: &[Note]) -> Option<(f32, f32)> {
+    let end = notes.first()?.start_s - CUE_GAP_S;
+    (end > CUE_START_S + 0.2).then_some((CUE_START_S, end))
 }
 
 /// The RMS of the samples louder than a hundredth of the peak: the level of a signal while it

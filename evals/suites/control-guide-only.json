@@ -52,6 +52,22 @@
       "guide": "cue",
       "bleed_db": -6,
       "bleed_delay_s": 0.1
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 67,
+      "lead_in_s": 0.0,
+      "bleed_db": -12,
+      "bleed_delay_s": 0.1
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 68,
+      "lead_in_s": 0.7,
+      "bleed_db": -6,
+      "bleed_delay_s": 0.1,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4
     }
   ]
 }

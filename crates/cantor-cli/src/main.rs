@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod eval;
+mod explain;
 mod wav;
 
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ const SAMPLE_RATE: f32 = 16_000.0;
 const USAGE: &str = "usage: cantor pitch FILE.wav
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
        cantor eval [--takes DIR] [--write-baseline]
+       cantor explain SUITE [--takes DIR]
        cantor version";
 
 fn main() -> ExitCode {
@@ -37,6 +39,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("pitch") => pitch_cmd(rest)?,
         Some("synth") => synth_cmd(rest)?,
         Some("eval") => return eval_cmd(rest),
+        Some("explain") => return explain_cmd(rest),
         Some("-h" | "--help") => println!("{USAGE}"),
         Some(other) => return Err(format!("unknown command: {other}\n{USAGE}")),
     }
@@ -107,7 +110,24 @@ fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
         }
     }
-    eval::run(&repo_root(), takes.as_deref(), write_baseline)
+    eval::run(&repo_root(), takes.as_deref(), write_baseline, None)
+}
+
+/// Draws every take of one suite (`real-takes` for the takes given with `--takes`) under
+/// `out/explain/`, printing the files' paths.
+fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
+    let mut suite = None;
+    let mut takes = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--takes" => takes = Some(PathBuf::from(it.next().ok_or("--takes needs a directory")?)),
+            _ if suite.is_none() && !arg.starts_with('-') => suite = Some(arg.clone()),
+            _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
+        }
+    }
+    let suite = suite.ok_or_else(|| USAGE.to_string())?;
+    eval::run(&repo_root(), takes.as_deref(), false, Some(&suite))
 }
 
 /// The repository root: the current directory when it holds the suites, else the checkout
