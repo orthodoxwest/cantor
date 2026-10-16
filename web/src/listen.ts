@@ -73,6 +73,7 @@ const WORKLET_URL = import.meta.env.DEV ? "/src/worklet/processor.ts" : "/workle
 
 export class Listener {
   listening = false;
+  /** The frames of the take being sung, or of the last. */
   readonly frames: Frame[] = [];
   private stream: MediaStream | undefined;
   private nodes: AudioNode[] = [];
@@ -81,6 +82,8 @@ export class Listener {
   private ear: Ear | undefined;
   /** The ear's hearing of the take being sung, or of the last one. */
   heard: Promise<Heard> | undefined;
+  /** How late the microphone's samples reach the page, in seconds, where the browser says. */
+  inputLatency = 0;
   /** The last take's hearing, settled either way, which the next take waits for. */
   private last: Promise<unknown> = Promise.resolve();
   private generation = 0;
@@ -102,6 +105,7 @@ export class Listener {
   async start(): Promise<void> {
     if (this.listening) return;
     this.listening = true;
+    this.frames.length = 0;
     // Each start and stop moves the generation on; a start that finds it moved was stopped.
     const generation = ++this.generation;
     const stopped = () => generation !== this.generation;
@@ -161,6 +165,9 @@ export class Listener {
     node.port.postMessage({ ear: channel.port1 }, [channel.port1]);
     // The node is pulled only when it reaches the destination; it outputs silence.
     source.connect(node).connect(ctx.destination);
+    // Chrome reports the capture latency; the type does not list it.
+    const latency = (stream.getAudioTracks()[0]?.getSettings() as { latency?: unknown } | undefined)?.latency;
+    this.inputLatency = typeof latency === "number" && Number.isFinite(latency) ? latency : 0;
     this.nodes = [source, node];
     this.worklet = node;
   }

@@ -27,8 +27,9 @@
     <main>
       <p class="titulus" id="kicker">Practice</p>
       <h1 class="title" id="title">Practice</h1>
-      <p class="lede">Press Play to hear it sung. Then press Listen and sing it yourself; stop when you are done to see where your voice went.</p>
+      <p class="lede">Press Play to hear it sung. Then sing a take and see where your voice went, note by note.</p>
       <label class="pick">Chant <select id="chant"></select></label>
+      <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
       <p id="status" class="status" role="status"></p>
       <div id="score" class="score"></div>
       <p id="why" class="why" aria-live="polite"></p>
@@ -41,6 +42,7 @@
     <div class="bar">
       <div class="bar-in">
         <button id="play" class="btn primary" type="button" aria-pressed="false" disabled>Play</button>
+        <button id="take" class="btn" type="button" disabled>Sing a take</button>
         <button id="listen" class="btn" type="button" aria-pressed="false">Listen</button>
         <span class="spacer"></span>
         <output id="readout" aria-live="polite">–</output>

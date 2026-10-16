@@ -55,6 +55,15 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   );
   const marks = (v: { marks: Array<{ kind: string; first: number; last: number }> }) =>
     v.marks.map((m) => `${m.kind} ${m.first}-${m.last}`);
+  // The page times the notes as the core does, so the guide and the cursor lead the singer to
+  // the times the take is judged by.
+  const times = await page.evaluate((pulse) => window.__cantor.timed(pulse), want.pulse_s);
+  const core: Array<{ start_s: number; dur_s: number }> = got.notes;
+  expect(times).toHaveLength(core.length);
+  times.forEach((t, i) => {
+    expect(t.start + offset).toBeCloseTo(core[i]!.start_s, 3);
+    expect(t.duration).toBeCloseTo(core[i]!.dur_s, 3);
+  });
   const summary = {
     heard: [want.report.heard_fraction, got.report.heard_fraction],
     marks: [marks(want.verdict), marks(got.verdict)],
@@ -135,4 +144,42 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await page.getByRole("button", { name: "Listen" }).click();
   expect(Math.abs(got.report.heard_fraction - want.report.heard_fraction)).toBeLessThanOrEqual(HEARD_TOLERANCE);
   expect(Math.abs(got.verdict.key_cents - want.verdict.key_cents)).toBeLessThanOrEqual(KEY_TOLERANCE_CENTS);
+});
+
+test("a scored take is timed to the chant and judged as cantor eval judged it", async ({ page }) => {
+  const want = readTake();
+  const seconds = takeSeconds();
+  test.setTimeout((seconds + 90) * 1000);
+  await page.goto("/sing.html?test=1");
+  await page.waitForFunction(() => window.__cantor);
+  // A headless browser names no headphones: the take is given its opening notes, then the
+  // cursor alone leads it.
+  await expect(page.locator("#mode")).toHaveText(/^A take is scored with the opening notes only/);
+  await page.locator("#headphones").check();
+  await expect(page.locator("#mode")).toHaveText(/in your headphones \(as you said\)/);
+  await page.locator("#headphones").uncheck();
+  await page.evaluate(([gabc, pulse]) => window.__cantor.practise(gabc, pulse), [want.gabc, want.pulse_s] as const);
+  const take = page.getByRole("button", { name: "Sing a take" });
+  await take.click();
+  await expect(page.locator("#status")).toHaveText("Listen to the opening notes.");
+  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+  await expect(page.locator("#status")).toHaveText("Begin when the cursor appears.", { timeout: 10_000 });
+  // The take is judged when the chant is over, with nothing pressed.
+  await expect(page.locator("#key")).toHaveText(/^Your key: /, { timeout: (seconds + 30) * 1000 });
+  await expect(take).toHaveText("Sing a take");
+  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+  // The first note was due when the cursor began, a moment after listening did; the take was
+  // timed by the singer's first sound, which is where the file's voice begins.
+  const timing = (await page.evaluate(() => window.__cantor.take()))!;
+  expect(timing.due).toBeGreaterThan(1.45);
+  expect(timing.due).toBeLessThan(2);
+  const heard = (await page.evaluate(() => window.__cantor.heard()))!;
+  expect(timing.at).toBe(timing.sound);
+  expect(Math.abs(timing.sound! - heard.onset!)).toBeLessThan(0.1);
+  const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
+  const wanted = want.verdict.marks.flatMap((m: { first: number; last: number }) =>
+    Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k),
+  );
+  expect(ringed).toEqual(wanted);
 });

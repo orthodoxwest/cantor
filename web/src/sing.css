@@ -10,6 +10,15 @@
   min-width: 0;
   max-width: 28rem;
 }
+/* How a take will be scored, and why. */
+.mode {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.mode label {
+  white-space: nowrap;
+}
 #score {
   margin: 0.5rem 0 1rem;
 }
@@ -103,9 +112,25 @@
 /* The tapped mark's words stay in view, just above the bar. */
 .why {
   position: sticky;
-  bottom: 4.1rem;
+  bottom: calc(4.1rem + env(safe-area-inset-bottom, 0px));
   margin: 0;
   padding: 0.5rem 0;
   background: var(--bg);
   border-top: 1px solid var(--gold-line);
+}
+/* Three buttons and the readout keep to one row on a phone. */
+@media (max-width: 479.98px) {
+  .bar-in {
+    gap: 0.5rem;
+  }
+  .bar .btn {
+    padding-inline: 0.75rem;
+  }
+  .bar .btn.primary {
+    min-width: 0;
+  }
+  #readout {
+    min-width: 0;
+    font-size: 1rem;
+  }
 }
