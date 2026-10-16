@@ -153,6 +153,88 @@ test("speed and pitch move the guide, the cursor, Start note and Drone, and stay
   await expect(page.getByLabel("Speed")).toHaveValue("0.65");
 });
 
+test("a phrase tapped plays over and over with the cursor, a bar loops the phrase it ends", async ({ page }) => {
+  await page.clock.install();
+  const timeline = await open(page);
+  // Lumen gentium: a mediant before note 3, a half bar before note 12, a double bar at the end.
+  const ids = timeline.notes.map((n) => n.id);
+  await page.locator(`#score [data-note~="${ids[5]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 10]);
+  await expect(page.locator("#loop-text")).toHaveText("Play goes over notes 3 to 11 until you stop it.");
+  const play = page.getByRole("button", { name: "Play" });
+  await play.click();
+  const times = await page.evaluate(() => window.__cantor.timed(0.5));
+  const length = times[10]!.start + times[10]!.duration - times[2]!.start;
+  await page.clock.runFor((length + 0.3) * 1000);
+  // Once round: the phrase's notes, and only those; the cursor does not go on to the half bar
+  // after it.
+  expect(await page.evaluate(() => window.__cantor.visited)).toEqual(ids.slice(2, 11));
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  await expect(play).toHaveAttribute("aria-pressed", "true");
+  // After a breath it goes round again, the cursor back at the phrase's first note.
+  await page.clock.runFor(1000 + 500);
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  const again = await page.evaluate(() => window.__cantor.visited);
+  expect(again[0]).toBe(ids[2]);
+  expect(again.length).toBeLessThan(5);
+  // The note sounding is marked apart from the rest of the loop.
+  const [current, other] = await page.evaluate((id) => {
+    const fill = (el: Element) => getComputedStyle(el).fill;
+    return [fill(document.querySelector("#score .cantor-current")!), fill(document.querySelector(`#score [data-note~="${id}"]`)!)];
+  }, ids[10]);
+  expect(current).not.toBe(other);
+  // And the loop apart from the notes outside it.
+  const fillOf = (id: number) => page.evaluate((i) => getComputedStyle(document.querySelector(`#score [data-note~="${i}"]`)!).fill, id);
+  expect(await fillOf(ids[10]!)).not.toBe(await fillOf(ids[12]!));
+  await play.click();
+  await expect(play).toHaveAttribute("aria-pressed", "false");
+  await page.clock.runFor(5000);
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  // A tap in the loop lets it go; a tap on the half bar loops the phrase it ends.
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  const bar = timeline.pauses.find((p) => p.kind === "half")!.bar!;
+  const line = timeline.lines[bar.line]!;
+  await page.locator("#score").click({ position: { x: bar.cx, y: (line.top + line.bottom) / 2 } });
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 10]);
+  // Tapping the next phrase stretches the loop to it; Whole chant lets it go.
+  await page.locator(`#score [data-note~="${ids[15]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, ids.length - 1]);
+  // A take leaves the loop alone, and the score unmarked by it.
+  await page.getByRole("button", { name: "Sing a take" }).click();
+  await expect(page.locator("#loop")).toBeHidden();
+  const tinted = await page.evaluate(
+    (id) => getComputedStyle(document.querySelector(`#score [data-note~="${id}"]`)!).fill,
+    ids[5],
+  );
+  const plain = await page.evaluate(
+    (id) => getComputedStyle(document.querySelector(`#score [data-note~="${id}"]`)!).fill,
+    ids[0],
+  );
+  expect(tinted).toBe(plain);
+  await page.getByRole("button", { name: "Stop" }).click();
+  await page.getByRole("button", { name: "Whole chant" }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+});
+
+test("a loop is not shown beside a take's result, even one too short to draw", async ({ page }) => {
+  await open(page);
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  const fillOf = (id: number) => page.evaluate((i) => getComputedStyle(document.querySelector(`#score [data-note~="${i}"]`)!).fill, id);
+  expect(await fillOf(ids[3]!)).not.toBe(await fillOf(ids[0]!));
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(page.locator("#result")).toBeVisible();
+  await expect(page.locator("#loop")).toBeHidden();
+  expect(await fillOf(ids[3]!)).toBe(await fillOf(ids[0]!));
+});
+
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());
