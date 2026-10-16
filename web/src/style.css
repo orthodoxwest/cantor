@@ -145,6 +145,19 @@ a {
   white-space: nowrap;
 }
 
+/* A search field: the library's, the practice page's. */
+.search input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.5rem 0.85rem;
+  font-size: 1.0625rem;
+}
+.search input::placeholder {
+  color: var(--muted);
+  font-style: italic;
+  opacity: 1;
+}
+
 /* The top beam: a small-caps brand and the pages, on a gold hairline. */
 .beam {
   border-bottom: 1px solid var(--gold-line);

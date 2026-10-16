@@ -63,6 +63,66 @@ const sortKey = (title: string) => title.replace(/^(?:[℣℟]\.?|\d+\.|\.+)\s*/
 export const byTitle = (a: Pick<LibraryChant, "title" | "slug">, b: Pick<LibraryChant, "title" | "slug">) =>
   collator.compare(sortKey(a.title), sortKey(b.title)) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 
+// ---- searching ---------------------------------------------------------------------------
+
+/** HTML-escapes `s`. */
+export const escape = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot", "'": "#39" }[c]};`);
+/** `s` without accents, in lower case. */
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const WORD = /[\p{L}\p{N}]/u;
+// An apostrophe joins its word ("Israel's" is one word, found by "israel").
+const wordsOf = (s: string) =>
+  fold(s)
+    .replace(/['’]/g, "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+/** A mode's numerals, which find a whole word only, so that "ii" is not "viii". */
+const NUMERALS = new Set([...ROMAN.slice(1), "1", "2", "3", "4", "5", "6", "7", "8"]);
+
+/** The words of a search. */
+export const terms = (q: string): string[] => wordsOf(q);
+
+const searched = new WeakMap<LibraryChant, string[]>();
+/** The words a chant is found by: its title, name and sung words, its kind, and its mode. */
+function searchWords(c: LibraryChant): string[] {
+  let words = searched.get(c);
+  if (!words) {
+    const n = ROMAN.indexOf(c.mode ?? "");
+    words = wordsOf([c.title, c.name, c.words, kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
+    searched.set(c, words);
+  }
+  return words;
+}
+
+const begins = (t: string) => (w: string) => (NUMERALS.has(t) ? w === t : w.startsWith(t));
+
+/** Whether every term begins one of the chant's words ("antiphon viii", "light lighten"). */
+export function finds(c: LibraryChant, ts: readonly string[]): boolean {
+  const words = searchWords(c);
+  return ts.every((t) => words.some(begins(t)));
+}
+
+/** `text`, escaped, with the terms marked where they begin a word. */
+export function highlight(text: string, ts: readonly string[]): string {
+  const f = fold(text);
+  // Folding that changes the length would put the marks in the wrong places.
+  if (!ts.length || f.length !== text.length) return escape(text);
+  let out = "";
+  let from = 0;
+  for (let i = 0; i < f.length; ) {
+    const t =
+      i === 0 || !WORD.test(f[i - 1]!) ? ts.find((t) => f.startsWith(t, i) && !(NUMERALS.has(t) && WORD.test(f[i + t.length] ?? ""))) : undefined;
+    if (!t) {
+      i++;
+      continue;
+    }
+    out += `${escape(text.slice(from, i))}<mark>${escape(text.slice(i, i + t.length))}</mark>`;
+    i = from = i + t.length;
+  }
+  return out + escape(text.slice(from));
+}
+
 let list: Promise<LibraryChant[]> | null = null;
 
 /** Every chant the visitor may see, in title order. */

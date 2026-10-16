@@ -40,7 +40,14 @@
       <p class="titulus" id="kicker">Practice</p>
       <h1 class="title" id="title">Practice</h1>
       <p class="lede">Press Play to hear it sung. Then sing a take and see where your voice went, note by note.</p>
-      <label class="pick">Chant <select id="chant"></select></label>
+      <div class="pick">
+        <label class="search">
+          <span class="sr">Find another chant</span>
+          <input type="search" id="find" placeholder="Find another chant" autocomplete="off" spellcheck="false" enterkeyhint="go" aria-controls="found" aria-describedby="found-note" />
+        </label>
+        <ol class="found" id="found" hidden></ol>
+        <p class="found-note"><span id="found-note" role="status"></span> <a href="/library">Browse the library</a></p>
+      </div>
       <p class="mode"><span id="mode"></span> <label><input id="headphones" type="checkbox" /> Headphones</label></p>
       <p id="status" class="status" role="status"></p>
       <div id="score" class="score"></div>
