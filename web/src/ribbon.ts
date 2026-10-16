@@ -4,7 +4,7 @@
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
 // ribbon.rs); the page only draws them, re-based on a note when the singer taps it. The
 // ribbon itself draws no verdict: no zone of what counts as in tune, no colours; the core's
-// marks are drawn apart (marks.ts).
+// marks are drawn by marks.ts, on the notes in the engraving.
 import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
@@ -26,11 +26,11 @@ export interface Judged {
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */
-export const STRIP = 44;
+export const STRIP = 68;
 /** Cents from a band's centre to its edge; a trace beyond it is drawn at the edge. */
-export const RANGE_CENTS = 200;
+export const RANGE_CENTS = 150;
 /** The strip's margin above and below its bands. */
-const PAD = 6;
+const PAD = 10;
 /** The widest a band is drawn either side of its note, for a note alone on its line. */
 const LONE = 14;
 /** The narrowest a band is drawn, centred on its note (notes stacked in a neume overlap). */

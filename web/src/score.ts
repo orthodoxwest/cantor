@@ -13,6 +13,9 @@ export interface Room {
 /** Draws the ribbon's strips, and anything over the engraving, given the room made. */
 export type Strips = (timeline: Timeline, room: Room) => string;
 
+/** The room above the first line while the strips are open. */
+const HEADROOM = 8;
+
 export class Score {
   private view: View<LinesPage>;
   private page: LinesPage;
@@ -62,10 +65,15 @@ export class Score {
     this.render();
   }
 
+  /** How far line `i` is drawn below where the page laid it out: the strips over it. */
+  private shift(i: number): number {
+    return this.strips ? i * STRIP : 0;
+  }
+
   /** Line `i`'s box as drawn, below the strips over it. */
   line(i: number): LineBox {
     const box = this.timeline.lines[i]!;
-    const shift = this.strips ? i * STRIP : 0;
+    const shift = this.shift(i);
     return { top: box.top + shift, bottom: box.bottom + shift, staff: box.staff + shift, baseline: box.baseline + shift };
   }
 
@@ -73,24 +81,26 @@ export class Score {
    * descent) for the last. */
   private stripTop(i: number): number {
     const bottom = this.line(i).bottom;
-    return i === this.timeline.lines.length - 1 ? Math.max(bottom, this.page.height + i * STRIP) : bottom;
+    return i === this.timeline.lines.length - 1 ? Math.max(bottom, this.page.height + this.shift(i)) : bottom;
   }
 
   private render(): void {
     const { head, defs, rest, lines } = this.page.svgParts;
     const gap = this.strips ? STRIP : 0;
-    const height = this.page.height + gap * lines.length;
+    // With the strips open, room above the first line for a ring round a note at its top.
+    const above = this.strips ? HEADROOM : 0;
+    const height = this.page.height + gap * lines.length + above;
     let top = head
       .replace(/ height="[\d.]+"/, ` height="${height.toFixed(2)}"`)
-      .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 $2 $3 ${height.toFixed(2)}"`);
-    const engraving = [rest, ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + i * gap).toFixed(2)})">${l.svg}</g>`)].join("");
+      .replace(/viewBox="([\d.]+) ([\d.]+) ([\d.]+) [\d.]+"/, `viewBox="$1 ${-above} $3 ${height.toFixed(2)}"`);
+    const engraving = [rest, ...lines.map((l, i) => `<g transform="translate(0 ${(l.top + this.shift(i)).toFixed(2)})">${l.svg}</g>`)].join("");
     let body = engraving;
     if (this.strips) {
       // An image's children are hidden from assistive technology, so with the ribbon's
       // buttons beside it the engraving alone is the image.
       const label = / aria-label="([^"]*)"/.exec(top)?.[1] ?? "";
       top = top.replace(/ role="img"/, "").replace(/ aria-label="[^"]*"/, "");
-      body = `<g role="img" aria-label="${label}">${engraving}</g><g class="ribbon">${this.strips(this.timeline, { stripTop: (i) => this.stripTop(i), shift: (i) => i * STRIP })}</g>`;
+      body = `<g role="img" aria-label="${label}">${engraving}</g><g class="ribbon">${this.strips(this.timeline, { stripTop: (i) => this.stripTop(i), shift: (i) => this.shift(i) })}</g>`;
     }
     const svg = `${top}<defs>${defs}</defs>${body}</svg>`;
     const old = this.host.querySelector("svg");

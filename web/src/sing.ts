@@ -52,8 +52,9 @@ function drawResult(): void {
   const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
   score.showStrips(
     (timeline, room) =>
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base) +
-      drawMarks(timeline.notes, judged.verdict.marks, room.shift, open),
+      // The marks first, so that the keyboard reaches them before the bands.
+      drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base),
   );
   why.hidden = open === null;
   why.textContent = open === null ? "" : (judged.told[open] ?? "");
@@ -67,6 +68,8 @@ function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
+  // The ribbon says what was heard; the length of the take is no longer news.
+  if (judged) status.textContent = "";
   drawResult();
 }
 

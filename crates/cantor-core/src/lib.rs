@@ -4,7 +4,7 @@
 //!
 //! The research loop: [`synth`] renders a take with planted faults through a [`room`],
 //! [`listen`] tracks it and masks the guide's bleed, [`score`] measures the track against the
-//! notes [`timeline`] read from the chant, [`judge`] decides what the singer is told, and
+//! notes [`timeline`] read from the chant, and [`judge`] decides what the singer is told:
 //! [`ribbon`] lays it out note by note for the page to draw, and [`tell`] puts each mark in
 //! words.
 

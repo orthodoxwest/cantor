@@ -3,6 +3,7 @@
 //! singer's own key and nothing else; the judge decides which notes are marked.
 
 use crate::judge::{Mark, MarkKind, Verdict};
+use crate::score::fold;
 
 /// The words for `mark`.
 pub fn tell(mark: &Mark) -> String {
@@ -27,12 +28,14 @@ pub fn told(verdict: &Verdict) -> Vec<String> {
     verdict.marks.iter().map(tell).collect()
 }
 
-/// "about a whole tone above", "a semitone below": how far `cents` is, in the steps a singer
-/// names.
+/// "about a whole tone above", "a semitone below": how far `cents` (folded to the nearest
+/// octave) is, in the steps a singer names.
 fn interval(cents: f32) -> String {
+    let cents = fold(cents);
+    let way = if cents >= 0.0 { "above" } else { "below" };
     let steps = (cents.abs() / 100.0).round() as u32;
     let name = match steps {
-        0 => "a little",
+        0 => return format!("a little {way}"),
         1 => "a semitone",
         2 => "a whole tone",
         3 => "a minor third",
@@ -45,7 +48,7 @@ fn interval(cents: f32) -> String {
     } else {
         ""
     };
-    format!("{about}{name} {}", if cents > 0.0 { "above" } else { "below" })
+    format!("{about}{name} {way}")
 }
 
 #[cfg(test)]
@@ -80,6 +83,16 @@ mod tests {
             "This verse was sung together a minor third below your key (-310 cents), as if it began on another note."
         );
         assert_eq!(tell(&mark(MarkKind::VerseMissing, None)), "Nothing was heard through this verse.");
+    }
+
+    #[test]
+    fn steps_are_named_within_the_octave() {
+        assert_eq!(interval(30.0), "a little above");
+        assert_eq!(interval(-49.0), "a little below");
+        assert_eq!(interval(150.0), "about a whole tone above");
+        assert_eq!(interval(-600.0), "a tritone below");
+        // An octave and a whole tone is a whole tone.
+        assert_eq!(interval(1400.0), "a whole tone above");
     }
 
     #[test]

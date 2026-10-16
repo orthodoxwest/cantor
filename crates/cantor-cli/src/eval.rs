@@ -825,7 +825,8 @@ pub struct TakeFile {
     pub verdict: Verdict,
     /// The take note by note, as the page draws it.
     pub ribbon: Vec<cantor_core::Band>,
-    /// Each of the verdict's marks in words.
+    /// Each of the verdict's marks in words, for a reader of the file (another ear's words
+    /// differ with its cents).
     pub told: Vec<String>,
 }
 

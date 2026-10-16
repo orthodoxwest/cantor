@@ -68,7 +68,7 @@ main {
   stroke-width: 1.5;
 }
 .ribbon .band-target {
-  stroke: color-mix(in srgb, currentColor 35%, transparent);
+  stroke: color-mix(in srgb, currentColor 45%, transparent);
   stroke-width: 1;
 }
 .ribbon .unheard .band-target {
@@ -82,6 +82,9 @@ main {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+.marks .mark-hit {
+  fill: transparent;
+}
 .marks .mark-ring {
   fill: transparent;
   stroke: #b8452f;
@@ -91,7 +94,7 @@ main {
 .marks .mark {
   cursor: pointer;
 }
-.marks .mark[aria-pressed="true"] .mark-ring {
+.marks .mark[aria-expanded="true"] .mark-ring {
   stroke-width: 2.5;
 }
 .marks .mark:focus {
@@ -99,6 +102,14 @@ main {
 }
 .marks .mark:focus-visible .mark-ring {
   stroke-dasharray: 3 2;
+}
+.why {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 0.5rem 0;
+  background: Canvas;
+  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
 }
 .result p {
   margin: 0.5rem 0;
