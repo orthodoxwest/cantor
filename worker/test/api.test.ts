@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 
 const get = (path: string, headers?: HeadersInit, bindings: Env = env) =>
@@ -63,13 +63,70 @@ describe("api", () => {
     expect((await get("/api/me")).status).toBe(401);
   });
 
-  it("reads the Access token's payload outside dev", async () => {
-    const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    const jwt = `${b64url('{"alg":"RS256"}')}.${b64url('{"sub":"abc","email":"student@example.com"}')}.sig`;
-    const prod = { ...env, ENV: "prod" };
-    const res = await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
-    expect((await get("/api/me", { "X-Dev-User": "student" }, prod)).status).toBe(401);
+  describe("outside dev", () => {
+    const TEAM = "https://example.cloudflareaccess.com";
+    const AUD = "test-aud";
+    const prod = { ...env, ENV: "prod", ACCESS_TEAM: TEAM, ACCESS_AUD: AUD };
+    const b64url = (bytes: Uint8Array) =>
+      btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const text = (s: string) => b64url(new TextEncoder().encode(s));
+    let pair: CryptoKeyPair;
+    const now = () => Math.floor(Date.now() / 1000);
+
+    async function token(claims: Record<string, unknown>, key = pair.privateKey, kid = "k1"): Promise<string> {
+      const head = `${text(JSON.stringify({ alg: "RS256", kid }))}.${text(JSON.stringify(claims))}`;
+      const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(head));
+      return `${head}.${b64url(new Uint8Array(sig))}`;
+    }
+    const good = () => ({ iss: TEAM, aud: [AUD], sub: "abc", email: "student@example.com", exp: now() + 60 });
+
+    beforeAll(async () => {
+      pair = (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign", "verify"],
+      )) as CryptoKeyPair;
+      const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+        String(input) === `${TEAM}/cdn-cgi/access/certs`
+          ? Response.json({ keys: [{ ...jwk, kid: "k1" }] })
+          : new Response(null, { status: 404 }),
+      );
+    });
+    afterAll(() => vi.restoreAllMocks());
+
+    it("names the caller from a verified Access token", async () => {
+      const jwt = await token(good());
+      const res = await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ id: "abc", email: "student@example.com" });
+      expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(200);
+    });
+
+    it("lets in no forged, foreign, expired or dev-header caller", async () => {
+      const other = (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        false,
+        ["sign"],
+      )) as CryptoKeyPair;
+      const unsigned = `${text('{"alg":"RS256","kid":"k1"}')}.${text(JSON.stringify(good()))}.sig`;
+      const rejected = [
+        unsigned,
+        await token(good(), other.privateKey),
+        await token(good(), pair.privateKey, "unknown"),
+        await token({ ...good(), aud: ["another-app"] }),
+        await token({ ...good(), iss: "https://another.cloudflareaccess.com" }),
+        await token({ ...good(), exp: now() - 1 }),
+        await token({ ...good(), sub: "" }),
+      ];
+      for (const jwt of rejected) {
+        expect((await get("/api/pointing/116", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(401);
+        expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": jwt }, prod)).status).toBe(401);
+      }
+      expect((await get("/api/pointing/116", { "X-Dev-User": "student" }, prod)).status).toBe(401);
+      // Without the team and audience configured, nobody is signed in.
+      const unset = { ...env, ENV: "prod", ACCESS_TEAM: "", ACCESS_AUD: "" };
+      expect((await get("/api/me", { "Cf-Access-Jwt-Assertion": await token(good()) }, unset)).status).toBe(401);
+    });
   });
 });

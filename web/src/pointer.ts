@@ -19,8 +19,9 @@ interface Booklet {
   id: string;
   /** The tone as the booklet prints it ("viii.1"). */
   label: string;
-  /** The built-in tone it is sung to, when one matches; else the nearest, when one is near. */
+  /** The built-in tone it is sung to: one whose ending matches, or is a note away; else null. */
   tone: string | null;
+  /** The closest built-in tone, however far. */
   nearest: string | null;
   match: "exact" | "close" | "none";
   section: string | null;
@@ -132,8 +133,8 @@ function gloriaText(): { text: string; unsure: HalfKey[] } {
   return pointText(GLORIA.join("\n"), state.tone);
 }
 
-/** The tone a booklet setting is sung to here. */
-const bookletTone = (b: Booklet) => b.tone ?? b.nearest ?? state.tone;
+/** The tone a booklet setting is sung to here: the one it matches, or else the tone shown. */
+const bookletTone = (b: Booklet) => b.tone ?? state.tone;
 
 /** Fetches the booklet settings of a psalm; none when the visitor may not see them. */
 async function fetchBooklets(entry: PsalterEntry | undefined): Promise<Booklet[]> {
@@ -490,7 +491,7 @@ function updateStatus(): void {
   const verses = display.verses.filter((v) => v.number !== null).length;
   const b = booklet();
   const source = b
-    ? `Booklet pointing, ${b.label}${b.match === "exact" ? "" : b.tone || b.nearest ? ", sung to the nearest tone" : ", sung to another tone"}`
+    ? `Booklet pointing, ${b.label}${b.match === "exact" ? "" : b.match === "close" ? ", sung to the nearest tone" : ", sung to another tone"}`
     : "Suggested pointing";
   const parts = [source, toneLabel(state.tone), `${verses} verse${verses === 1 ? "" : "s"}${state.gloria ? " and the Gloria" : ""}`];
   if (state.text !== state.auto) parts.push("pointing edited");
@@ -815,7 +816,8 @@ function saveHash(): void {
       verses: state.psalm === OWN ? null : state.verses,
       setting: state.setting ?? undefined,
       own: state.psalm === OWN ? state.own : undefined,
-      text: state.text !== state.auto ? state.text : undefined,
+      // A booklet's text stays out of the address, which may reach anyone: its edits aren't kept.
+      text: state.text !== state.auto && !state.setting ? state.text : undefined,
     });
     if (hash === location.hash) return;
     lastHash = hash;
@@ -823,8 +825,11 @@ function saveHash(): void {
   }, 200);
 }
 
+let loading = 0;
 async function load(hash: string): Promise<void> {
+  const token = ++loading;
   const shared = await decode(hash);
+  if (token !== loading) return;
   const tones = new Set(toneNames());
   const known = shared && (shared.psalm === OWN || psalter.has(shared.psalm));
   state.psalm = known ? shared.psalm : DEFAULT.psalm;
@@ -836,7 +841,11 @@ async function load(hash: string): Promise<void> {
   booklets = [];
   // A shared booklet setting needs the settings first; otherwise they come when they come.
   if (shared?.setting && state.psalm !== OWN) {
-    booklets = await fetchBooklets(psalter.get(state.psalm));
+    const psalm = state.psalm;
+    const found = await fetchBooklets(psalter.get(psalm));
+    // Another load, or another psalm chosen meanwhile, has the page now.
+    if (token !== loading || state.psalm !== psalm) return;
+    booklets = found;
     if (booklets.some((b) => b.id === shared.setting)) state.setting = shared.setting;
   } else if (state.psalm !== OWN) void offerBooklets();
   undoStack.length = 0;
@@ -844,7 +853,7 @@ async function load(hash: string): Promise<void> {
   if (state.psalm === OWN) state.own = shared?.own ?? "";
   repoint();
   // Edits made for another psalm, or another tone, don't belong to this one.
-  if (known && shared.tone === state.tone && shared.text !== undefined) {
+  if (known && shared.tone === state.tone && shared.text !== undefined && !shared.setting) {
     const auto = state.text;
     state.text = clean(shared.text);
     // A half still as the pointer left it stays flagged.

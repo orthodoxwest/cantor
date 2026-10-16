@@ -42,7 +42,7 @@ interface PointingRow {
 
 // The booklets' pointing of a psalm (by Hebrew number), for those the identity check lets in.
 app.get("/api/pointing/:psalm", async (c) => {
-  if (!identity(c.req.raw.headers, c.env.ENV)) return c.json({ error: "unauthorized" }, 401);
+  if (!(await identity(c.req.raw.headers, c.env))) return c.json({ error: "unauthorized" }, 401);
   const psalm = c.req.param("psalm");
   if (!/^\d{1,3}$/.test(psalm)) return c.json({ error: "not found" }, 404);
   const { results } = await c.env.DB.prepare(
@@ -54,8 +54,8 @@ app.get("/api/pointing/:psalm", async (c) => {
   return c.json(results.map((r) => ({ ...r, verses: JSON.parse(r.verses) as unknown })));
 });
 
-app.get("/api/me", (c) => {
-  const user = identity(c.req.raw.headers, c.env.ENV);
+app.get("/api/me", async (c) => {
+  const user = await identity(c.req.raw.headers, c.env);
   return user ? c.json(user) : c.json({ error: "unauthorized" }, 401);
 });
 
