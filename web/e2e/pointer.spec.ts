@@ -87,6 +87,25 @@ test("dragging an accent moves it, and the address keeps the edit", async ({ pag
   expect(await text(page)).toBe(edited);
 });
 
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("tapping a syllable moves the nearest accent there", async ({ page }) => {
+    await open(page);
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const all = await half.allTextContents();
+    const at = all.indexOf((await accents(page, 1, "mediant").textContent())!);
+    const target = half.nth(at - 2);
+    const targetText = (await target.textContent())!;
+    await target.tap();
+    await expect
+      .poll(async () => (await accents(page, 1, "mediant").textContent())!.normalize("NFD").replace(/\u0301/g, ""))
+      .toBe(targetText);
+    await page.getByRole("button", { name: "Undo" }).tap();
+    await expect(accents(page, 1, "mediant")).toHaveText(all[at]!);
+  });
+});
+
 test("a new tone points the psalm again", async ({ page }) => {
   await open(page);
   await page.locator("#tone").selectOption("1.D");

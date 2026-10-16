@@ -147,6 +147,9 @@
   text-decoration-color: var(--unsure);
   text-decoration-style: dashed;
 }
+.syl[data-part] {
+  cursor: pointer;
+}
 .acc {
   font-weight: 600;
   text-decoration-thickness: 4px;

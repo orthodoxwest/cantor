@@ -615,6 +615,35 @@ function endDrag(commit: boolean): void {
 }
 
 els.verses.addEventListener("pointerup", () => endDrag(true));
+
+// A tap on a syllable that is not an accent moves an accent of its half there: the one last
+// tapped or focused, if it is in that half, otherwise the nearest. This is the way on a phone.
+let chosen: HTMLElement | null = null;
+els.verses.addEventListener("pointerdown", () => {
+  // Taken before the tap moves focus off the accent.
+  const active = document.activeElement;
+  chosen = active instanceof HTMLElement && active.classList.contains("acc") ? active : null;
+}, { capture: true });
+
+els.verses.addEventListener("click", (e) => {
+  const to = (e.target as HTMLElement).closest<HTMLElement>(".syl");
+  if (!to || to.classList.contains("acc")) return;
+  const { verse, part } = halfOf(to);
+  const half = halfSyllables(verse, part);
+  const accents = half.filter((el) => el.classList.contains("acc"));
+  const at = half.indexOf(to);
+  const from =
+    chosen && accents.includes(chosen)
+      ? chosen
+      : accents.reduce<HTMLElement | null>(
+          (best, el) =>
+            !best || Math.abs(half.indexOf(el) - at) <= Math.abs(half.indexOf(best) - at) ? el : best,
+          null,
+        );
+  if (!from) return;
+  const index = move(from, to);
+  if (index !== null) focusAccent(verse, part, index);
+});
 els.verses.addEventListener("pointercancel", () => endDrag(false));
 
 els.verses.addEventListener("keydown", (e) => {
