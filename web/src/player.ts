@@ -1,9 +1,12 @@
-// Sings a run of a timeline's notes in the neutral-vowel voice and reports the sounding note
-// as it goes. One pulse is `pulse` seconds; pauses keep their weight.
+// Sings a run of a timeline's notes with the guide's singer (see singer.ts) and reports the
+// sounding note as it goes. One pulse is `pulse` seconds; pauses keep their weight.
 import { type TimelineNote, noteAtTime } from "neuma";
 import { audioContext } from "./audio";
-import { DO, midiToFreq } from "./notes";
-import { Voice } from "./voice";
+import { DO } from "./notes";
+import { fromTimeline, neutralTable, sing, type Singing } from "./singer";
+
+/** The pointer sings English. */
+const GABC = "language: English;\n%%\n";
 
 export interface PlayOptions {
   /** Seconds per pulse. */
@@ -14,13 +17,15 @@ export interface PlayOptions {
   clock?: () => number;
   onNote: (note: TimelineNote | null) => void;
   onStop: () => void;
+  /** Told why nothing could be sung, before onStop. */
+  onError?: (message: string) => void;
 }
 
 export class Player {
   playing = false;
   /** The sound has been scheduled and the follower started. */
   started = false;
-  private voice: Voice | undefined;
+  private singing: Singing | undefined;
   private frame = 0;
   private options: PlayOptions | undefined;
 
@@ -30,36 +35,38 @@ export class Player {
     if (!notes.length) return options.onStop();
     this.playing = true;
     this.options = options;
+    const current = () => this.playing && this.options === options;
     let ctx: AudioContext;
+    let singing: Singing;
     try {
       ctx = await audioContext();
-    } catch {
-      if (this.options === options) this.stop();
+      const table = await neutralTable();
+      if (!current()) return;
+      const midi = (semitones: number) => DO + options.transpose + semitones;
+      singing = await sing(ctx, fromTimeline(notes, options.pulse, midi, notes[0]!.start), { table, gabc: GABC });
+    } catch (error) {
+      console.error("pointer:", error);
+      if (this.options !== options) return;
+      options.onError?.("The voice could not be loaded, so nothing can be sung.");
+      this.stop();
       return;
     }
-    if (!this.playing || this.options !== options) return;
-    const voice = new Voice(ctx);
-    this.voice = voice;
+    if (!current()) return singing.stop();
+    this.singing = singing;
     const first = notes[0]!.start;
     const last = notes[notes.length - 1]!;
     const length = last.start + last.duration - first;
     const clock = options.clock ?? (() => ctx.currentTime);
-    // The follower runs on the clock given; on the audio clock, behind by the output's latency.
-    const origin = clock() + 0.05 + (options.clock ? 0 : ctx.outputLatency || 0);
-    const t0 = ctx.currentTime + 0.05;
-    for (const n of notes) {
-      const start = t0 + (n.start - first) * options.pulse;
-      // A hair of silence between notes on one pitch keeps the syllables apart.
-      const end = start + n.duration * options.pulse - 0.012;
-      voice.note(midiToFreq(DO + options.transpose + n.semitones), start, end);
-    }
+    // The follower runs on the clock given, from when the singer's first sample plays; on the
+    // audio clock, behind by the output's latency.
+    const origin = clock() + (singing.start - ctx.currentTime) + (options.clock ? 0 : ctx.outputLatency || 0);
     const run = { notes: [...notes] };
     this.started = true;
     let shown: TimelineNote | null | undefined;
     const tick = () => {
-      if (!this.playing || this.options !== options) return;
+      if (!current()) return;
       const t = (clock() - origin) / options.pulse;
-      if (t >= length) return this.stop();
+      if (t >= length) return this.stop(true);
       const note = t < 0 ? null : noteAtTime(run, first + t);
       if (note !== shown) options.onNote((shown = note));
       this.frame = requestAnimationFrame(tick);
@@ -67,13 +74,14 @@ export class Player {
     tick();
   }
 
-  stop(): void {
+  /** Stops singing, at once or (at the end of the run) letting the last note die away. */
+  stop(letRing = false): void {
     if (!this.playing) return;
     this.playing = false;
     this.started = false;
     cancelAnimationFrame(this.frame);
-    this.voice?.close();
-    this.voice = undefined;
+    this.singing?.stop(letRing);
+    this.singing = undefined;
     const options = this.options;
     this.options = undefined;
     options?.onNote(null);
