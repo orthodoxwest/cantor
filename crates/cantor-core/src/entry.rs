@@ -109,6 +109,8 @@ mod tests {
         let at = |due: f32| entry(&live, None, due).at;
         assert!((at(1.0) - 1.02).abs() < 1e-5);
         assert!((at(0.5) - 1.02).abs() < 1e-5);
+        // A little early is the entry too: the singer led the cursor.
+        assert!((at(1.1) - 1.02).abs() < 1e-5);
         // Early, the singer holds the first note until the cursor moves; too late, the sound
         // is not the entry.
         assert_eq!(

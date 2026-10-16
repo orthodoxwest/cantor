@@ -256,7 +256,7 @@ impl Listening {
 }
 
 /// The take's frames as the live trace showed them while it was sung (see [`Listening::push`]):
-/// how [`crate::entry`] hears the singer's first sound.
+/// how [`mod@crate::entry`] hears the singer's first sound.
 pub fn live(samples: &[f32], sample_rate: f32) -> Vec<Frame> {
     Listening::new(sample_rate).push(samples).to_vec()
 }

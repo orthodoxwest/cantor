@@ -364,8 +364,10 @@ async function takeScored(): Promise<void> {
     // input's; the cursor is seen at once.
     const output = worn ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0;
     const due = started.origin + started.first - heard.startedAt + listener.inputLatency + output;
-    timing = await listener.entry(due);
-    const json = await listener.judge(score.source, guide.pulse, timing.at - started.first);
+    const entry = await listener.entry(due);
+    if (!going()) return;
+    timing = entry;
+    const json = await listener.judge(score.source, guide.pulse, entry.at - started.first);
     if (going()) showResult(JSON.parse(json) as Judged);
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);

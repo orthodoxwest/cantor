@@ -20,6 +20,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 8,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 0,
     "agreement": null
   },
@@ -44,6 +47,9 @@
     "cadence_faults": 15,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 211,
     "agreement": 0.9909732
   },
@@ -68,6 +74,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 390,
     "agreement": 0.9972603
   },
@@ -92,6 +101,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 523,
     "agreement": 0.9980798
   },
@@ -116,6 +128,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 498,
     "agreement": 0.9985556
   },
@@ -140,6 +155,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 523,
     "agreement": 0.97777444
   },
@@ -164,6 +182,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 491,
     "agreement": 0.9944352
   },
@@ -188,6 +209,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 968,
     "agreement": 0.9954623
   },
@@ -212,6 +236,9 @@
     "cadence_faults": 17,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 255,
     "agreement": 0.99294484
   },
@@ -236,6 +263,9 @@
     "cadence_faults": 10,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 629,
     "agreement": 0.99821347
   },
@@ -260,6 +290,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 40,
     "agreement": 0.96827793
   },
@@ -284,6 +317,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 40,
     "agreement": 0.9728507
   },
@@ -308,6 +344,9 @@
     "cadence_faults": 0,
     "cadence_recall": 1.0,
     "unjudged": 0,
+    "timed_late": 0,
+    "timed_by_sound": 0,
+    "timing_moved_marks": 0,
     "in_tune": 40,
     "agreement": 0.9967213
   }

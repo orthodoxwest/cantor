@@ -12,7 +12,7 @@ use cantor_core::{Band, Frame, Listening, Note, Report, Verdict, entry, judge, n
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
 
-/// A sample at least this loud is the take's first sound.
+/// A sample at least this loud is the take's first loud sample.
 const ONSET_PEAK: f32 = 1e-3;
 
 /// Numbers a frame is sent to the page as, by [`ear_frames`].
@@ -219,7 +219,7 @@ pub extern "C" fn ear_frames() -> *const f32 {
 }
 
 /// Ends the take and listens to it: how many frames it has, or -1 with the error in the
-/// output buffer. Only the frames, whole and live, and the first sound are kept.
+/// output buffer. Only the frames, whole and live, and the first loud sample are kept.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_stop() -> i32 {
@@ -241,7 +241,7 @@ pub extern "C" fn ear_stop() -> i32 {
     heard.unwrap_or_else(fail)
 }
 
-/// The heard take's first sound in seconds, or -1 when it has none.
+/// The heard take's first loud sample in seconds, or -1 when it has none.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_onset() -> f32 {
@@ -252,12 +252,13 @@ pub extern "C" fn ear_onset() -> f32 {
 }
 
 /// When the heard take's first note starts, its first note due `due_s` seconds into the take
-/// (see [`cantor_core::entry`]): the length of the JSON left in the output buffer, or -1 with
+/// (see [`mod@cantor_core::entry`]): the length of the JSON left in the output buffer, or -1 with
 /// the error there.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_entry(due_s: f32) -> i32 {
     let json = TAKE.with(|t| match t.borrow().as_ref() {
+        Some(Take::Heard(_)) if !due_s.is_finite() => Err(format!("no note is due at {due_s} s")),
         Some(Take::Heard(heard)) => serde_json::to_string(&entry(&heard.live, heard.onset, due_s)).map_err(|e| e.to_string()),
         _ => Err("no take heard".to_string()),
     });
@@ -350,6 +351,7 @@ mod tests {
         assert_eq!(json, serde_json::to_string(&judge_gabc(gabc, 0.5, 1.0, &whole)).unwrap());
         // The take is timed from the frames the live trace showed, as the core hears them
         // pushed at once: its first note where the voice began.
+        assert_eq!(ear_entry(f32::NAN), -1);
         let n = ear_entry(1.0);
         let timed = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
         assert_eq!(n as usize, timed.len());
@@ -363,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn the_onset_is_the_first_sound() {
+    fn the_onset_is_the_first_loud_sample() {
         let mut samples = vec![0.0f32; 1_600];
         samples.extend([0.0005, 0.002, 0.5]);
         assert_eq!(onset(&samples, 16_000.0), Some(1_601.0 / 16_000.0));
