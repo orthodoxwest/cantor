@@ -9,9 +9,9 @@ use crate::pitch::Frame;
 use crate::synth::Note;
 
 /// The fraction of a note skipped at its start (the attack and the glide in).
-const SKIP_HEAD: f32 = 0.2;
+pub const SKIP_HEAD: f32 = 0.2;
 /// The fraction of a note skipped at its end (the release and the glide out).
-const SKIP_TAIL: f32 = 0.1;
+pub const SKIP_TAIL: f32 = 0.1;
 /// Fewer voiced frames than this in the sustained part leave the note unheard.
 const MIN_VOICED: usize = 3;
 /// A cents error above this is gross.

@@ -3,11 +3,14 @@
 //! trace that leaves its bar where the truth stays on it is the tracker's error; a mark where
 //! the truth is on the bar is a false mark. SwiftF0's pitch, where it listened, is drawn in
 //! violet under the heard pitch: violet alone is a frame only SwiftF0 voiced (or one under the
-//! take's loudness floor), and violet away from blue is the two trackers disagreeing.
+//! take's loudness floor), and violet away from blue is the two trackers disagreeing. When the
+//! oracle listened, each note carries two short bars over the part the scorer judges: the
+//! scorer's pitch for it in blue and the oracle's in black, apart where the two disagree.
 
 use std::fmt::Write;
 
-use cantor_core::{Frame, MarkKind, Note, Verdict};
+use cantor_core::score::{SKIP_HEAD, SKIP_TAIL, fold};
+use cantor_core::{Frame, MarkKind, Note, NoteResult, Verdict};
 
 const WIDTH: f32 = 1400.0;
 const HEIGHT: f32 = 420.0;
@@ -24,6 +27,10 @@ pub struct Picture<'a> {
     pub verdict: &'a Verdict,
     /// Each note's true pitch in cents from the score, when known.
     pub truth: &'a [Option<f32>],
+    /// The scorer's result for each note.
+    pub scored: &'a [NoteResult],
+    /// The scorer's result for each note on the oracle's labels, when the oracle listened.
+    pub oracle: Option<&'a [NoteResult]>,
 }
 
 /// The picture as an SVG document.
@@ -105,7 +112,7 @@ pub fn svg(p: &Picture) -> String {
     // The truth, where known.
     for (n, t) in p.notes.iter().zip(p.truth) {
         if let Some(c) = t {
-            let m = n.midi + key + cantor_core::score::fold(c - key * 100.0) / 100.0;
+            let m = n.midi + key + fold(c - key * 100.0) / 100.0;
             let _ = writeln!(
                 s,
                 r##"<line x1="{:.1}" x2="{:.1}" y1="{:.1}" y2="{:.1}" stroke="#2f8f5b" stroke-width="2" stroke-dasharray="4 3"/>"##,
@@ -134,7 +141,7 @@ pub fn svg(p: &Picture) -> String {
         }
         let Some(n) = p.notes.get(note) else { continue };
         let target = n.midi + key;
-        let shown = |m: f32| target + cantor_core::score::fold((m - target) * 100.0) / 100.0;
+        let shown = |m: f32| target + fold((m - target) * 100.0) / 100.0;
         if let Some(o) = f.other.map(shown).filter(|o| (lo..=hi).contains(o)) {
             let _ = writeln!(
                 s,
@@ -148,6 +155,25 @@ pub fn svg(p: &Picture) -> String {
         }
     }
 
+    // The scorer's and the oracle's pitch for each note across the part the scorer judges,
+    // drawn over the frames so that a disagreement shows.
+    if let Some(oracle) = p.oracle {
+        for (n, (r, o)) in p.notes.iter().zip(p.scored.iter().zip(oracle)) {
+            let (a, b) = (n.start_s + SKIP_HEAD * n.dur_s, n.end_s() - SKIP_TAIL * n.dur_s);
+            for (cents, colour, width) in [(r.cents, "#2a5db0", 3.0), (o.cents, "#2b2925", 1.5)] {
+                let Some(c) = cents else { continue };
+                let m = n.midi + key + fold(c - key * 100.0) / 100.0;
+                let _ = writeln!(
+                    s,
+                    r##"<line x1="{:.1}" x2="{:.1}" y1="{:.1}" y2="{:.1}" stroke="{colour}" stroke-width="{width}" stroke-opacity="0.8"/>"##,
+                    x(a),
+                    x(b),
+                    y(m),
+                    y(m)
+                );
+            }
+        }
+    }
     let v = p.verdict;
     let summary = format!(
         "{:?} · key {} · drift {:+.0}¢ ({}) · {} marks · {} notes in tune",
@@ -162,12 +188,17 @@ pub fn svg(p: &Picture) -> String {
         s,
         r##"<text x="{LEFT}" y="20" font-size="15" font-weight="600" fill="#2b2925">{}</text>
 <text x="{LEFT}" y="38" fill="#5c574f">{}</text>
-<g transform="translate({} 14)" fill="#5c574f"><rect width="14" height="6" y="2" fill="#b9b2a5"/><text x="18" y="9">notes</text><circle cx="66" cy="5" r="2.5" fill="#2a5db0"/><text x="72" y="9">heard</text><line x1="116" x2="132" y1="5" y2="5" stroke="#2f8f5b" stroke-width="2" stroke-dasharray="4 3"/><text x="136" y="9">truth</text><rect x="176" width="4" height="8" fill="#e39b2d"/><text x="184" y="9">masked</text><rect x="234" width="12" height="9" fill="#d64545" fill-opacity="0.25" stroke="#d64545"/><text x="250" y="9">mark</text><circle cx="298" cy="5" r="3" fill="none" stroke="#9b59b6"/><text x="305" y="9">SwiftF0</text></g>
+<g transform="translate({} 14)" fill="#5c574f"><rect width="14" height="6" y="2" fill="#b9b2a5"/><text x="18" y="9">notes</text><circle cx="66" cy="5" r="2.5" fill="#2a5db0"/><text x="72" y="9">heard</text><line x1="116" x2="132" y1="5" y2="5" stroke="#2f8f5b" stroke-width="2" stroke-dasharray="4 3"/><text x="136" y="9">truth</text><rect x="176" width="4" height="8" fill="#e39b2d"/><text x="184" y="9">masked</text><rect x="234" width="12" height="9" fill="#d64545" fill-opacity="0.25" stroke="#d64545"/><text x="250" y="9">mark</text><circle cx="298" cy="5" r="3" fill="none" stroke="#9b59b6"/><text x="305" y="9">SwiftF0</text>{}</g>
 </svg>
 "##,
         escape(p.title),
         escape(&summary),
-        WIDTH - 370.0
+        WIDTH - if p.oracle.is_some() { 430.0 } else { 370.0 },
+        if p.oracle.is_some() {
+            r##"<line x1="358" x2="374" y1="5" y2="5" stroke="#2b2925" stroke-width="1.5"/><text x="378" y="9">oracle</text>"##
+        } else {
+            ""
+        }
     );
     s
 }

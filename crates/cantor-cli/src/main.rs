@@ -7,6 +7,7 @@
 mod ear;
 mod eval;
 mod explain;
+mod oracle;
 mod wav;
 
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use std::process::ExitCode;
 use cantor_core::{Profile, Voice, notes_from_gabc, part_from_gabc, render, voice};
 
 use crate::ear::Ear;
+use crate::oracle::Oracle;
 
 /// The sample rate synthetic takes are rendered and tracked at.
 const SAMPLE_RATE: f32 = 16_000.0;
@@ -23,11 +25,12 @@ const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
        cantor sing CHANT.gabc [--voice VOICE.cvox] --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
        cantor diction CHANT.gabc
-       cantor eval [--takes DIR] [--write-baseline] [--nsdf-only]
-       cantor explain SUITE [--takes DIR] [--nsdf-only]
+       cantor eval [--takes DIR] [--write-baseline] [--nsdf-only] [--oracle MODEL.onnx]
+       cantor explain SUITE [--takes DIR] [--nsdf-only] [--oracle MODEL.onnx]
        cantor version
 
-Listening uses the NSDF tracker with SwiftF0's opinion beside it; --nsdf-only drops SwiftF0.";
+Listening uses the NSDF tracker with SwiftF0's opinion beside it; --nsdf-only drops SwiftF0.
+--oracle labels the takes with CREPE (`make oracle` builds the model) and compares, ungated.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -188,15 +191,26 @@ fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
     let (nsdf_only, args) = nsdf_only(args);
     let mut write_baseline = false;
     let mut takes = None;
+    let mut model = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--write-baseline" => write_baseline = true,
             "--takes" => takes = Some(PathBuf::from(it.next().ok_or("--takes needs a directory")?)),
+            "--oracle" => model = Some(PathBuf::from(it.next().ok_or("--oracle needs a model")?)),
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
         }
     }
-    eval::run(&repo_root(), &Ear::new(nsdf_only)?, takes.as_deref(), write_baseline, None)
+    let root = repo_root();
+    let oracle = load_oracle(&root, model.as_deref())?;
+    eval::run(
+        &root,
+        &Ear::new(nsdf_only)?,
+        oracle.as_ref(),
+        takes.as_deref(),
+        write_baseline,
+        None,
+    )
 }
 
 /// Draws every take of one suite (`real-takes` for the takes given with `--takes`) under
@@ -205,16 +219,25 @@ fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
     let (nsdf_only, args) = nsdf_only(args);
     let mut suite = None;
     let mut takes = None;
+    let mut model = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--takes" => takes = Some(PathBuf::from(it.next().ok_or("--takes needs a directory")?)),
+            "--oracle" => model = Some(PathBuf::from(it.next().ok_or("--oracle needs a model")?)),
             _ if suite.is_none() && !arg.starts_with('-') => suite = Some(arg.clone()),
             _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
         }
     }
     let suite = suite.ok_or_else(|| USAGE.to_string())?;
-    eval::run(&repo_root(), &Ear::new(nsdf_only)?, takes.as_deref(), false, Some(&suite))
+    let root = repo_root();
+    let oracle = load_oracle(&root, model.as_deref())?;
+    eval::run(&root, &Ear::new(nsdf_only)?, oracle.as_ref(), takes.as_deref(), false, Some(&suite))
+}
+
+/// The oracle, when a model was given, caching its labels under `out/oracle/`.
+fn load_oracle(root: &Path, model: Option<&Path>) -> Result<Option<Oracle>, String> {
+    model.map(|m| Oracle::load(m, root.join("out/oracle"))).transpose()
 }
 
 /// Whether `--nsdf-only` is among `args`, and the other arguments.

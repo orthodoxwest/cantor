@@ -6,7 +6,9 @@
 //! directory given with `--takes` are held to the expert gate; they have no guide and no
 //! planted truth, so their tracking error is measured from the judge's own key. The scorecard
 //! is printed and written to `out/eval.json` and `out/eval.md` (`eval-nsdf.*` with
-//! `--nsdf-only`), and every take is drawn in `out/explain/` (`explain-nsdf/`).
+//! `--nsdf-only`), and every take is drawn in `out/explain/` (`explain-nsdf/`). With
+//! `--oracle MODEL`, CREPE labels every take too (see `oracle.rs`), and a second, ungated
+//! table counts the notes where it and the scorer disagree.
 //!
 //! What counts as a fault, and how long a note must be to count, are this file's own
 //! constants, written from the specification, not read from the judge: tuning the judge
@@ -37,6 +39,7 @@ use serde_json::Value;
 use crate::SAMPLE_RATE;
 use crate::ear::Ear;
 use crate::explain;
+use crate::oracle::Oracle;
 
 /// A fault a mark must catch: a note this many cents off...
 const FLAGRANT_CENTS: f32 = 150.0;
@@ -137,6 +140,55 @@ struct Judged {
     frames: Vec<Frame>,
     verdict: Verdict,
     report: cantor_core::Report,
+    /// The scorer's report on the oracle's labels, when the oracle listened.
+    oracle: Option<cantor_core::Report>,
+}
+
+/// How the oracle's per-note pitch compares with the scorer's. It is never gated: it says
+/// where to look.
+#[derive(Clone, Copy, Debug, Serialize)]
+struct OracleStats {
+    /// Of the notes sung, the fraction the oracle heard.
+    heard: f32,
+    /// Notes both heard.
+    compared: u32,
+    /// Of those, notes whose pitches are more than [`GROSS_CENTS`] apart, octaves aside.
+    disagreements: u32,
+    /// The oracle's mean distance from the truth over the notes it heard, where the truth
+    /// is known (synthetic takes).
+    tracking_cents: Option<f32>,
+}
+
+impl OracleStats {
+    fn of(takes: &[Judged]) -> Option<OracleStats> {
+        let (mut sung, mut heard, mut compared, mut disagreements) = (0u32, 0u32, 0u32, 0u32);
+        let (mut errors, mut tracked) = (0.0f32, 0u32);
+        for take in takes {
+            let oracle = take.oracle.as_ref()?;
+            for (i, (o, r)) in oracle.notes.iter().zip(&take.report.notes).enumerate() {
+                if take.planted[i].silent {
+                    continue;
+                }
+                sung += 1;
+                let Some(oc) = o.cents else { continue };
+                heard += 1;
+                if let Some(rc) = r.cents {
+                    compared += 1;
+                    disagreements += u32::from(fold(oc - rc).abs() > GROSS_CENTS);
+                }
+                if let Some(t) = take.truth[i] {
+                    errors += fold(oc - t).abs();
+                    tracked += 1;
+                }
+            }
+        }
+        Some(OracleStats {
+            heard: if sung == 0 { 0.0 } else { heard as f32 / sung as f32 },
+            compared,
+            disagreements,
+            tracking_cents: (tracked > 0).then(|| errors / tracked as f32),
+        })
+    }
 }
 
 /// The numbers a suite is judged by.
@@ -433,6 +485,8 @@ struct SuiteOutput<'a> {
     name: &'a str,
     gate: Gate,
     metrics: Metrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oracle: Option<OracleStats>,
     failures: Vec<String>,
     takes: Vec<TakeOutput<'a>>,
 }
@@ -442,22 +496,32 @@ struct TakeOutput<'a> {
     name: &'a str,
     verdict: &'a Verdict,
     report: &'a cantor_core::Report,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oracle: Option<&'a cantor_core::Report>,
 }
 
-/// Runs the gates, or with `only`, just the named suite, drawing its takes.
-pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: bool, only: Option<&str>) -> Result<ExitCode, String> {
+/// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
+/// every take is also labelled by it and compared, outside the gates.
+pub fn run(
+    root: &Path,
+    ear: &Ear,
+    oracle: Option<&Oracle>,
+    takes_dir: Option<&Path>,
+    write_baseline: bool,
+    only: Option<&str>,
+) -> Result<ExitCode, String> {
     let mut suites: Vec<(String, Gate, Vec<Judged>)> = Vec::new();
     for suite in load_suites(&root.join("evals/suites"))? {
         if only.is_some_and(|o| o != suite.name) {
             continue;
         }
-        let judged = in_parallel(&suite.takes, |i, t| run_take(root, ear, t, format!("{} {i}", suite.name)))
+        let judged = in_parallel(&suite.takes, |i, t| run_take(root, ear, oracle, t, format!("{} {i}", suite.name)))
             .into_iter()
             .collect::<Result<_, _>>()?;
         suites.push((suite.name, suite.gate, judged));
     }
     if let Some(dir) = takes_dir.filter(|_| only.is_none_or(|o| o == REAL)) {
-        let judged = load_real_takes(ear, dir)?;
+        let judged = load_real_takes(ear, oracle, dir)?;
         if judged.is_empty() {
             return Err(format!("{}: no takes", dir.display()));
         }
@@ -481,6 +545,8 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
                 frames: &j.frames,
                 verdict: &j.verdict,
                 truth: &j.truth,
+                scored: &j.report.notes,
+                oracle: j.oracle.as_ref().map(|r| &r.notes[..]),
             });
             std::fs::write(&path, svg).map_err(|e| format!("{}: {e}", path.display()))?;
             if only.is_some() {
@@ -509,8 +575,10 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
     let mut outputs = Vec::new();
     let mut gate_failures = Vec::new();
     let mut baseline_failures = Vec::new();
+    let mut oracle_md = String::new();
     for (name, gate, judged) in &suites {
         let metrics = Metrics::of(judged);
+        let oracle = OracleStats::of(judged);
         let gated = metrics.gate_failures(*gate);
         let mut moved = Vec::new();
         // Real takes are held to their gate only: the set and its audio live elsewhere.
@@ -559,10 +627,18 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         ));
         gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
+        if let Some(o) = oracle {
+            let cents = o.tracking_cents.map_or("-".to_string(), |c| format!("{c:.2}"));
+            oracle_md.push_str(&format!(
+                "| {name} | {:.3} | {} | {} | {cents} |\n",
+                o.heard, o.compared, o.disagreements
+            ));
+        }
         outputs.push(SuiteOutput {
             name,
             gate: *gate,
             metrics,
+            oracle,
             failures,
             takes: judged
                 .iter()
@@ -570,6 +646,7 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
                     name: &j.name,
                     verdict: &j.verdict,
                     report: &j.report,
+                    oracle: j.oracle.as_ref(),
                 })
                 .collect(),
         });
@@ -579,6 +656,13 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         baseline_failures.push(format!("{name}: in the baseline but not in evals/suites"));
     }
 
+    if !oracle_md.is_empty() {
+        let table = format!(
+            "| suite | oracle heard | notes compared | disagree with the scorer | oracle \\|cents\\| |\n|---|--:|--:|--:|--:|\n{oracle_md}"
+        );
+        println!("\nThe oracle (CREPE), not gated:\n{table}");
+        md.push_str(&format!("\nThe oracle (CREPE), not gated:\n\n{table}"));
+    }
     write_json(&out_dir.join(format!("eval{tag}.json")), &outputs)?;
     std::fs::write(out_dir.join(format!("eval{tag}.md")), &md).map_err(|e| format!("{}: {e}", out_dir.display()))?;
     if write_baseline {
@@ -628,7 +712,7 @@ fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(usize, &T) -> R + Sync)
         .collect()
 }
 
-fn run_take(root: &Path, ear: &Ear, spec: &TakeSpec, name: String) -> Result<Judged, String> {
+fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, name: String) -> Result<Judged, String> {
     let path = root.join(&spec.gabc);
     let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
@@ -644,6 +728,10 @@ fn run_take(root: &Path, ear: &Ear, spec: &TakeSpec, name: String) -> Result<Jud
     });
     let frames = ear.listen(&take.samples, SAMPLE_RATE, guide)?;
     let report = score(&notes, &frames);
+    let oracle = match oracle {
+        Some(o) => Some(score(&notes, &o.label(&take.samples, SAMPLE_RATE, &notes, &frames)?)),
+        None => None,
+    };
     let verdict = judge(&notes, &report);
     let planted = profile.planted(&notes);
     let mid = |n: &Note| n.start_s + n.dur_s / 2.0;
@@ -669,10 +757,11 @@ fn run_take(root: &Path, ear: &Ear, spec: &TakeSpec, name: String) -> Result<Jud
         frames,
         verdict,
         report,
+        oracle,
     })
 }
 
-fn load_real_takes(ear: &Ear, dir: &Path) -> Result<Vec<Judged>, String> {
+fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
     let mut out = Vec::new();
     for path in json_files(dir)? {
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -694,6 +783,10 @@ fn load_real_takes(ear: &Ear, dir: &Path) -> Result<Vec<Judged>, String> {
         let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
         let frames = ear.listen(&samples, rate, None)?;
         let report = score(&notes, &frames);
+        let oracle = match oracle {
+            Some(o) => Some(score(&notes, &o.label(&samples, rate, &notes, &frames)?)),
+            None => None,
+        };
         let verdict = judge(&notes, &report);
         let len = notes.len();
         out.push(Judged {
@@ -706,6 +799,7 @@ fn load_real_takes(ear: &Ear, dir: &Path) -> Result<Vec<Judged>, String> {
             frames,
             verdict,
             report,
+            oracle,
         });
     }
     Ok(out)
