@@ -32,6 +32,28 @@ test("play moves the cursor across every note", async ({ page }) => {
   await expect(page.locator("#score .cursor")).toBeHidden();
 });
 
+test("start note sounds the first note, then the reciting tone, and stops Play", async ({ page }) => {
+  await open(page);
+  const play = page.getByRole("button", { name: "Play" });
+  const note = page.getByRole("button", { name: "Start note" });
+  await play.click();
+  await expect(play).toHaveAttribute("aria-pressed", "true");
+  await note.click();
+  await expect(play).toHaveAttribute("aria-pressed", "false");
+  await expect(note).toHaveAttribute("aria-pressed", "true");
+  // An antiphon has no reciting tone, so one note sounds.
+  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.length)).toBe(1);
+  // It ends by itself.
+  await expect(note).toHaveAttribute("aria-pressed", "false", { timeout: 5_000 });
+  expect(await page.evaluate(() => window.__cantor.pitch)).toEqual([]);
+  // Pressed again while it sounds, it stops.
+  await note.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.length)).toBe(1);
+  await note.click();
+  await expect(note).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.pitch)).toEqual([]);
+});
+
 test("listen hears A4 from the microphone", async ({ page }) => {
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());
