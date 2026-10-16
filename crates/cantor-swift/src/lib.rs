@@ -85,6 +85,9 @@ impl SwiftF0 {
     /// Tracks `samples` at `sample_rate`, resampled to 16 kHz for the model: one frame every
     /// 16 ms, frame `i` centred at `i` hops.
     pub fn track(&self, samples: &[f32], sample_rate: f32) -> TractResult<Track> {
+        if !RATES.contains(&sample_rate) {
+            tract_onnx::tract_core::internal::bail!("{sample_rate} Hz is not a sample rate SwiftF0 can take");
+        }
         if sample_rate == SAMPLE_RATE {
             self.track_16k(samples)
         } else {
@@ -148,41 +151,45 @@ impl SwiftF0 {
     }
 }
 
+/// The sample rates `track` takes.
+const RATES: std::ops::RangeInclusive<f32> = 4_000.0..=384_000.0;
 /// Half the width of the resampler's kernel, in input samples at the lower of the two rates.
 const RESAMPLE_HALF: f32 = 16.0;
 
-/// `samples` at `to` hertz: a Hann-windowed sinc low-passed below both rates' Nyquist.
+/// `samples` at `to` hertz: a Hann-windowed sinc whose response is half (-6 dB) at 95% of the
+/// lower rate's Nyquist. Positions are kept in f64, so long takes stay aligned.
 pub fn resample(samples: &[f32], from: f32, to: f32) -> Vec<f32> {
     if samples.is_empty() || from <= 0.0 || to <= 0.0 {
         return Vec::new();
     }
-    let ratio = to / from;
+    let ratio = to as f64 / from as f64;
+    let len = (samples.len() as f64 * ratio).floor() as usize;
+    (0..len).map(|j| resampled_at(samples, ratio, j)).collect()
+}
+
+/// Output sample `j` of [`resample`] at `ratio` output samples per input sample.
+fn resampled_at(samples: &[f32], ratio: f64, j: usize) -> f32 {
     // The cutoff, as a fraction of the input's Nyquist, a little under the lower rate's.
-    let cutoff = 0.95 * ratio.min(1.0);
+    let cutoff = 0.95 * ratio.min(1.0) as f32;
     let half = RESAMPLE_HALF / cutoff;
-    let len = (samples.len() as f64 * ratio as f64).floor() as usize;
-    (0..len)
-        .map(|j| {
-            let centre = j as f32 / ratio;
-            let first = (centre - half).ceil().max(0.0) as usize;
-            let last = ((centre + half).floor() as usize).min(samples.len() - 1);
-            let (mut sum, mut weight) = (0.0f32, 0.0f32);
-            for (i, x) in samples.iter().enumerate().take(last + 1).skip(first) {
-                let d = i as f32 - centre;
-                let sinc = if d == 0.0 {
-                    1.0
-                } else {
-                    let a = std::f32::consts::PI * cutoff * d;
-                    a.sin() / a
-                };
-                let hann = 0.5 + 0.5 * (std::f32::consts::PI * d / half).cos();
-                let w = sinc * hann;
-                sum += x * w;
-                weight += w;
-            }
-            if weight == 0.0 { 0.0 } else { sum / weight }
-        })
-        .collect()
+    let centre = j as f64 / ratio;
+    let first = (centre - half as f64).ceil().max(0.0) as usize;
+    let last = ((centre + half as f64).floor() as usize).min(samples.len() - 1);
+    let (mut sum, mut weight) = (0.0f32, 0.0f32);
+    for (i, x) in samples.iter().enumerate().take(last + 1).skip(first) {
+        let d = (i as f64 - centre) as f32;
+        let sinc = if d == 0.0 {
+            1.0
+        } else {
+            let a = std::f32::consts::PI * cutoff * d;
+            a.sin() / a
+        };
+        let hann = 0.5 + 0.5 * (std::f32::consts::PI * d / half).cos();
+        let w = sinc * hann;
+        sum += x * w;
+        weight += w;
+    }
+    if weight == 0.0 { 0.0 } else { sum / weight }
 }
 
 #[cfg(test)]
@@ -274,6 +281,32 @@ mod tests {
         let midi = SwiftF0::new().expect("model").track(&samples, SAMPLE_RATE).expect("run").midi;
         assert!(midi[51..74].iter().all(Option::is_none), "{:?}", &midi[50..75]);
         assert!(midi[10..45].iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn long_takes_resample_in_step() {
+        // Ten minutes at 44.1 kHz, past 2^24 samples, where f32 positions lose whole samples:
+        // the last output samples still land where they should.
+        let (from, n, tail) = (44_100.0f64, 26_460_000usize, 4_410usize);
+        let hz = 220.0f64;
+        let mut samples = vec![0.0f32; n - tail];
+        samples.extend((n - tail..n).map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / from).sin() as f32));
+        let ratio = SAMPLE_RATE as f64 / from;
+        let len = (n as f64 * ratio).floor() as usize;
+        let worst = (len - 1_000..len - 100)
+            .map(|j| {
+                let want = (2.0 * std::f64::consts::PI * hz * j as f64 / SAMPLE_RATE as f64).sin() as f32;
+                (resampled_at(&samples, ratio, j) - want).abs()
+            })
+            .fold(0.0f32, f32::max);
+        assert!(worst < 0.01, "{worst}");
+    }
+
+    #[test]
+    fn absurd_rates_are_refused() {
+        let swift = SwiftF0::new().expect("model");
+        assert!(swift.track(&[0.0; 1_000], 1.0).is_err());
+        assert!(swift.track(&[0.0; 1_000], f32::NAN).is_err());
     }
 
     #[test]

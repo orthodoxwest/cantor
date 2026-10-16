@@ -57,7 +57,7 @@ impl Track {
     /// The median of the voiced pitches whose centres lie within `half_s` of `t`, when at
     /// least half of those frames are voiced.
     fn at(&self, t: f32, half_s: f32) -> Option<f32> {
-        if self.hop_s.is_nan() || self.hop_s <= 0.0 {
+        if !(self.hop_s.is_finite() && self.hop_s > 0.0 && self.start_s.is_finite()) {
             return None;
         }
         let first = ((t - half_s - self.start_s) / self.hop_s).ceil().max(0.0) as usize;
@@ -90,7 +90,7 @@ pub fn listen(samples: &[f32], sample_rate: f32, guide: Option<Guide>) -> Vec<Fr
 /// [`listen`] with a second tracker's opinion, `other`, recorded on each frame. A frame the
 /// NSDF tracker finds clear keeps its pitch whatever the other says; one it finds only
 /// [`WEAK_CLARITY`] clear is heard when the other agrees with it, in the other's octave, so
-/// the second tracker never adds a pitch the NSDF tracker contradicts. Frames are fused
+/// the second tracker never voices a frame alone or moves its pitch class. Frames are fused
 /// before the loudness floor and the guide's mask, which drop fused frames like any other.
 pub fn listen_with(samples: &[f32], sample_rate: f32, guide: Option<Guide>, other: Option<&Track>) -> Vec<Frame> {
     let frame = pitch::default_frame(sample_rate);

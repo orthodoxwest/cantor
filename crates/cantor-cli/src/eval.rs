@@ -6,8 +6,7 @@
 //! directory given with `--takes` are held to the expert gate; they have no guide and no
 //! planted truth, so their tracking error is measured from the judge's own key. The scorecard
 //! is printed and written to `out/eval.json` and `out/eval.md` (`eval-nsdf.*` with
-//! `--nsdf-only`), and every take is drawn in
-//! `out/explain/`.
+//! `--nsdf-only`), and every take is drawn in `out/explain/` (`explain-nsdf/`).
 //!
 //! What counts as a fault, and how long a note must be to count, are this file's own
 //! constants, written from the specification, not read from the judge: tuning the judge
@@ -379,6 +378,10 @@ impl Metrics {
         // What is counted is fixed by the suites: a change means the test moved, not the listener.
         check("faults", self.faults as f32, base.faults as f32, self.faults != base.faults);
         check("takes", self.takes as f32, base.takes as f32, self.takes != base.takes);
+        // SwiftF0 going deaf on a suite would otherwise drop its agreement from the gate.
+        if let (None, Some(was)) = (self.agreement, base.agreement) {
+            out.push(format!("agreement {was:.3} -> none: SwiftF0 compared no frames"));
+        }
         out
     }
 }
@@ -464,8 +467,10 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         return Err(format!("no suite named {}", only.unwrap_or("")));
     }
 
+    // The NSDF tracker alone, as the browser listens, is held to a baseline of its own.
+    let tag = if ear.nsdf_only() { "-nsdf" } else { "" };
     let out_dir = root.join("out");
-    let explain_dir = out_dir.join("explain");
+    let explain_dir = out_dir.join(format!("explain{tag}"));
     std::fs::create_dir_all(&explain_dir).map_err(|e| format!("{}: {e}", explain_dir.display()))?;
     for (_, _, judged) in &suites {
         for j in judged {
@@ -487,8 +492,6 @@ pub fn run(root: &Path, ear: &Ear, takes_dir: Option<&Path>, write_baseline: boo
         return Ok(ExitCode::SUCCESS);
     }
 
-    // The NSDF tracker alone, as the browser listens, is held to a baseline of its own.
-    let tag = if ear.nsdf_only() { "-nsdf" } else { "" };
     let baseline_path = root.join(format!("evals/baseline{tag}.json"));
     let baseline: BTreeMap<String, Metrics> = match std::fs::read_to_string(&baseline_path) {
         Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", baseline_path.display()))?,

@@ -200,7 +200,7 @@ fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Draws every take of one suite (`real-takes` for the takes given with `--takes`) under
-/// `out/explain/`, printing the files' paths.
+/// `out/explain/` (`out/explain-nsdf/` with `--nsdf-only`), printing the files' paths.
 fn explain_cmd(args: &[String]) -> Result<ExitCode, String> {
     let (nsdf_only, args) = nsdf_only(args);
     let mut suite = None;
