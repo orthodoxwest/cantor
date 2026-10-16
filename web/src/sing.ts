@@ -13,6 +13,7 @@ import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { Drone, droneNote, modeNumber } from "./drone";
 import { tapLoop } from "./loop";
+import { Replay } from "./replay";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
 
@@ -224,6 +225,7 @@ let sending = false;
 
 /** Offers to send the take just shown. */
 function offerSend(take: ToSend): void {
+  offerReplay(take);
   toSend = take;
   void known.then((yes) => {
     if (toSend === take) sendLine.hidden = !yes;
@@ -284,6 +286,7 @@ sendButton.addEventListener("click", () => {
 /** Shows a judged take, stopped by the singer at note `cut` if it was and sung with the guide
  * in headphones if `worn`, or clears it. */
 function showResult(judged: Judged | null, cut: number | null = null, worn = false): void {
+  if (!judged) offerReplay(null);
   shown = judged;
   cutAt = judged ? cut : null;
   shownWorn = worn;
@@ -619,6 +622,7 @@ function tapScore(e: MouseEvent): void {
 function stopPlay(): void {
   plays++;
   playing = null;
+  stopHear();
   guide?.stop();
   playButton.setAttribute("aria-pressed", "false");
 }
@@ -640,6 +644,52 @@ async function play(): Promise<void> {
   if (playing === run) stopPlay();
 }
 
+// Your take plays the last take shown back against the score, from the audio the ear keeps
+// for sending, the cursor on each note where it was due; on a phone it takes the place of
+// Start note and Drone while a take is shown.
+const hearButton = byId<HTMLButtonElement>("hear");
+const replay = new Replay(score, cursor, () => hearButton.setAttribute("aria-pressed", "false"));
+/** The take shown, as it may be heard again: its pulse and where its pulse 0 fell. */
+let replayable: { pulse: number; offset: number } | null = null;
+/** Counts presses of Your take and stops, so one stopped while its audio is fetched does not go on. */
+let hears = 0;
+
+function stopHear(): void {
+  hears++;
+  replay.stop();
+  hearButton.setAttribute("aria-pressed", "false");
+}
+
+function offerReplay(take: { pulse: number; offset: number } | null): void {
+  stopHear();
+  replayable = take && { pulse: take.pulse, offset: take.offset };
+  hearButton.hidden = !replayable;
+}
+
+async function hear(): Promise<void> {
+  const take = replayable;
+  if (!take) return;
+  stopPlay();
+  stopPitch();
+  stopDrone();
+  const press = ++hears;
+  hearButton.setAttribute("aria-pressed", "true");
+  try {
+    const ctx = await audioContext();
+    const { wav } = await listener.audio();
+    if (press !== hears) return;
+    await replay.play(ctx, wav, take.pulse, take.offset);
+  } catch (error) {
+    if (press !== hears) return;
+    stopHear();
+    setStatus(`Your take could not be played: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+hearButton.addEventListener("click", () => {
+  if (hearButton.getAttribute("aria-pressed") === "true") return stopHear();
+  void hear();
+});
+
 if (!guide) {
   playButton.title = noteButton.title = droneButton.title = "The guide voice could not load.";
   setStatus(playButton.title);
@@ -647,6 +697,7 @@ if (!guide) {
   playButton.disabled = noteButton.disabled = droneButton.disabled = false;
   droneButton.addEventListener("click", () => {
     if (droneButton.getAttribute("aria-pressed") === "true") return stopDrone();
+    stopHear();
     void startDrone();
   });
   playButton.addEventListener("click", () => {
@@ -941,6 +992,10 @@ if (test) {
     get drone() {
       return drone?.midi ?? null;
     },
+    /** The notes the cursor has marked in the last take heard back, and whether it plays. */
+    get replayed() {
+      return { visited: replay.visited, playing: replay.playing };
+    },
     /** The run looped, by note index, or null. */
     get loop() {
       return loop;
@@ -968,6 +1023,7 @@ if (test) {
       if (gabc !== score.source) {
         stopPlay();
         setLoop(null);
+        offerReplay(null);
         score.setChant(new Chant(gabc));
       }
       if (guide) guide.gabc = gabc;
@@ -984,6 +1040,7 @@ if (test) {
       if (gabc !== score.source) {
         stopPlay();
         setLoop(null);
+        offerReplay(null);
         score.setChant(new Chant(gabc));
       }
       const json = await listener.judge(gabc, pulse, offset);

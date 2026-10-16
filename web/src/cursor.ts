@@ -50,7 +50,8 @@ export class Cursor {
   }
 
   private mark(note: number | null): void {
-    if (note === this.marked) return;
+    // The same note, unless the score was drawn afresh (on a resize, say) and lost its mark.
+    if (note === this.marked && (note === null || [...this.score.ink(note)].every((el) => el.classList.contains("cantor-current")))) return;
     if (this.marked !== null) for (const el of this.score.ink(this.marked)) el.classList.remove("cantor-current");
     if (note !== null) for (const el of this.score.ink(note)) el.classList.add("cantor-current");
     this.marked = note;
