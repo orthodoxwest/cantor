@@ -33,6 +33,7 @@ test("play moves the cursor across every note", async ({ page }) => {
 });
 
 test("start note sounds the first note, then the reciting tone, and stops Play", async ({ page }) => {
+  await page.clock.install();
   await open(page);
   const play = page.getByRole("button", { name: "Play" });
   const note = page.getByRole("button", { name: "Start note" });
@@ -41,17 +42,24 @@ test("start note sounds the first note, then the reciting tone, and stops Play",
   await note.click();
   await expect(play).toHaveAttribute("aria-pressed", "false");
   await expect(note).toHaveAttribute("aria-pressed", "true");
-  // An antiphon has no reciting tone, so one note sounds.
-  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.length)).toBe(1);
+  // An antiphon has no reciting tone, so one note sounds: its first.
+  const first = await page.evaluate(() => 60 + window.__cantor.timeline.notes[0]!.semitones);
+  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.map((m) => m % 12))).toEqual([first % 12]);
   // It ends by itself.
-  await expect(note).toHaveAttribute("aria-pressed", "false", { timeout: 5_000 });
+  await page.clock.runFor(3000);
+  await expect(note).toHaveAttribute("aria-pressed", "false");
   expect(await page.evaluate(() => window.__cantor.pitch)).toEqual([]);
   // Pressed again while it sounds, it stops.
   await note.click();
   await expect.poll(() => page.evaluate(() => window.__cantor.pitch.length)).toBe(1);
+  await expect(note).toHaveAttribute("aria-pressed", "true");
   await note.click();
   await expect(note).toHaveAttribute("aria-pressed", "false");
   expect(await page.evaluate(() => window.__cantor.pitch)).toEqual([]);
+  // A chant with a reciting tone gives it after the first note.
+  await page.evaluate(() => window.__cantor.practise("(c4) Glo(f)ry(hr) be(h) to(h) the(h) Fa(h)ther(g) (::)", 0.5));
+  await note.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.pitch.map((m) => m % 12))).toEqual([5, 9]);
 });
 
 test("listen hears A4 from the microphone", async ({ page }) => {

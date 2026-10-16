@@ -303,18 +303,23 @@ async function soundPitch(): Promise<void> {
   stopPitch();
   const press = pitches;
   noteButton.setAttribute("aria-pressed", "true");
+  if (status.classList.contains("error")) setStatus("");
+  const failed = (error: unknown) => {
+    console.error("start note:", error);
+    if (press !== pitches) return;
+    stopPitch();
+    setStatus(`The starting pitch could not be sung: ${error instanceof Error ? error.message : String(error)}`);
+  };
   try {
     const ctx = await audioContext();
     if (press !== pitches) return;
-    const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source, onError: (error) => console.error("start note:", error) });
+    const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source, onError: failed });
     if (press !== pitches) return cue.stop();
     pitching = cue;
     await wait(cue.end - ctx.currentTime);
     if (press === pitches) stopPitch();
   } catch (error) {
-    if (press !== pitches) return;
-    stopPitch();
-    setStatus(`The starting pitch could not be sung: ${error instanceof Error ? error.message : String(error)}`);
+    failed(error);
   }
 }
 
