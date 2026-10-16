@@ -3,14 +3,16 @@ import { expect, test } from "@playwright/test";
 test("the library lists, filters and opens a piece, and practises it", async ({ page }) => {
   await page.goto("/library");
   const items = page.locator("#results > li");
-  const total = await items.count();
+  const pieces = async () => Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0]);
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  const total = await pieces();
   expect(total).toBeGreaterThan(1);
   await expect(items.first().locator(".thumb svg")).toBeVisible();
 
   await page.getByRole("button", { name: /^Hymns/ }).click();
   await expect(page.getByRole("button", { name: /^Hymns/ })).toBeFocused();
   await expect(page.getByRole("button", { name: /^Hymns/ })).toHaveAttribute("aria-pressed", "true");
-  const hymns = await items.count();
+  const hymns = await pieces();
   expect(hymns).toBeGreaterThan(0);
   expect(hymns).toBeLessThan(total);
   await page.getByRole("button", { name: /^All\d/ }).click();
