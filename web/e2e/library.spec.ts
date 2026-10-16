@@ -114,4 +114,8 @@ test("the header switches between light and dark pages, and remembers the choice
   await expect(root).toHaveAttribute("data-theme", "light");
   await page.locator("#theme").click();
   await expect(root).toHaveAttribute("data-theme", "dark");
+  // Paper is always light, whatever the screen shows.
+  await page.emulateMedia({ media: "print" });
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(250, 243, 233)");
+  await expect(page.locator("#theme")).toBeHidden();
 });
