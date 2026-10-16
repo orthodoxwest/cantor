@@ -19,7 +19,8 @@ interface Exports {
 }
 
 /** A tracked frame: its centre in seconds of the audio context's clock, the pitch heard (as a
- * MIDI number) or null, the clarity of its period and its RMS. */
+ * MIDI number) or null (also under the live floor, see cantor-core's listen), the clarity of
+ * its period and its RMS. */
 export interface Frame {
   t: number;
   midi: number | null;
