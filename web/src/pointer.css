@@ -156,7 +156,6 @@
   font-weight: 600;
   text-decoration-thickness: 4px;
   cursor: grab;
-  touch-action: none;
   border-radius: 3px;
 }
 .acc:focus-visible {

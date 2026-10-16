@@ -87,6 +87,15 @@ test("dragging an accent moves it, and the address keeps the edit", async ({ pag
   expect(await text(page)).toBe(edited);
 });
 
+test("a mouse click on a syllable leaves the pointing alone", async ({ page }) => {
+  await open(page);
+  const before = await text(page);
+  const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+  await half.first().click();
+  await half.first().dblclick();
+  expect(await text(page)).toBe(before);
+});
+
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true });
 
@@ -103,6 +112,31 @@ test.describe("on a touch screen", () => {
       .toBe(targetText);
     await page.getByRole("button", { name: "Undo" }).tap();
     await expect(accents(page, 1, "mediant")).toHaveText(all[at]!);
+  });
+
+  test("dragging an accent with a finger moves it", async ({ page }) => {
+    await open(page);
+    const half = page.locator(`.verse[data-verse="1"] .syl[data-part="mediant"]`);
+    const all = await half.allTextContents();
+    const at = all.indexOf((await accents(page, 1, "mediant").textContent())!);
+    const target = half.nth(at - 2);
+    const targetText = (await target.textContent())!;
+    const centre = async (l: Locator) => {
+      const b = (await l.boundingBox())!;
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    };
+    const from = await centre(accents(page, 1, "mediant"));
+    const to = await centre(target);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [from] });
+    for (let i = 1; i <= 5; i++) {
+      const p = { x: from.x + ((to.x - from.x) * i) / 5, y: from.y + ((to.y - from.y) * i) / 5 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [p] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect
+      .poll(async () => (await accents(page, 1, "mediant").textContent())!.normalize("NFD").replace(/\u0301/g, ""))
+      .toBe(targetText);
   });
 
   test("in a half with two accents, a tap moves the nearer, or the one tapped first", async ({ page }) => {

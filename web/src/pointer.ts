@@ -583,7 +583,7 @@ els.verses.addEventListener("pointerdown", (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>(".acc");
   if (!el || e.button !== 0) return;
   e.preventDefault();
-  el.focus();
+  el.focus({ preventScroll: true });
   el.setPointerCapture(e.pointerId);
   el.classList.add("dragging");
   drag = { from: el, pointer: e.pointerId, target: null };
@@ -616,6 +616,16 @@ function endDrag(commit: boolean): void {
 
 els.verses.addEventListener("pointerup", () => endDrag(true));
 
+// `touch-action` has no effect on an inline span, so without this a finger on an accent
+// scrolls the page and the browser cancels the drag.
+els.verses.addEventListener(
+  "touchstart",
+  (e) => {
+    if ((e.target as HTMLElement).closest(".acc")) e.preventDefault();
+  },
+  { passive: false },
+);
+
 // On a touch screen, a tap on a syllable that is not an accent moves an accent of its half
 // there: the accent tapped just before, if it is in that half, otherwise the nearest. A mouse
 // drags instead, so its clicks stay free for selecting text.
@@ -626,7 +636,7 @@ els.verses.addEventListener(
   (e) => {
     touch = e.pointerType !== "mouse";
     const acc = (e.target as HTMLElement).closest<HTMLElement>(".acc");
-    if (acc) chosen = acc;
+    if (acc && touch) chosen = acc;
   },
   { capture: true },
 );
