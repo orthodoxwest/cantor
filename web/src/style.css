@@ -191,8 +191,15 @@ a {
 }
 .signin {
   color: var(--rubric);
+}
+/* A short gold rule between the pages and signing in. */
+.signin::before {
+  content: "";
+  display: inline-block;
+  height: 1em;
+  vertical-align: -0.12em;
   border-left: 1px solid var(--gold-line);
-  padding-left: 1rem;
+  margin-right: 1rem;
 }
 @media (hover: hover) {
   .beam nav a:hover,
@@ -212,6 +219,21 @@ a {
   }
   .beam nav {
     gap: 1rem;
+  }
+  /* With signing in offered too, everything draws in a little to fit a 320px phone. */
+  .beam-in:has(.signin) {
+    gap: 0.7rem;
+  }
+  .beam-in:has(.signin) nav {
+    gap: 0.7rem;
+  }
+  .beam-in:has(.signin) nav a,
+  .signin {
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+  }
+  .signin::before {
+    margin-right: 0.7rem;
   }
 }
 

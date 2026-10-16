@@ -59,7 +59,7 @@ function fromRow(row: Row): LibraryChant {
 // Titles in the order a reader looks for them: case ignored, and a leading ℣, ℟ or number
 // ("℣. Rest eternal", "1. Israel's King") passed over.
 const collator = new Intl.Collator("en", { sensitivity: "base" });
-const sortKey = (title: string) => title.replace(/^[\s℣℟\d.]+/u, "") || title;
+const sortKey = (title: string) => title.replace(/^(?:[℣℟]\.?|\d+\.|\.+)\s*/u, "") || title;
 export const byTitle = (a: Pick<LibraryChant, "title" | "slug">, b: Pick<LibraryChant, "title" | "slug">) =>
   collator.compare(sortKey(a.title), sortKey(b.title)) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 

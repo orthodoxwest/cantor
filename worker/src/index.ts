@@ -76,6 +76,7 @@ app.get("/api/pointing/:psalm", async (c) => {
 
 app.get("/api/me", async (c) => {
   const user = await identity(c.req.raw.headers, c.env);
+  c.header("Cache-Control", "private, no-store");
   return user ? c.json(user) : c.json({ error: "unauthorized" }, 401);
 });
 

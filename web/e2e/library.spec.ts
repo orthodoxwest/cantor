@@ -82,7 +82,9 @@ test("a visitor the site does not know is offered a sign-in that returns them to
 
 test("a signed-in visitor is not offered a sign-in", async ({ page }) => {
   await page.route("/api/me", (route) => route.fulfill({ json: { id: "abc", email: null } }));
+  const me = page.waitForResponse("**/api/me");
   await page.goto("/library");
+  await me;
   await expect(page.locator("#results > li").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(0);
 });
