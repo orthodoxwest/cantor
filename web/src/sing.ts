@@ -9,6 +9,7 @@ import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
 import { describeKey, drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
+import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { firstNoteAt, firstSound, headphonesIn, ONSET_EARLY, ONSET_WINDOW, timed } from "./timing";
@@ -94,11 +95,59 @@ function drawResult(): void {
   if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
 }
 
+// A take shown may be sent, by a signed-in singer: the button gives a link to it.
+const sendLine = byId<HTMLParagraphElement>("send-line");
+const sendButton = byId<HTMLButtonElement>("send");
+const sentText = byId<HTMLSpanElement>("sent");
+const known = signedIn();
+/** The take shown, as it would be sent, until it is sent or another is shown. */
+let toSend: { pulse: number; offset: number; judged: Judged } | null = null;
+
+/** Offers to send the take just shown, sung at `pulse` with its first note at `offset`. */
+function offerSend(take: { pulse: number; offset: number; judged: Judged }): void {
+  toSend = take;
+  void known.then((yes) => {
+    if (toSend === take) sendLine.hidden = !yes;
+  });
+}
+
+sendButton.addEventListener("click", () => {
+  const take = toSend;
+  if (!take) return;
+  sendButton.disabled = true;
+  sentText.textContent = "Sending…";
+  const link = listener.audio().then(({ wav, seconds }) =>
+    sendTake(wav, { slug: piece.slug, title: piece.title, gabc: score.source, pulse: take.pulse, offset: take.offset, seconds, judged: take.judged }),
+  );
+  const copied = copyWhenReady(link);
+  link.then(
+    async (url) => {
+      const done = await copied;
+      if (toSend !== take) return;
+      toSend = null;
+      sendButton.hidden = true;
+      const a = document.createElement("a");
+      a.href = a.textContent = url;
+      sentText.replaceChildren(done ? "Link copied. Anyone with it can hear this take: " : "Send this link; anyone with it can hear this take: ", a);
+    },
+    (error: unknown) => {
+      if (toSend !== take) return;
+      sendButton.disabled = false;
+      sentText.textContent = "";
+      setStatus(`The take could not be sent: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  );
+});
+
 /** Shows a judged take, or clears it. */
 function showResult(judged: Judged | null): void {
   shown = judged;
   base = null;
   open = null;
+  toSend = null;
+  sendLine.hidden = true;
+  sendButton.hidden = sendButton.disabled = false;
+  sentText.textContent = "";
   // The ribbon says what was heard; the length of the take is no longer news (anything else
   // the status says stays).
   if (judged && status.textContent === heardLine) setStatus("");
@@ -368,7 +417,10 @@ async function takeScored(): Promise<void> {
     const at = firstNoteAt(due, sound);
     timing = { due, sound, at };
     const json = await listener.judge(score.source, guide.pulse, at - started.first);
-    if (going()) showResult(JSON.parse(json) as Judged);
+    if (!going()) return;
+    const judged = JSON.parse(json) as Judged;
+    showResult(judged);
+    offerSend({ pulse: guide.pulse, offset: at - started.first, judged });
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -438,7 +490,9 @@ if (test) {
     show: async (gabc: string, pulse: number, offset: number) => {
       if (gabc !== score.source) score.setChant(new Chant(gabc));
       const json = await listener.judge(gabc, pulse, offset);
-      showResult(JSON.parse(json) as Judged);
+      const judged = JSON.parse(json) as Judged;
+      showResult(judged);
+      offerSend({ pulse, offset, judged });
       return json;
     },
   };

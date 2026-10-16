@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import pkg from "../package.json";
 import { identity } from "./identity";
+import takes from "./takes";
 
 interface ChantRow {
   slug: string;
@@ -87,5 +88,7 @@ app.get("/signin", (c) => {
   c.header("Cache-Control", "no-store");
   return c.redirect(/^\/(?!\/)[^\\\x00-\x20]*$/.test(next) ? next : "/", 302);
 });
+
+app.route("/api/takes", takes);
 
 export default app;
