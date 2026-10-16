@@ -255,6 +255,12 @@ impl Listening {
     }
 }
 
+/// The take's frames as the live trace showed them while it was sung (see [`Listening::push`]):
+/// how [`mod@crate::entry`] hears the singer's first sound.
+pub fn live(samples: &[f32], sample_rate: f32) -> Vec<Frame> {
+    Listening::new(sample_rate).push(samples).to_vec()
+}
+
 /// Whether two pitches agree to within [`AGREE_CENTS`], octaves aside.
 pub fn agree(a: f32, b: f32) -> bool {
     crate::score::fold((a - b) * 100.0).abs() <= AGREE_CENTS

@@ -2,9 +2,9 @@
 // the ear tracks it as it comes, its frames return here for the live trace, and it hears the
 // whole take when it stops.
 import { audioContext } from "./audio";
-import type { Frame, FromEar, ToEar } from "./ear/worker";
+import type { Entry, Frame, FromEar, ToEar } from "./ear/worker";
 
-export type { Frame };
+export type { Entry, Frame };
 
 /** What the ear heard of a take. */
 export type Heard = Extract<FromEar, { type: "heard" }>;
@@ -59,6 +59,11 @@ class Ear {
     return this.ask<"heard">({ type: "start", sampleRate, audio }, [audio]);
   }
 
+  /** When the last take's first note starts, the note due `due` seconds into the take. */
+  async entry(due: number): Promise<Entry> {
+    return (await this.ask<"entry">({ type: "entry", due })).entry;
+  }
+
   /** The last take scored and judged against `gabc`'s notes, `pulse` seconds a pulse, the
    * first starting `offset` seconds into the take, as JSON. */
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
@@ -100,6 +105,13 @@ export class Listener {
     private readonly onFrame: (frame: Frame) => void,
     private readonly onFailed: (error: Error) => void,
   ) {}
+
+  /** When the last take's first note starts, once it has been heard; see `Ear.entry`. */
+  async entry(due: number): Promise<Entry> {
+    if (!this.ear || !this.heard) throw new Error("nothing heard");
+    await this.heard;
+    return this.ear.entry(due);
+  }
 
   /** The last take judged once it has been heard; see `Ear.judge`. */
   async judge(gabc: string, pulse: number, offset: number): Promise<string> {
