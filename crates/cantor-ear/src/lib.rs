@@ -108,22 +108,36 @@ pub struct Judged {
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
 /// judged on its `frames`; given `through`, the last note sung whole in a take stopped short,
-/// only its notes to the end of the last phrase finished there, none if none was: a phrase cut
-/// short would be judged as if it ended there, and its notes not sung would count as not heard.
+/// only to the end of the last phrase finished there (see [`finished`]).
 pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame], through: Option<usize>) -> Judged {
     let mut notes = notes_from_gabc(gabc, pulse_s);
-    if let Some(i) = through.filter(|&i| i + 1 < notes.len()) {
-        let at = notes[i].phrase;
-        let end = if notes[i + 1].phrase > at {
-            i + 1
-        } else {
-            notes.iter().position(|n| n.phrase == at).unwrap_or(0)
-        };
-        notes.truncate(end);
-    }
     for n in &mut notes {
         n.start_s += offset_s;
     }
+    judge_notes(notes, frames, through)
+}
+
+/// How many of `notes` a take is judged on when `through` is the last note sung whole before
+/// it was stopped: those to the end of the last phrase finished there, none if none was. A
+/// phrase cut short would be judged as if it ended there, and its notes not sung would count
+/// as not heard. A take not stopped, or stopped on or past its last note, is judged whole.
+pub fn finished(notes: &[Note], through: Option<usize>) -> usize {
+    let Some(i) = through.filter(|&i| i + 1 < notes.len()) else {
+        return notes.len();
+    };
+    let at = notes[i].phrase;
+    if notes[i + 1].phrase > at {
+        i + 1
+    } else {
+        notes.iter().position(|n| n.phrase == at).unwrap_or(0)
+    }
+}
+
+/// `notes`, timed on the take's clock, scored and judged on its `frames`, as [`judge_gabc`]
+/// judges a chant's: given `through`, only the [`finished`] ones. `cantor eval` judges takes
+/// stopped short with it, so the gates hold what the page is shown.
+pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize>) -> Judged {
+    notes.truncate(finished(&notes, through));
     let report = score(&notes, frames);
     let verdict = judge(&notes, &report);
     let ribbon = ribbon(&notes, frames, &report, &verdict);
@@ -395,6 +409,26 @@ mod tests {
         assert_eq!(judged(Some(3)), 2, "to the end of the last phrase finished");
         assert_eq!(judged(Some(4)), 5, "the last note is the whole chant");
         assert_eq!(judged(Some(9)), 5, "a note past the end is the whole chant");
+        // The chant's notes as judged are those the truncation finds, each where the offset puts it.
+        let notes = notes_from_gabc(gabc, 0.5);
+        for through in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(9)] {
+            let n = finished(&notes, through);
+            assert_eq!(judged(through), n, "{through:?}");
+            let shown = judge_gabc(gabc, 0.5, 2.0, &[], through);
+            let timed: Vec<Note> = notes
+                .iter()
+                .map(|note| Note {
+                    start_s: note.start_s + 2.0,
+                    ..*note
+                })
+                .collect();
+            assert_eq!(shown.notes, timed[..n]);
+            assert_eq!(
+                serde_json::to_string(&shown).unwrap(),
+                serde_json::to_string(&judge_notes(timed, &[], through)).unwrap()
+            );
+        }
+        assert_eq!(finished(&[], Some(0)), 0);
     }
 
     #[test]
