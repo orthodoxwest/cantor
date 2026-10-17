@@ -63,19 +63,21 @@
 //! stopped too (`real-takes-stopped`), halfway through the middle note of their first, second,
 //! middle and last phrases, and held to the expert gate and the same gates of stopping; their
 //! `through` is read from the singer's own note times, not the page's pulses, as a real take
-//! sung whole is timed. Their first phrases are recited, so only `expert-stopped`'s first take
+//! sung whole is timed, and they are judged by [`cantor_ear::judge_notes`]. Their first phrases are recited, so only `expert-stopped`'s first take
 //! holds a take stopped to the whole chant's phrase endings where the notes judged alone would
 //! be read as not recited.
 //!
 //! Every take stopped is compared with the take sung whole, judged on all of the chant: on the
 //! notes judged it must be judged alike, with the same outcome and marks there (a mark running
 //! past them compared as far as they go), the cadences of the phrases finished placed and
-//! called alike (as when a take is retimed), and the key within [`KEY_TOLERANCE`]. Every suite
+//! called alike (as when a take is retimed), the key within [`KEY_TOLERANCE`], and no note of
+//! 0.3 s or more, not planted silent, that the take sung whole heard lost (`lost`). Every suite
 //! with takes stopped is gated on it. The judge reads whether a chant is recited, and so where
-//! its cadences lie and whether its summary speaks of a reciting tone, from the whole chant
-//! ([`cantor_core::judge_part`]): the psalm's first verse alone, with four of its fourteen
-//! notes recited, would not be, and stopped there (`expert-stopped` 0) its second cadence
-//! would be "na-tions", not the tone's termination "all ye na-tions".
+//! its cadences lie, from the whole chant ([`cantor_core::judge_part`]), and the ear's
+//! [`cantor_ear::judge_notes`] tells its summary, and whether it speaks of a reciting tone,
+//! from the whole chant too: the psalm's first verse alone, with four of its fourteen notes
+//! recited, would not be, and stopped there (`expert-stopped` 0) its second cadence would be
+//! "na-tions", not the tone's termination "all ye na-tions".
 //!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
@@ -618,7 +620,12 @@ impl StopMetrics {
         } else {
             self.compared += 1;
             self.otherwise += u32::from(judged_otherwise(v, &s.whole, n));
-            let lost = |i: &usize| take.notes[*i].dur_s >= COUNTED_MIN_S && v.relative[*i].is_none() && s.whole.relative[*i].is_some();
+            let lost = |i: &usize| {
+                take.notes[*i].dur_s >= COUNTED_MIN_S
+                    && !take.planted[*i].silent
+                    && v.relative[*i].is_none()
+                    && s.whole.relative[*i].is_some()
+            };
             self.lost += (0..n.min(v.relative.len())).filter(lost).count() as u32;
             if let (Some(a), Some(b)) = (v.key_cents, s.whole.key_cents) {
                 self.key_apart_cents = self.key_apart_cents.max(fold(a - b).abs());
@@ -2092,8 +2099,7 @@ mod tests {
         assert_eq!(m.agreement_failures().len(), 2);
 
         // Or a note heard sung whole lost stopped, however few it is of the notes judged.
-        let whole_take = whole(&chant, &cents);
-        let lost = stopped_as(&chant, &cents, 20, whole_take, |frames, through| {
+        let unheard_5 = |frames: &[Frame], through: Option<usize>| {
             let note = &chant[5];
             let gap: Vec<Frame> = frames
                 .iter()
@@ -2101,11 +2107,16 @@ mod tests {
                 .cloned()
                 .collect();
             cantor_ear::judge_notes(chant.to_vec(), &gap, through)
-        });
+        };
+        let lost = stopped_as(&chant, &cents, 20, whole(&chant, &cents), unheard_5);
         assert!(lost.verdict.relative[5].is_none());
         let m = Metrics::of(&[lost]);
         assert_eq!(m.stopped.expect("stopped").lost, 1);
         assert_eq!(m.agreement_failures(), ["1 notes heard sung whole not heard stopped"]);
+        // But not a note planted silent, which the take sung whole should not have heard.
+        let mut silent = stopped_as(&chant, &cents, 20, whole(&chant, &cents), unheard_5);
+        silent.planted[5].silent = true;
+        assert_eq!(Metrics::of(&[silent]).stopped.expect("stopped").lost, 0);
     }
 
     #[test]
@@ -2119,6 +2130,29 @@ mod tests {
         assert_eq!(take_floor(6, true), 5);
         assert_eq!(take_floor(1, true), 0);
         assert_eq!(take_floor(0, true), 0);
+
+        // The scale's first phrase of eight, one note unheard: let by stopped, not sung whole.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let chant = notes_from_gabc(&std::fs::read_to_string(root.join("evals/chants/scale.gabc")).expect("gabc"), 0.5);
+        let take = |stopped: bool| {
+            let mut take = stopped_as(&chant, &[], 9, whole(&chant, &[]), |frames, through| {
+                let note = &chant[5];
+                let gap: Vec<Frame> = frames
+                    .iter()
+                    .filter(|f| f.t < note.start_s || f.t >= note.end_s())
+                    .cloned()
+                    .collect();
+                cantor_ear::judge_notes(chant.clone(), &gap, through)
+            });
+            assert_eq!(take.notes.len(), 8);
+            assert!(take.verdict.relative[5].is_none());
+            if !stopped {
+                take.stop = None;
+            }
+            take
+        };
+        assert_eq!(Metrics::of(&[take(true)]).takes_under_floor, 0);
+        assert_eq!(Metrics::of(&[take(false)]).takes_under_floor, 1);
     }
 
     #[test]
