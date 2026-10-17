@@ -15,6 +15,7 @@ declare global {
       centre: number | null;
       loop: [number, number] | null;
       replayed: { visited: number[]; playing: boolean };
+      sungAt: number | null;
       sung: Array<{ midi: number; start: number; duration: number }>;
       voice: "neutral" | "recorded" | "none";
       heard: () =>

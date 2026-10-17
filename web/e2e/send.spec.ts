@@ -85,7 +85,7 @@ test("a take being sent leaves the page free, and its link is given even if the 
   await page.getByRole("button", { name: "Send to a director" }).click();
   await expect.poll(() => reached).toBe(true);
   // Once its audio is read, the page may be used while the take is sent.
-  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Guide" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Sing a take" })).toBeEnabled();
   await expect(page.locator("#find")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Send to a director" })).toBeDisabled();

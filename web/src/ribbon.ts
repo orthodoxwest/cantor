@@ -24,6 +24,9 @@ export interface Band {
 
 /** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
 export interface Judged {
+  /** The notes as judged, each where it was due in the take, in seconds; from the ear only (a
+   * sent take keeps none), as many as were judged. */
+  notes?: Array<{ start_s: number; dur_s: number }>;
   /** The outcome and the report come from the ear only; a sent take keeps neither. */
   verdict: { outcome?: "heard" | "not-heard" | "masked"; key_cents: number | null; marks: Mark[] };
   /** The notes as scored: a note with no cents was not heard. */

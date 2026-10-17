@@ -27,6 +27,9 @@ export interface PlayOptions {
   lead?: number;
   /** The first and last note to play, by index; the whole chant when omitted. */
   range?: readonly [number, number];
+  /** Semitones to sing above where it is written, for this play alone; [`Guide.transpose`]
+   * when omitted. */
+  transpose?: number;
 }
 
 /** A play under way: when its pulse 0 falls on the audio clock, how long after that its
@@ -75,20 +78,20 @@ export class Guide {
     this.options.gabc = gabc;
   }
 
-  /** The notes to sing: the timeline at the core's times, moved by [`transpose`], then by
-   * whole octaves to where the voice is at home. */
-  notes(): SungNote[] {
+  /** The notes to sing: the timeline at the core's times, moved by `transpose` (any fraction of
+   * a semitone), then by whole octaves to where the voice is at home. */
+  notes(transpose = this.transpose): SungNote[] {
     const { notes } = this.score.timeline;
     const shift = octaveShift(
-      notes.map((n) => DO + n.semitones + this.transpose),
+      notes.map((n) => DO + n.semitones + transpose),
       this.options.table.centre,
     );
-    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + this.transpose + shift);
+    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + transpose + shift);
   }
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves
    * once it has started, or with null if it did not. */
-  async play({ voice = true, lead = 0, range }: PlayOptions = {}): Promise<Started | null> {
+  async play({ voice = true, lead = 0, range, transpose }: PlayOptions = {}): Promise<Started | null> {
     if (this.playing) return null;
     this.playing = true;
     const play = ++this.plays;
@@ -99,7 +102,7 @@ export class Guide {
       if (!this.playing || play !== this.plays) return null;
       const { table, gabc } = this.options;
       const onError = (error: unknown) => this.fail(play, error);
-      const all = this.notes();
+      const all = this.notes(transpose);
       const [from, to] = range ?? [0, all.length - 1];
       // A run is sung from its first note, after the lead.
       const base = all[from]?.start ?? 0;
