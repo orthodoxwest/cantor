@@ -189,6 +189,58 @@ main {
 :root {
   scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + var(--why-h, 0px) + 1.5rem);
 }
+/* A long chant in the bar beside a take, a segment a phrase as long as its notes are many, each
+   named by its words and ticked where the core tells of a place (sing.ts drawOverview): the
+   chosen pressed, a tap or a drag going to another. */
+.overview {
+  max-width: var(--measure);
+  margin: 0 auto 0.5rem;
+  display: flex;
+  gap: 2px;
+  height: 1.75rem;
+  touch-action: none;
+}
+.overview[hidden] {
+  display: none;
+}
+.overview button {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  padding: 0 3px;
+  border: 1px solid var(--gold-line);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.overview button[aria-pressed="true"] {
+  background: var(--pressed);
+  border-color: var(--rubric);
+  color: var(--text);
+}
+.overview button:focus-visible {
+  outline: 2px solid var(--rubric);
+  outline-offset: 1px;
+}
+.overview .tick {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 45%;
+  margin-left: -1px;
+  background: var(--rubric);
+  pointer-events: none;
+}
+.overview .tick.ending {
+  background: var(--trace);
+}
 /* As wide whatever it says, so that the steps either side stay where a finger left them, and
    near each other on a wide screen. */
 .chosen span {
@@ -276,6 +328,13 @@ main {
 .ribbon .band-held {
   stroke: var(--trace);
   stroke-width: 3.5;
+}
+/* Where the take is as it plays back, in the colour of its cursor; a tap goes through it to the
+   band under it. */
+.ribbon .playhead {
+  stroke: var(--trace);
+  stroke-width: 1.5;
+  pointer-events: none;
 }
 
 /* The marks (marks.ts): a ring round each note the core marked, its reason below when tapped. */

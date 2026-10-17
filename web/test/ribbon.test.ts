@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { describe, expect, it } from "vitest";
-import { describeKey, drawRibbon, MIN_WIDTH, places, RANGE_CENTS, STRIP, yOf } from "../src/ribbon";
+import { across, describeKey, drawRibbon, MIN_WIDTH, places, RANGE_CENTS, secondAt, STRIP, yOf } from "../src/ribbon";
 
 const note = (cx: number, line: number) => ({ cx, line }) as TimelineNote;
 
@@ -91,6 +91,24 @@ describe("ribbon", () => {
     const stacked = [note(157.5, 0), note(157.8, 0), note(163.5, 0)];
     const narrow = drawRibbon(stacked, [{ ...bands[0]!, index: 1 }], () => 0).match(/<line class="band-held" x1="([^"]*)" x2="([^"]*)"/)!.slice(1).map(Number);
     expect(narrow[1]! - narrow[0]!).toBeCloseTo(4);
+  });
+
+  it("puts a second of the take across its band, as the trace is drawn, and back", () => {
+    const [p] = places([note(100, 0), note(130, 0)]);
+    const band = { index: 0, from_s: 0.2, to_s: 0.9, start_s: 0, end_s: 1, cents: 0, trace: [] };
+    // Its band is 86 to 115: the whole note across it, less 2 each side, and an end before or after it.
+    expect(across(p!, band, 0)).toBe(88);
+    expect(across(p!, band, 0.5)).toBe(100.5);
+    expect(across(p!, band, 1)).toBe(113);
+    expect(across(p!, band, -3)).toBe(88);
+    expect(across(p!, band, 9)).toBe(113);
+    expect(secondAt(p!, band, 100.5)).toBe(0.5);
+    expect(secondAt(p!, band, 86)).toBe(0);
+    expect(secondAt(p!, band, 200)).toBe(1);
+    // A band sent before it had the whole note: across its sustained part.
+    const { start_s: _, end_s: __, ...old } = band;
+    expect(across(p!, old, 0.2)).toBe(88);
+    expect(secondAt(p!, old, 113)).toBeCloseTo(0.9);
   });
 
   it("re-bases the traces on a note, keeping every target where it was", () => {

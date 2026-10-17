@@ -73,7 +73,7 @@ export const MIN_WIDTH = 8;
 const HELD = 4;
 
 /** How a band sits on the page: its line, and its left and right edges. */
-interface Place {
+export interface Place {
   line: number;
   left: number;
   right: number;
@@ -93,6 +93,29 @@ export function places(notes: readonly TimelineNote[]): Place[] {
     }
     return place;
   });
+}
+
+/** The margin either side of a band that its trace is drawn within. */
+const MARGIN = 2;
+
+/** Where `t` seconds of the take falls across the band `band` placed at `p`, as its trace is
+ * drawn: its seconds across its width, but for a margin either side; at an end before or after
+ * them. */
+export function across(p: Place, band: Band, t: number): number {
+  const w = p.right - p.left;
+  const inner = Math.max(w - 2 * MARGIN, 0);
+  const [from, to] = span(band);
+  const at = to > from ? Math.min(Math.max((t - from) / (to - from), 0), 1) : 0;
+  return p.left + (w - inner) / 2 + at * inner;
+}
+
+/** The second of the take at `x` across the band `band` placed at `p`: [`across`] undone. */
+export function secondAt(p: Place, band: Band, x: number): number {
+  const w = p.right - p.left;
+  const inner = Math.max(w - 2 * MARGIN, 0);
+  const [from, to] = span(band);
+  const at = inner > 0 ? Math.min(Math.max((x - p.left - (w - inner) / 2) / inner, 0), 1) : 0;
+  return from + at * (to - from);
 }
 
 /** The y of `cents` (after re-basing) in a strip whose top is `top`. */
@@ -149,8 +172,6 @@ export function drawRibbon(
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
-    // Each band's seconds across its width, but for a margin either side.
-    const inner = Math.max(w - 4, 0);
     const xOf = (b: Band): ((t: number) => number) | null => {
       const [from, to] = span(b);
       if (!(to > from)) return null;
@@ -162,7 +183,7 @@ export function drawRibbon(
         const [x1, x2] = [own(band.from_s), own(band.to_s)];
         return (t) => x1 + ((t - from) / (to - from)) * (x2 - x1);
       }
-      return (t) => p.left + (w - inner) / 2 + ((t - from) / (to - from)) * inner;
+      return (t) => across(p, b, t);
     };
     const trace = (b: Band | undefined, by: number, cls: string) => {
       const x = b && b.trace.length > 0 ? xOf(b) : null;

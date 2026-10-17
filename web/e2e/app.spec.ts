@@ -469,6 +469,124 @@ test("your take plays back against the score with the cursor, and stops for the 
   await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
 });
 
+test("while your take plays back, a playhead crosses the bands, and a band tapped plays on from there", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(8000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.show(g, 1, 0.2), [gabc] as const);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  const hear = page.getByRole("button", { name: "Yours" });
+  const playhead = page.locator("#score .playhead");
+  await expect(playhead).toHaveAttribute("visibility", "hidden");
+  const visited = () => page.evaluate(() => window.__cantor.replayed.visited);
+  // On the band of the note the cursor is on, and moving along it.
+  const on = () =>
+    page.evaluate(() => {
+      const line = document.querySelector<SVGLineElement>("#score .playhead")!;
+      if (line.getAttribute("visibility") !== "visible") return null;
+      const x = line.getBoundingClientRect().left;
+      const bands = [...document.querySelectorAll("#score [data-band]")];
+      return bands.findIndex((b) => {
+        const box = b.querySelector(".band-hit")!.getBoundingClientRect();
+        return x >= box.left - 0.5 && x <= box.right + 0.5;
+      });
+    });
+  await hear.click();
+  await expect.poll(on).toBe(0);
+  const x0 = await playhead.getAttribute("x1");
+  await expect.poll(() => playhead.getAttribute("x1")).not.toBe(x0);
+  // Tapped three quarters across the band of "lu", the take plays on from there, Yours still
+  // pressed and no phrase chosen.
+  const lu = page.locator('#score [data-band="4"] .band-hit');
+  const box = (await lu.boundingBox())!;
+  await lu.click({ position: { x: box.width * 0.75, y: box.height / 2 } });
+  await expect.poll(visited).toEqual([ids[4]]);
+  await expect.poll(on).toBe(4);
+  await expect(hear).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  // Each band is named for it while the take plays; from the keyboard, a band plays on from its
+  // note's start.
+  await expect(page.locator('#score [data-band="0"]')).toHaveAttribute("aria-label", "Note 1: play your take on from here");
+  await page.getByRole("button", { name: "Note 2: play your take on from here", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await visited())[0]).toBe(ids[1]);
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  // It ends by itself, and the playhead goes, and the bands choose again.
+  await expect(hear).toHaveAttribute("aria-pressed", "false", { timeout: 15_000 });
+  await expect(playhead).toHaveAttribute("visibility", "hidden");
+  await expect(page.locator('#score [data-band="0"]')).toHaveAttribute("aria-label", "Choose the phrase of note 1");
+  // With a phrase chosen, a band past it chooses as before, which stops the take.
+  await page.getByRole("button", { name: "Choose the phrase of note 1", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 1]);
+  await hear.click();
+  await expect.poll(on).toBe(0);
+  await page.locator('#score [data-band="4"] .band-hit').click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 5]);
+  await expect(hear).toHaveAttribute("aria-pressed", "false");
+  await expect(playhead).toHaveAttribute("visibility", "hidden");
+});
+
+test("beside a take of a long chant, the bar has a segment a phrase to go to it, by tap, keyboard or drag", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  await open(page);
+  // Sixteen phrases of three notes, the third of each a third below the A4 heard.
+  const phrase = (w: string) => `${w}(h) ${w}(h) ${w}(f) (;)`;
+  const words = ["Kyrie", "eleison", "Christe", "eleison", "Kyrie", "eleison", "Domine", "Deus", "Agnus", "Dei", "Filius", "Patris", "miserere", "nobis", "suscipe", "precem"];
+  const gabc = `(c4) ${words.map(phrase).join(" ")} (::)`.replace(/\(;\) \(::\)$/, "(::)");
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  const overview = page.locator("#overview");
+  await expect(overview).toBeHidden();
+  // Heard throughout, at a quick pulse.
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(13000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const { verdict, endings } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.2, 0.2), [gabc] as const));
+  expect(verdict.key_cents).not.toBeNull();
+  await expect(overview).toBeVisible();
+  const segments = overview.getByRole("button");
+  await expect(segments).toHaveCount(16);
+  // Named by its words, ticked at each place: the marks, and the endings no mark tells of.
+  await expect(segments.nth(7)).toHaveAccessibleName(/^Phrase 8, “Deus Deus Deus”/);
+  const unfolded = (endings as Array<{ mark: number | null }> | undefined)?.filter((e) => e.mark === null).length ?? 0;
+  expect(await overview.locator(".tick").count()).toBe(verdict.marks.length + unfolded);
+  // One tab stop, and the arrows move along.
+  expect(await segments.evaluateAll((els) => els.map((el) => (el as HTMLElement).tabIndex))).toEqual([0, ...Array(15).fill(-1)]);
+  // A tap chooses its phrase, pressed, and brings its start into view above the bar.
+  await segments.nth(7).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([21, 23]);
+  await expect(segments.nth(7)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#chosen-text")).toHaveText("Notes 22 to 24 · “Deus … Deus”");
+  const clear = async (i: number) =>
+    page.evaluate((i) => {
+      const band = document.querySelector(`#score [data-band="${i}"]`)!.getBoundingClientRect();
+      return band.top >= 0 && band.bottom <= document.querySelector(".bar")!.getBoundingClientRect().top + 1;
+    }, i);
+  await expect.poll(() => clear(21)).toBe(true);
+  await page.keyboard.press("ArrowLeft");
+  await expect(segments.nth(6)).toBeFocused();
+  await page.keyboard.press("Enter");
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([18, 20]);
+  await expect.poll(() => clear(18)).toBe(true);
+  // A drag along it goes to each phrase it passes, ending on the last.
+  const from = (await segments.nth(1).boundingBox())!;
+  const to = (await segments.nth(4).boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([12, 14]);
+  await expect.poll(() => clear(12)).toBe(true);
+  // Whole chant lets it go; a short chant has none.
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  expect(await segments.evaluateAll((els) => els.filter((el) => el.getAttribute("aria-pressed") === "true").length)).toBe(0);
+  await page.evaluate(() => window.__cantor.show("(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)", 0.5, 0.2));
+  await expect(overview).toBeHidden();
+});
+
 test("the screen is kept on while the guide plays and through a take, and let go after", async ({ page }) => {
   // The browser's lock, faked: whether one is held.
   await page.addInitScript(() => {

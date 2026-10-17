@@ -70,7 +70,7 @@
         <p id="in-key-line" class="in-key" hidden><label><input id="in-key" type="checkbox" checked /> The guide sings in your key</label></p>
         <details id="reading" class="reading" hidden>
           <summary>How to read the bars under the score</summary>
-          <p>Under each line of the score, a short bar shows the pitch you held on each note, against a line for the note itself: above it is sharp, below it flat. Tap a note, or the bars under it, to choose its phrase, or go from mark to mark with ‹ and ›. Then <b>Compare</b> plays the guide there and then you; <b>Guide</b> and <b>Yours</b> play each alone, once, and <b>Repeat</b> plays the guide over and over.</p>
+          <p>Under each line of the score, a short bar shows the pitch you held on each note, against a line for the note itself: above it is sharp, below it flat. Tap a note, or the bars under it, to choose its phrase, or go from mark to mark with ‹ and ›. Then <b>Compare</b> plays the guide there and then you; <b>Guide</b> and <b>Yours</b> play each alone, once, and <b>Repeat</b> plays the guide over and over. While Yours plays, a line crosses the bars where it is; tap the bars to play on from there. Beside a long chant, a strip above the steps has a segment for each phrase: tap one, or drag along them, to go there.</p>
         </details>
         <p id="recorded" hidden>The broad grey line under yours is a recording of this chant.</p>
         <p id="send-line" class="send" hidden>
@@ -95,6 +95,7 @@
     </main>
 
     <div class="bar">
+      <div id="overview" class="overview" role="group" aria-label="The chant, phrase by phrase" hidden></div>
       <div id="chosen" class="chosen" hidden>
         <button id="prev" class="btn step" type="button" aria-label="Previous mark" title="Previous mark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg></button>
         <span id="chosen-text" aria-live="polite"></span>
