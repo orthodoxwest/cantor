@@ -161,9 +161,11 @@ pub struct Sung {
 }
 
 /// The notes of a part with their diction: each word's syllables read together, so English
-/// rules see the whole word.
+/// rules see the whole word. A syllable with no letters continues the melisma before it, as
+/// after a breath mid-melisma, so it keeps that syllable's vowel without its consonants.
 pub fn part(language: Language, lyrics: &[Lyric]) -> Vec<Sung> {
     let mut out = Vec::with_capacity(lyrics.len());
+    let mut sung: Option<Diction> = None;
     let mut i = 0;
     while i < lyrics.len() {
         let word = lyrics[i].word;
@@ -182,7 +184,19 @@ pub fn part(language: Language, lyrics: &[Lyric]) -> Vec<Sung> {
             }
             index_of.push(texts.len() - 1);
         }
-        let dictions: Vec<Diction> = (0..texts.len()).map(|k| diction(language, &texts, k)).collect();
+        let mut dictions: Vec<Diction> = (0..texts.len()).map(|k| diction(language, &texts, k)).collect();
+        for (d, text) in dictions.iter_mut().zip(&texts) {
+            if letters(text).is_empty()
+                && let Some(before) = sung
+            {
+                *d = Diction {
+                    onset: Consonants::None,
+                    coda: Consonants::None,
+                    ..before
+                };
+            }
+            sung = Some(*d);
+        }
         for (k, n) in notes.iter().enumerate() {
             out.push(Sung {
                 note: n.note,

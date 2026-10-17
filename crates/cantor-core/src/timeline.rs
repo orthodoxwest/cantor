@@ -102,6 +102,19 @@ mod tests {
     }
 
     #[test]
+    fn a_melisma_continued_after_a_breath_keeps_its_vowel() {
+        use crate::diction::{Consonants, Vowel};
+        let sung = part_from_gabc("(c4) I(g)te,(hg) (,) (gf) mis(e)sa(e) (::)", 0.5);
+        let vowels: Vec<Vowel> = sung.iter().map(|s| s.diction.vowel).collect();
+        assert_eq!(
+            vowels,
+            [Vowel::Iy, Vowel::Eh, Vowel::Eh, Vowel::Eh, Vowel::Eh, Vowel::Iy, Vowel::Aa]
+        );
+        assert!(sung[3].new_syllable && sung[3].note.start_s > sung[2].note.end_s());
+        assert_eq!((sung[3].diction.onset, sung[3].diction.coda), (Consonants::None, Consonants::None));
+    }
+
+    #[test]
     fn a_bar_leaves_a_gap_and_starts_a_phrase() {
         let notes = notes_from_gabc("(c1) a(d) b(e) (:) c(f) (::)", 1.0);
         assert_eq!(notes.len(), 3);
