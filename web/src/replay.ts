@@ -121,7 +121,9 @@ export class Replay {
     const { timeline } = this.score;
     const bar = t >= at.start + at.duration ? timeline.pauses.find((p) => p.beforeNote === i + 1 && p.bar)?.bar : undefined;
     if (bar) return this.cursor.show(bar.cx, this.score.line(bar.line), null, true);
-    const note = timeline.notes[i]!;
+    // The ear's notes are the score's; were they ever counted apart, the cursor goes.
+    const note = timeline.notes[i];
+    if (!note) return this.cursor.hide();
     if (this.visited.at(-1) !== note.id) this.visited.push(note.id);
     this.cursor.show(note.cx, this.score.line(note.line), note.id, true);
   }

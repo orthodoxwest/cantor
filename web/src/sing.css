@@ -189,10 +189,15 @@ main {
 :root {
   scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + var(--why-h, 0px) + 1.5rem);
 }
+/* As wide whatever it says, so that the steps either side stay where a finger left them, and
+   near each other on a wide screen. */
 .chosen span {
-  flex: 1;
+  flex: 0 1 20rem;
   min-width: 0;
   color: var(--text);
+}
+#unchoose {
+  margin-left: auto;
 }
 .chosen .btn {
   flex: none;
@@ -360,17 +365,21 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
 /* Outside a take the readout has nothing to say, and in one Start note and Drone are off;
    beside a take shown, Yours has Start note's room (a take gives its opening notes anyway). So
    on a narrow screen the bar keeps to one row, or beside a take two: Compare, Guide and Yours,
-   then Drone and Sing a take. */
+   then Repeat, Drone and Sing a take. */
 @media (max-width: 699.98px) {
   body:not(.taking) #readout,
   body:not(.taking) .bar .spacer,
-  body:has(#hear:not([hidden])) #note,
   body.taking #note,
   body.taking #drone {
     display: none;
   }
 }
-@media (max-width: 559.98px) {
+@media (max-width: 767.98px) {
+  body:has(#hear:not([hidden])) #note {
+    display: none;
+  }
+}
+@media (max-width: 699.98px) {
   body:has(#hear:not([hidden])) .bar-in {
     row-gap: 0.25rem;
   }

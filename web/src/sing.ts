@@ -153,6 +153,9 @@ const cutText = byId<HTMLParagraphElement>("cut");
 // from the note before, and the step into it to hear.
 const why = byId<HTMLDivElement>("why");
 const whyWords = byId<HTMLParagraphElement>("why-words");
+/** The card's words again where a screen reader hears them: always on the page, so that they
+ * are read out when a mark opens with its card. */
+const whySaid = byId<HTMLParagraphElement>("why-said");
 const whyStep = byId<HTMLSpanElement>("why-step");
 const stepButton = byId<HTMLButtonElement>("step");
 let shown: Judged | null = null;
@@ -163,6 +166,16 @@ let shownWorn = false;
 /** The Pitch the take shown was sung at, in semitones from the score's. */
 let shownPitch = 0;
 let open: number | null = null;
+/** The mark last opened, which the steps go on from while the run chosen holds it. */
+let lastOpen: number | null = null;
+
+/** Opens mark `k`, or none; the step of another mark stops, so that it does not play on under
+ * a card that has moved on. */
+function setOpen(k: number | null): void {
+  if (k !== open && playing?.button === stepButton) stopPlay();
+  open = k;
+  if (k !== null) lastOpen = k;
+}
 
 /** What the core found of a take it could not judge, and what to try. */
 function unheard(judged: Judged): string {
@@ -314,24 +327,30 @@ markedList.addEventListener("click", (e) => {
   const k = Number(button.dataset.opens);
   toggleMark(k);
   // The mark's ring on the score, clear of its card above the bar.
-  if (open !== null) bringIntoView(score.host.querySelector(`[data-mark="${k}"]`));
+  if (open !== null) bringIntoView(k);
 });
 
-/** Scrolls `el` (a mark's ring) to the middle of what the bar and the card leave of the window,
- * unless it is already clear of them. */
-function bringIntoView(el: Element | null): void {
-  if (!el) return;
-  const box = el.getBoundingClientRect();
+/** Scrolls mark `k`'s ring, with the band under its first note that shows why it is marked, to
+ * the middle of what the bar and the card leave of the window, unless they are already clear of
+ * them; where both do not fit, the ring goes to the top. */
+function bringIntoView(k: number): void {
+  const mark = shownMarks()[k];
+  const els = [score.host.querySelector(`[data-mark="${k}"]`), mark ? score.host.querySelector(`[data-band="${mark.first}"]`) : null];
+  const boxes = els.flatMap((el) => (el ? [el.getBoundingClientRect()] : []));
+  if (boxes.length === 0) return;
+  const top = Math.min(...boxes.map((b) => b.top));
+  const bottom = Math.max(...boxes.map((b) => b.bottom));
   // The page's scroll padding keeps clear of the bar and the card at the foot.
-  const bottom = window.innerHeight - (parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) || 0);
-  if (box.top >= 0 && box.bottom <= bottom) return;
+  const clear = window.innerHeight - (parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) || 0);
+  if (top >= 0 && bottom <= clear) return;
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  window.scrollBy({ top: (box.top + box.bottom) / 2 - bottom / 2, behavior: still ? "auto" : "smooth" });
+  const by = bottom - top <= clear ? (top + bottom) / 2 - clear / 2 : top - 8;
+  window.scrollBy({ top: by, behavior: still ? "auto" : "smooth" });
 }
 
 /** Shows `text` as the core's words for the mark open, announcing it only when it changes. */
 function say(text: string): void {
-  if (whyWords.textContent !== text) whyWords.textContent = text;
+  if (whyWords.textContent !== text) whyWords.textContent = whySaid.textContent = text;
 }
 
 /** The card of the mark open, if one is: the core's words, and how its first note is written
@@ -347,6 +366,8 @@ function drawCard(judged: Judged): void {
   const at = notes[first];
   // Of a verse not heard there is nothing of the singer's to hear.
   const step = before && at && mark.kind !== "verse-missing";
+  // A keyboard on a step going, as at a mark with none, stays in the card.
+  if (!step && document.activeElement === stepButton) byId("unopen").focus({ preventScroll: true });
   stepButton.hidden = !step;
   whyStep.textContent = step ? `${first === last ? "Written" : "Its first note is written"} ${writtenStep(at.semitones - before.semitones)}.` : "";
   // Measured now, not when the observer next runs, so that a ring brought into view at once
@@ -397,8 +418,10 @@ function drawResult(): void {
   drawCard(judged);
   keyText.textContent = keyLine(key, shownPitch);
 }
-// The guide sings anew from where it is next played.
-inKeyBox.addEventListener("change", () => stopPlay());
+// The guide sings anew from where it is next played; the take alone plays on.
+inKeyBox.addEventListener("change", () => {
+  if (playing && playing.button !== hearButton) stopPlay();
+});
 
 // A take shown may be sent, by a signed-in singer: the button gives a link to it.
 const sendLine = byId<HTMLParagraphElement>("send-line");
@@ -489,7 +512,8 @@ function showResult(judged: Judged | null, cut: number | null = null, worn = fal
   shownWorn = worn;
   // Pitch cannot change during a take, so it is the take's.
   shownPitch = judged ? Number(pitchSelect.value) : 0;
-  open = null;
+  setOpen(null);
+  lastOpen = null;
   toSend = null;
   sendLine.hidden = true;
   sendButton.hidden = sendButton.disabled = false;
@@ -531,7 +555,7 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   // The strips were drawn again; keep a keyboard's place, and the mark in view above its card.
   const now = score.host.querySelector<SVGGElement>(again);
   if (keyboard) now?.focus({ preventScroll: true });
-  if (mark && open !== null) bringIntoView(now);
+  if (mark && open !== null) bringIntoView(Number(mark.dataset.mark));
   return true;
 }
 score.host.addEventListener("click", (e) => {
@@ -554,7 +578,7 @@ function chooseMark(k: number): void {
   const mark = shownMarks()[k];
   if (!mark) return;
   if (taking || !guide) {
-    open = k;
+    setOpen(k);
     return drawResult();
   }
   const run = runOf(mark, score.timeline.pauses, score.timeline.notes.length);
@@ -565,17 +589,25 @@ function chooseMark(k: number): void {
 /** Opens mark `k`, or closes it, leaving its phrase chosen. */
 function toggleMark(k: number): void {
   if (open !== k) return chooseMark(k);
-  open = null;
+  setOpen(null);
   drawResult();
 }
 
-/** Opens the mark before or after the one open (or the phrase chosen), in the order sung, with
- * its ring brought into view. */
+/** The mark the steps go on from: the one open, or the one last opened while the run chosen
+ * still holds it; else none, and they go from the run chosen. */
+function stepFrom(): number | null {
+  if (open !== null) return open;
+  const last = lastOpen === null ? undefined : shownMarks()[lastOpen];
+  return last && loop && last.first >= loop[0] && last.last <= loop[1] ? lastOpen : null;
+}
+
+/** Opens the mark before or after the one open (or last opened, or the phrase chosen), in the
+ * order sung, with its ring brought into view. */
 function stepMark(by: 1 | -1): void {
-  const k = stepTo(shownMarks(), open, loop, by);
+  const k = stepTo(shownMarks(), stepFrom(), loop, by);
   if (k === null) return;
   chooseMark(k);
-  bringIntoView(score.host.querySelector(`[data-mark="${k}"]`));
+  bringIntoView(k);
 }
 
 const readout = byId<HTMLOutputElement>("readout");
@@ -790,7 +822,7 @@ for (const select of [speedSelect, pitchSelect]) {
 // A loop: tapping a note or its syllable plays its phrase, between divisions (loop.ts), over and
 // over, the cursor following; tapping another phrase stretches the loop to it, a bar loops the
 // phrase it ends, and a tap in the loop, or Whole chant, lets it go. Beside a take the run chosen
-// is played once, by Compare, Guide or Yours.
+// is played once, by Compare, Guide or Yours, or by Repeat over and over.
 const loopText = byId<HTMLSpanElement>("loop-text");
 const unloopButton = byId<HTMLButtonElement>("unloop");
 // Beside a take, the bar names the mark open or the run chosen, steps from mark to mark, and
@@ -817,7 +849,7 @@ const BREATH = 2;
 /** Chooses the run `next` to play, or none, with mark `mark` open in it, or none. */
 function setLoop(next: [number, number] | null, mark: number | null = null): void {
   loop = next;
-  open = mark;
+  setOpen(mark);
   if (status.textContent === NONE_HEARD) setStatus("");
   const [a, b] = next ?? [0, -1];
   const ids = score.timeline.notes.slice(a, b + 1).map((n) => n.id);
@@ -851,8 +883,8 @@ function drawChosen(): void {
   unchooseButton.style.visibility = loop ? "" : "hidden";
   prevButton.hidden = nextButton.hidden = marks.length === 0;
   // At either end the step is off but keeps the keyboard.
-  prevButton.setAttribute("aria-disabled", String(stepTo(marks, open, loop, -1) === null));
-  nextButton.setAttribute("aria-disabled", String(stepTo(marks, open, loop, 1) === null));
+  prevButton.setAttribute("aria-disabled", String(stepTo(marks, stepFrom(), loop, -1) === null));
+  nextButton.setAttribute("aria-disabled", String(stepTo(marks, stepFrom(), loop, 1) === null));
   const mark = open === null ? undefined : marks[open];
   const quoted = (a: number, b: number) => {
     const sung = ends(a, b);
@@ -890,7 +922,7 @@ unchooseButton.addEventListener("click", () => {
 byId<HTMLButtonElement>("unopen").addEventListener("click", () => {
   if (open === null) return;
   const k = open;
-  open = null;
+  setOpen(null);
   drawResult();
   // The keyboard goes back to the mark's ring.
   score.host.querySelector<SVGGElement>(`[data-mark="${k}"]`)?.focus({ preventScroll: true });
@@ -931,23 +963,25 @@ function choose(i: number): void {
   setLoop(tapLoop(loop, i, score.timeline.pauses, score.timeline.notes.length));
 }
 
-// What plays, one thing at a time: the guide (Play, or beside a take Guide), the take (Yours),
-// or both in turn (Compare, and a card's Hear the step).
+// What plays, one thing at a time: the guide (Play; beside a take Guide once, Repeat over and
+// over), the take (Yours), or both in turn (Compare, and a card's Hear the step).
 const compareButton = byId<HTMLButtonElement>("compare");
 const hearButton = byId<HTMLButtonElement>("hear");
+const repeatButton = byId<HTMLButtonElement>("repeat");
 /** Counts plays, so a play stopped while it starts, or waits between its parts, does not go on. */
 let plays = 0;
-/** The play under way, until it ends or is stopped, and whether the take sounds in it. */
-let playing: { run: number; take: boolean } | null = null;
-/** The semitones from the score the guide's latest play was sung at, for the tests. */
-let sungAt: number | null = null;
+/** The play under way, until it ends or is stopped: its button, whether the take sounds in it,
+ * and whether the guide sings in it away from the Pitch, where a drone holds. */
+let playing: { run: number; button: HTMLButtonElement; take: boolean; moved: boolean } | null = null;
+/** How many plays of the guide have been asked for, for the tests. */
+let guidePlays = 0;
 
 function stopPlay(): void {
   plays++;
   playing = null;
   replay.stop();
   guide?.stop();
-  for (const button of [playButton, hearButton, compareButton, stepButton]) button.setAttribute("aria-pressed", "false");
+  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton]) button.setAttribute("aria-pressed", "false");
   letSleep("play");
 }
 
@@ -957,13 +991,14 @@ function stopHear(): void {
   if (playing?.take) stopPlay();
 }
 
-/** Starts a play, `take` if the take will sound in it, with `button` pressed; its run. */
-function begin(button: HTMLButtonElement, take: boolean): number {
+/** Starts a play with `button` pressed, `take` if the take will sound in it and `moved` if the
+ * guide will sing away from the Pitch; its run. A drone would cover the take, and clash with the
+ * guide moved, so it stops for either. */
+function begin(button: HTMLButtonElement, take: boolean, moved: boolean): number {
   stopPlay();
   stopPitch();
-  // A drone under the take would cover it.
-  if (take) stopDrone();
-  playing = { run: plays, take };
+  if (take || moved) stopDrone();
+  playing = { run: plays, button, take, moved };
   button.setAttribute("aria-pressed", "true");
   stayAwake("play");
   return plays;
@@ -972,19 +1007,23 @@ function begin(button: HTMLButtonElement, take: boolean): number {
 /** Whether the play `run` goes on. */
 const going = (run: number) => playing?.run === run;
 
-/** Plays the chant, or the loop: beside a take once, in the singer's key if they keep the guide
- * there; else over and over, until it ends or is stopped. */
-async function play(): Promise<void> {
+/** Has the guide play as `options` say, counting it. */
+function guided(options: Parameters<Guide["play"]>[0]): ReturnType<Guide["play"]> {
+  guidePlays++;
+  return guide!.play(options);
+}
+
+/** Plays the chant, or the run chosen, with `button` pressed: over and over until it is stopped,
+ * unless `once`; beside a take in the singer's key if they keep the guide there. */
+async function play(button: HTMLButtonElement, once: boolean): Promise<void> {
   if (!guide) return;
-  const run = begin(playButton, false);
-  const once = replayable !== null;
-  const transpose = once ? reviewTranspose() : undefined;
-  sungAt = transpose ?? guide.transpose;
+  const transpose = replayable ? reviewTranspose() : undefined;
+  const run = begin(button, false, transpose !== undefined);
   do {
-    const started = await guide.play({ range: loop ?? undefined, transpose });
+    const started = await guided({ range: loop ?? undefined, transpose });
     if (!going(run)) return;
-    // Its onStop has let Play go; while the loop goes round it stays pressed.
-    playButton.setAttribute("aria-pressed", "true");
+    // Its onStop has let the button go; while the loop goes round it stays pressed.
+    button.setAttribute("aria-pressed", "true");
     if (!started || !(await started.ended) || !going(run) || !loop || once) break;
     await wait(BREATH * guide.pulse);
   } while (going(run) && loop);
@@ -997,14 +1036,17 @@ async function play(): Promise<void> {
 // first.
 const replay = new Replay(score, cursor, () => hearButton.setAttribute("aria-pressed", "false"));
 /** The take shown, as it may be heard again: when each note judged was due in it, which for a
- * take stopped short is fewer notes than the chant's. */
-let replayable: { times: Timed[] } | null = null;
-/** The audio of the take shown, decoded, once it is first heard. */
+ * take stopped short is fewer notes than the chant's, and the seconds a pulse it was sung at. */
+let replayable: { times: Timed[]; pulse: number } | null = null;
+/** The audio of the take shown, decoded, once it is first heard; and how many times a take's
+ * audio has been decoded, for the tests. */
 let decoded: Promise<AudioBuffer> | null = null;
+let decodes = 0;
 
 /** The take shown's audio, decoded the first time it is heard and kept for the next. */
 function takeAudio(ctx: AudioContext): Promise<AudioBuffer> {
   if (!decoded) {
+    decodes++;
     const pending = listener.audio().then(({ wav }) => ctx.decodeAudioData(wav));
     // One that failed is fetched again the next time.
     pending.catch(() => {
@@ -1015,13 +1057,14 @@ function takeAudio(ctx: AudioContext): Promise<AudioBuffer> {
   return decoded;
 }
 
-/** Offers the take judged as `judged` to be heard again, or none; beside it, Play is Guide and
- * plays once, and Compare plays the guide and the take in turn. */
-function offerReplay(take: { judged: Judged } | null): void {
+/** Offers the take judged as `judged`, sung at `pulse` seconds a pulse, to be heard again, or
+ * none; beside it, Play is Guide and plays once, Repeat plays the guide over and over, and
+ * Compare plays the guide and the take in turn. */
+function offerReplay(take: { judged: Judged; pulse: number } | null): void {
   stopHear();
   decoded = null;
-  replayable = take && { times: (take.judged.notes ?? []).map((n) => ({ start: n.start_s, duration: n.dur_s })) };
-  hearButton.hidden = compareButton.hidden = !replayable;
+  replayable = take && { times: (take.judged.notes ?? []).map((n) => ({ start: n.start_s, duration: n.dur_s })), pulse: take.pulse };
+  hearButton.hidden = compareButton.hidden = repeatButton.hidden = !replayable;
   playButton.textContent = replayable ? "Guide" : "Play";
   playButton.classList.toggle("primary", !replayable);
   if (guide) playButton.title = replayable ? "The guide over the phrase chosen, once" : "";
@@ -1057,27 +1100,28 @@ async function hear(): Promise<void> {
   const range = heardRun(take, loop);
   if (range === false) return setStatus(NONE_HEARD, true);
   if (status.textContent === NONE_HEARD) setStatus("");
-  const run = begin(hearButton, true);
+  const run = begin(hearButton, true, false);
   await playTake(run, take, range);
   if (going(run)) stopPlay();
 }
 
 /** Plays the guide over notes `range` (the whole chant when null), where the singer started if
- * they keep it there, then after a breath the take over the same notes, once, with `button`
- * pressed: the model, then what was sung. */
+ * they keep it there and at the take's speed, then after a breath the take over the same notes,
+ * once, with `button` pressed: the model, then what was sung. Both go only as far as the take
+ * was judged. */
 async function compare(range: readonly [number, number] | null, button: HTMLButtonElement): Promise<void> {
   const take = replayable;
   if (!guide || !take) return;
-  const heard = heardRun(take, range);
+  const judged = take.times.length;
+  const heard = heardRun(take, range) ?? (judged > 0 && judged < score.timeline.notes.length ? ([0, judged - 1] as const) : undefined);
   if (heard === false) return setStatus(NONE_HEARD, true);
   if (status.textContent === NONE_HEARD) setStatus("");
-  const run = begin(button, true);
   const transpose = reviewTranspose();
-  sungAt = transpose ?? guide.transpose;
-  const started = await guide.play({ range: range ?? undefined, transpose });
+  const run = begin(button, true, transpose !== undefined);
+  const started = await guided({ range: heard, transpose, pulse: take.pulse });
   if (!going(run)) return;
   if (started && (await started.ended) && going(run)) {
-    await wait(BREATH * guide.pulse);
+    await wait(BREATH * take.pulse);
     if (going(run)) await playTake(run, take, heard);
   }
   if (going(run)) stopPlay();
@@ -1092,6 +1136,7 @@ function toggle(button: HTMLButtonElement, start: () => Promise<void>): void {
 }
 toggle(hearButton, hear);
 toggle(compareButton, () => compare(loop, compareButton));
+toggle(repeatButton, () => play(repeatButton, false));
 // The step into the mark open: the note before it and its first.
 toggle(stepButton, async () => {
   const mark = open === null ? undefined : shownMarks()[open];
@@ -1099,19 +1144,21 @@ toggle(stepButton, async () => {
 });
 
 if (!guide) {
-  playButton.title = noteButton.title = droneButton.title = compareButton.title = "The guide voice could not load.";
+  playButton.title = noteButton.title = droneButton.title = compareButton.title = repeatButton.title = "The guide voice could not load.";
   setStatus(playButton.title);
 } else {
-  playButton.disabled = noteButton.disabled = droneButton.disabled = compareButton.disabled = false;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = compareButton.disabled = repeatButton.disabled = false;
   droneButton.addEventListener("click", () => {
     if (droneButton.getAttribute("aria-pressed") === "true") return stopDrone();
-    stopHear();
+    // Not under the take, nor against the guide moved from the Pitch the drone holds.
+    if (playing?.take || playing?.moved) stopPlay();
     void startDrone();
   });
   playButton.addEventListener("click", () => {
     if (playButton.getAttribute("aria-pressed") === "true") return stopPlay();
     setStatus("");
-    void play();
+    // Beside a take, Guide plays once; Repeat goes over and over.
+    void play(playButton, replayable !== null);
   });
   noteButton.addEventListener("click", () => {
     if (noteButton.getAttribute("aria-pressed") === "true") return stopPitch();
@@ -1152,8 +1199,8 @@ function showMode(): void {
         ? "headphones are in"
         : "no headphones are in";
   modeText.textContent = worn
-    ? `A take is scored with the guide in your headphones (${why}). Play sings the chant to you and is never scored.`
-    : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). Play sings the chant to you and is never scored.`;
+    ? `A take is scored with the guide in your headphones (${why}). What the guide sings to you is never scored.`
+    : `A take is scored with the opening notes only, then the cursor leads, since through the speaker the microphone would hear the guide (${why}). What the guide sings to you is never scored.`;
   // A browser that names its devices but does not say which is playing can be checked.
   if (!chosen && detected === null && named) {
     const check = document.createElement("a");
@@ -1405,13 +1452,13 @@ if (test) {
     get drone() {
       return drone?.midi ?? null;
     },
-    /** The semitones from the score the guide's latest play was sung at. */
-    get sungAt() {
-      return sungAt;
+    /** The notes the guide's latest play sang, as MIDI, and how many plays have been asked of it. */
+    get played() {
+      return { midi: guide?.latest.map((n) => n.midi) ?? [], plays: guidePlays };
     },
     /** The notes the cursor has marked in the last take heard back, and whether it plays. */
     get replayed() {
-      return { visited: replay.visited, playing: replay.playing };
+      return { visited: replay.visited, playing: replay.playing, decodes };
     },
     /** The run looped, by note index, or null. */
     get loop() {

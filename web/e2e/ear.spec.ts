@@ -175,7 +175,19 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await expect(page.locator(`[data-mark="${second}"]`)).toHaveAttribute("aria-expanded", "true");
   await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "true");
   await expect(listed.nth(1)).toBeFocused();
-  await expect(page.locator(`[data-mark="${second}"]`)).toBeInViewport();
+  // Its ring and the band that shows why are on the screen, clear of the card.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ([k, first]) => {
+          const card = document.getElementById("why")!.getBoundingClientRect();
+          const boxes = [`[data-mark="${k}"]`, `[data-band="${first}"]`].map((q) => document.querySelector(q)!.getBoundingClientRect());
+          return boxes.every((b) => b.top >= 0 && b.bottom <= card.top + 1);
+        },
+        [second, got.verdict.marks[second].first as number] as const,
+      ),
+    )
+    .toBe(true);
   await listed.nth(1).click();
   await expect(page.locator("#why")).toBeHidden();
   await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "false");

@@ -30,6 +30,8 @@ export interface PlayOptions {
   /** Semitones to sing above where it is written, for this play alone; [`Guide.transpose`]
    * when omitted. */
   transpose?: number;
+  /** Seconds a pulse, for this play alone; [`Guide.pulse`] when omitted. */
+  pulse?: number;
 }
 
 /** A play under way: when its pulse 0 falls on the audio clock, how long after that its
@@ -48,6 +50,8 @@ export class Guide {
   transpose = 0;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
+  /** The notes the latest play sang, or would have with the voice. */
+  latest: SungNote[] = [];
   /** The index of the last note the cursor reached in the latest play, or null before the first. */
   reached: number | null = null;
   /** Whether the cursor follows a play under way: it has started, and not yet ended. */
@@ -78,20 +82,21 @@ export class Guide {
     this.options.gabc = gabc;
   }
 
-  /** The notes to sing: the timeline at the core's times, moved by `transpose` (any fraction of
-   * a semitone), then by whole octaves to where the voice is at home. */
-  notes(transpose = this.transpose): SungNote[] {
+  /** The notes to sing: the timeline at the core's times, `pulse` seconds a pulse, moved by
+   * `transpose` (any fraction of a semitone), then by whole octaves to where the voice is at
+   * home. */
+  notes(transpose = this.transpose, pulse = this.pulse): SungNote[] {
     const { notes } = this.score.timeline;
     const shift = octaveShift(
       notes.map((n) => DO + n.semitones + transpose),
       this.options.table.centre,
     );
-    return fromTimeline(notes, this.pulse, (semitones) => DO + semitones + transpose + shift);
+    return fromTimeline(notes, pulse, (semitones) => DO + semitones + transpose + shift);
   }
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves
    * once it has started, or with null if it did not. */
-  async play({ voice = true, lead = 0, range, transpose }: PlayOptions = {}): Promise<Started | null> {
+  async play({ voice = true, lead = 0, range, transpose, pulse = this.pulse }: PlayOptions = {}): Promise<Started | null> {
     if (this.playing) return null;
     this.playing = true;
     const play = ++this.plays;
@@ -102,11 +107,12 @@ export class Guide {
       if (!this.playing || play !== this.plays) return null;
       const { table, gabc } = this.options;
       const onError = (error: unknown) => this.fail(play, error);
-      const all = this.notes(transpose);
+      const all = this.notes(transpose, pulse);
       const [from, to] = range ?? [0, all.length - 1];
       // A run is sung from its first note, after the lead.
       const base = all[from]?.start ?? 0;
       const run = range ? all.slice(from, to + 1).map((n) => ({ ...n, start: n.start - base })) : all;
+      this.latest = run;
       if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError });
     } catch (error) {
       this.fail(play, error);
@@ -119,7 +125,7 @@ export class Guide {
     this.singing = singing;
     this.visited.length = 0;
     this.reached = null;
-    this.times = timed(this.score.timeline.notes, this.pulse);
+    this.times = timed(this.score.timeline.notes, pulse);
     const [from, to] = range ?? [0, this.times.length - 1];
     this.last = to;
     const begins = this.times[from]?.start ?? 0;
@@ -158,7 +164,7 @@ export class Guide {
   private fail(play: number, error: unknown): void {
     console.error("guide:", error);
     if (!this.playing || play !== this.plays) return;
-    this.options.onError?.("The guide voice failed. Press Play to try again.");
+    this.options.onError?.("The guide voice failed. Try again.");
     this.halt(false);
   }
 
