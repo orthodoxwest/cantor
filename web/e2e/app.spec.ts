@@ -293,7 +293,9 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   await page.locator("#marked button").first().click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
   await expect(chosen).toBeVisible();
-  // The mark's words stay in view above the bar, however tall the chosen line makes it.
+  // The mark's words stay in view above the bar, however tall the chosen line makes it on a phone.
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bar-h"))).not.toBe("");
   const why = await page.locator("#why").boundingBox();
   const bar = await page.locator(".bar").boundingBox();
   expect(why!.y + why!.height).toBeLessThanOrEqual(bar!.y + 1);
@@ -320,6 +322,10 @@ test("a phrase after where a take was stopped is sung by the guide, and your tak
   await page.getByRole("button", { name: "Your take" }).click();
   await expect(page.locator("#status")).toHaveText("You stopped the take before this phrase, so there is none of it to hear.");
   expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
+  // Its band is still reached by the keyboard; another choice lets the words go.
+  await expect(page.locator('[data-band][tabindex="0"]')).toHaveCount(1);
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  await expect(page.locator("#status")).toHaveText("");
 });
 
 test("on a phone, beside a take, the bar keeps Drone and gives Your take Start note's room", async ({ page }) => {
@@ -338,7 +344,8 @@ test("on a phone, beside a take, the bar keeps Drone and gives Your take Start n
   await page.getByRole("button", { name: "Play" }).click();
   await page.getByRole("button", { name: "Play" }).click();
   await expect(page.getByRole("button", { name: "Drone" })).toBeVisible();
-  // The bar is one row.
+  // The bar is one row, in the page's own face.
+  await page.evaluate(() => document.fonts.ready);
   const tops = await page.locator(".bar-in > :visible").evaluateAll((els) => new Set(els.map((el) => Math.round(el.getBoundingClientRect().top))).size);
   expect(tops).toBe(1);
 });

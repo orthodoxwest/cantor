@@ -345,8 +345,8 @@ function showResult(judged: Judged | null, cut: number | null = null, worn = fal
   if (!judged) offerReplay(null);
   // A run chosen before the take, or beside another, is let go: Your take plays the take whole
   // until a phrase of it is chosen.
-  if (judged && loop) setLoop(null);
   shown = judged;
+  if (judged && loop) setLoop(null);
   cutAt = judged ? cut : null;
   shownWorn = worn;
   open = null;
@@ -432,6 +432,9 @@ function setStatus(text: string, news = false): void {
 }
 /** What the status said of the last take heard. */
 let heardLine = "";
+/** What Your take says of a phrase past where the take was stopped, until another is chosen
+ * or a take heard. */
+const NONE_HEARD = "You stopped the take before this phrase, so there is none of it to hear.";
 const failedListening = (error: unknown) =>
   setStatus(`Listening failed: ${error instanceof Error ? error.message : String(error)}`);
 /** Counts takes, so a take stopped while it is starting does not go on. */
@@ -639,7 +642,7 @@ const loopStyle = document.head.appendChild(document.createElement("style"));
 // The bar's height, which the chosen line or a second row of buttons changes, for what must
 // stay clear of it (the words of a mark, the foot of the score).
 const bar = document.querySelector<HTMLElement>(".bar")!;
-new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${bar.offsetHeight}px`)).observe(bar);
+new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${bar.getBoundingClientRect().height}px`)).observe(bar);
 let loop: [number, number] | null = null;
 /** Counts plays, so a loop stopped while it waits between times round does not go on. */
 let plays = 0;
@@ -650,6 +653,7 @@ const BREATH = 2;
 
 function setLoop(next: [number, number] | null): void {
   loop = next;
+  if (status.textContent === NONE_HEARD) setStatus("");
   const [a, b] = next ?? [0, -1];
   const ids = score.timeline.notes.slice(a, b + 1).map((n) => n.id);
   // A rule rather than classes on the ink, so the run stays marked when the score is drawn again.
@@ -785,7 +789,8 @@ async function hear(): Promise<void> {
   if (!take) return;
   // The run chosen, as far as the take was judged; none of it, if it stopped before.
   const range = loop && ([loop[0], Math.min(loop[1], take.judged - 1)] as const);
-  if (range && range[0] > range[1]) return setStatus("You stopped the take before this phrase, so there is none of it to hear.", true);
+  if (range && range[0] > range[1]) return setStatus(NONE_HEARD, true);
+  if (status.textContent === NONE_HEARD) setStatus("");
   stopPlay();
   stopPitch();
   stopDrone();

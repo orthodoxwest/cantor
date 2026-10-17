@@ -100,7 +100,9 @@ export function drawRibbon(
   const recordedBase = typeof baseIndex === "number" ? (recorded.find((b) => b.index === baseIndex)?.cents ?? null) : 0;
   const [first, last] = baseIndex === null ? [null, null] : typeof baseIndex === "number" ? [baseIndex, baseIndex] : baseIndex;
   // Choosing among every note, only one band is a tab stop; the arrows move along.
-  const stop = first ?? bands[0]?.index;
+  // The first band pressed, or the first drawn when none is (a run chosen past a take stopped).
+  const inRun = (index: number) => first !== null && last !== null && index >= first && index <= last;
+  const stop = bands.find((b) => inRun(b.index))?.index ?? bands[0]?.index;
   const sung = new Map(recordedBase === null ? [] : recorded.map((b) => [b.index, b]));
   const out: string[] = [];
   for (const band of bands) {
@@ -113,7 +115,7 @@ export function drawRibbon(
     const cents = heard ? band.cents!.toFixed(1) : "";
     const label = choose ? choose(band.index) : heard ? `Measure from note ${band.index + 1}` : null;
     const tab = choose && band.index !== stop ? "-1" : "0";
-    const pressed = first !== null && last !== null && band.index >= first && band.index <= last;
+    const pressed = inRun(band.index);
     const attrs =
       label === null
         ? `data-band="${band.index}" data-cents=""`
