@@ -1112,28 +1112,35 @@ function phrases(): Array<[number, number]> {
 }
 
 /** The runs of the overview's segments, across `width` pixels with `gap` between them: a
- * phrase each, or where more phrases than fit, as few of them together as make them fit. */
+ * phrase each, or where more phrases than fit, as many segments as fit, the phrases shared
+ * among them as evenly as they go. */
 function segmentRuns(all: ReadonlyArray<[number, number]>, width: number, gap: number): Array<[number, number]> {
   const fit = Math.max(1, Math.floor((width + gap) / (SEGMENT_PX + gap)));
-  const per = Math.ceil(all.length / fit);
+  const count = Math.min(all.length, fit);
   const out: Array<[number, number]> = [];
-  for (let i = 0; i < all.length; i += per) out.push([all[i]![0], all[Math.min(i + per, all.length) - 1]![1]]);
+  for (let k = 0; k < count; k++) {
+    const [from, to] = [Math.floor((k * all.length) / count), Math.floor(((k + 1) * all.length) / count) - 1];
+    out.push([all[from]![0], all[to]![1]]);
+  }
   return out;
 }
 
 /** The overview, beside a heard take of a chant of [`OVERVIEW_PHRASES`] phrases or more whose
- * score is taller than the window: a segment a phrase (or a few, where they would not all fit),
- * as wide as its notes are many, named by its words and ticked at the note each place the core
- * tells of is shown at; those in the run chosen current, the first of them (else the first) the
- * one tab stop. Made again only for another take, chant or width, so that a segment keeps the
- * keyboard. */
+ * score is taller than the window, while no card is open (the card is of one place; the strip is
+ * to go elsewhere): a segment a phrase (or a few, where they would not all fit), as wide as its
+ * notes are many, named by its words and ticked at the note each place the core tells of is
+ * shown at; those in the run chosen current. The one tab stop is the segment with the keyboard,
+ * else the first current one, else the first. Made again only for another take, chant or width,
+ * and then the keyboard goes to the segment of the run it was on. */
 function drawOverview(): void {
-  const all = shown && !taking && shown.verdict.key_cents !== null ? phrases() : [];
+  const all = shown && !taking && shown.verdict.key_cents !== null && why.hidden ? phrases() : [];
   overview.hidden = all.length < OVERVIEW_PHRASES || score.host.getBoundingClientRect().height <= window.innerHeight;
   if (overview.hidden || !shown) {
     overviewOf = null;
     return overview.replaceChildren();
   }
+  const focused = segments().find((b) => b === document.activeElement);
+  const focusedRun = focused ? runOfSegment(focused) : null;
   const runs = segmentRuns(all, overview.clientWidth, parseFloat(getComputedStyle(overview).columnGap) || 0);
   const made = runs.map(([a, b]) => `${a}-${b}`).join(" ");
   if (overviewOf?.judged !== shown || overviewOf.source !== score.source || overviewOf.runs !== made) {
@@ -1164,20 +1171,24 @@ function drawOverview(): void {
     );
   }
   const buttons = segments();
-  const current = buttons.map((button) => {
-    const [a, b] = runOfSegment(button);
-    return loop !== null && loop[0] <= b && loop[1] >= a;
-  });
-  const stop = Math.max(current.indexOf(true), 0);
+  const over = (button: HTMLButtonElement, [a, b]: readonly [number, number]) => {
+    const [c, d] = runOfSegment(button);
+    return a <= d && b >= c;
+  };
+  const current = buttons.map((button) => loop !== null && over(button, loop));
+  const keyboard = focusedRun ? buttons.findIndex((button) => over(button, focusedRun)) : -1;
+  const stop = keyboard >= 0 ? keyboard : Math.max(current.indexOf(true), 0);
   buttons.forEach((button, i) => {
     if (current[i]) button.setAttribute("aria-current", "true");
     else button.removeAttribute("aria-current");
     button.tabIndex = i === stop ? 0 : -1;
   });
+  if (focusedRun && buttons[stop] !== document.activeElement) buttons[stop]?.focus({ preventScroll: true });
 }
-// Whether the score is taller than the window changes as either does.
+// Whether the score is taller than the window changes as either does; the strip shown or hidden
+// changes the bar, measured after it.
 window.addEventListener("resize", () => drawOverview());
-new ResizeObserver(() => drawOverview()).observe(score.host);
+new ResizeObserver(() => requestAnimationFrame(() => drawOverview())).observe(score.host);
 
 /** The overview's segments, in order. */
 function segments(): HTMLButtonElement[] {
@@ -1259,12 +1270,29 @@ function endDrag(ended: PointerEvent | null): void {
   drag.at?.classList.remove("passing");
   if (!ended || ended.type !== "pointerup" || !drag.moved || !drag.at) return;
   const keyboard = overview.contains(document.activeElement);
-  goTo(drag.at, "auto");
+  // A touch that moves less than the browser's slop is still a tap to it, and its click would
+  // land on whatever the bar, drawn again, now has under the finger.
+  afterDrag = true;
+  // The keyboard first, so that the segment chosen is the tab stop as it is drawn.
   if (keyboard) drag.at.focus({ preventScroll: true });
+  goTo(drag.at, "auto");
 }
 // Let go anywhere: off the overview, a press does not go on as a drag.
 window.addEventListener("pointerup", (e) => endDrag(e));
 window.addEventListener("pointercancel", (e) => endDrag(e));
+/** Whether the click that may follow a drag just chosen is to be let fall. */
+let afterDrag = false;
+window.addEventListener("pointerdown", () => (afterDrag = false), true);
+window.addEventListener(
+  "click",
+  (e) => {
+    if (!afterDrag) return;
+    afterDrag = false;
+    e.preventDefault();
+    e.stopPropagation();
+  },
+  true,
+);
 
 prevButton.addEventListener("click", () => {
   if (prevButton.getAttribute("aria-disabled") !== "true") stepSpot(-1);

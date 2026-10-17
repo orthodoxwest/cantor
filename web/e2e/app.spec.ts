@@ -556,12 +556,13 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
   const overview = page.locator("#overview");
   await expect(overview).toBeHidden();
-  // Heard throughout.
+  // Heard throughout: the chant runs 23.5 s.
   await page.evaluate(() => void window.__cantor.listen());
   await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
-  await page.waitForTimeout(17000);
+  await page.waitForTimeout(25000);
   await page.evaluate(() => void window.__cantor.listen());
-  const { verdict, endings } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const { verdict, endings, report } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  expect(report.notes.every((n: { cents: number | null }) => n.cents !== null)).toBe(true);
   expect(verdict.marks.map((m: { first: number }) => m.first)).toEqual([15]);
   expect(endings.map((e: { note: number; mark: number | null }) => [e.note, e.mark])).toEqual([
     [1, null],
@@ -589,6 +590,11 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   await expect(segments.nth(15)).toBeFocused();
   await page.keyboard.press("Home");
   await expect(segments.nth(0)).toBeFocused();
+  // The window resized, the segment with the keyboard keeps it, and is the tab stop.
+  await page.setViewportSize({ width: 391, height: 600 });
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(segments.nth(0)).toBeFocused();
+  expect(await segments.nth(0).evaluate((el) => (el as HTMLElement).tabIndex)).toBe(0);
   // A tap chooses its phrase, current, and brings its start into view above the bar.
   await segments.nth(7).click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([14, 15]);
@@ -619,14 +625,24 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([8, 9]);
   await expect(overview.locator(".passing")).toHaveCount(0);
   await expect.poll(() => clear(8)).toBe(true);
-  // A press let go off the strip goes nowhere, and leaves no drag for the mouse to carry on.
+  // A press let go off the strip goes nowhere, and leaves no drag for the mouse to carry on:
+  // nothing shown as passed, the page not moved.
   const [x, y] = await middle(2);
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x, y - 80, { steps: 4 });
   await page.mouse.up();
+  const scrolled = await page.evaluate(() => scrollY);
   await page.mouse.move(...(await middle(12)), { steps: 8 });
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([8, 9]);
+  await expect(overview.locator(".passing")).toHaveCount(0);
+  expect(await page.evaluate(() => scrollY)).toBe(scrolled);
+  // A card open is of one place: the strip, to go elsewhere, is put away until it is closed.
+  await page.locator("#next").click();
+  await expect(page.locator("#why")).toBeVisible();
+  await expect(overview).toBeHidden();
+  await page.locator("#unopen").click();
+  await expect(overview).toBeVisible();
   // Whole chant lets it go.
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   expect(await segments.evaluateAll((els) => els.filter((el) => el.hasAttribute("aria-current")).length)).toBe(0);
@@ -640,6 +656,25 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
     await expect.poll(() => clear(2 * k)).toBe(true);
     await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   }
+  // Even a phrase just clear of the bar as it was, and under it as it grows.
+  await expect(page.locator("#chosen")).toBeHidden();
+  await page.evaluate(() => {
+    const note = window.__cantor.timeline.notes[20]!;
+    const ink = [document.querySelector(`[data-note~="${note.id}"]`)!, document.querySelector(`#score [data-band="20"]`)!];
+    const bottom = Math.max(...ink.map((e) => e.getBoundingClientRect().bottom));
+    const clear = innerHeight - parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom);
+    window.scrollBy({ top: bottom - (clear - 1), behavior: "instant" });
+  });
+  expect(await clear(20)).toBe(true);
+  await segments.nth(10).click();
+  await expect(page.locator("#chosen")).toBeVisible();
+  await expect.poll(() => clear(20)).toBe(true);
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  // Turned on its side and back, the strip goes and comes as the score fits the window or not.
+  await page.setViewportSize({ width: 844, height: 2000 });
+  await expect(overview).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(overview).toBeVisible();
   // Not while a take is sung.
   await page.getByRole("button", { name: "Sing a take" }).click();
   await expect(overview).toBeHidden();
@@ -658,6 +693,44 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   await expect(overview).toBeHidden();
 });
 
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 600 } });
+
+  test("a short drag along the strip chooses where it ends, and no tap follows it", async ({ page }) => {
+    test.setTimeout(60_000);
+    await open(page);
+    // Sixteen phrases of three notes on the A4 heard: no places, so the bar grows as a phrase
+    // is chosen, and what is under the finger then is the bar's own line.
+    const words = ["Kyrie", "eleison", "Christe", "eleison", "Kyrie", "eleison", "Domine", "Deus", "Agnus", "Dei", "Filius", "Patris", "miserere", "nobis", "suscipe", "precem"];
+    const gabc = `(c4) ${words.map((w) => `${w}(h) ${w}(h) ${w}(h) (;)`).join(" ")}`.replace(/\(;\)$/, "(::)");
+    await page.evaluate(([g]) => window.__cantor.practise(g, 0.2), [gabc] as const);
+    await page.evaluate(() => void window.__cantor.listen());
+    await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+    await page.waitForTimeout(13000);
+    await page.evaluate(() => void window.__cantor.listen());
+    await page.evaluate(([g]) => window.__cantor.show(g, 0.2, 0.2), [gabc] as const);
+    const segments = page.locator("#overview").getByRole("button");
+    await expect(segments).toHaveCount(16);
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: "touchStart" | "touchMove" | "touchEnd", x = 0, y = 0) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }] });
+    // From just inside a segment's end to just inside the next: further than a drag needs, not
+    // as far as a tap may wander.
+    for (const k of [2, 8, 12, 13, 14]) {
+      await expect(page.locator("#chosen")).toBeHidden();
+      const box = (await segments.nth(k).boundingBox())!;
+      const [x, y] = [box.x + box.width - 3, box.y + box.height / 2];
+      await touch("touchStart", x, y);
+      for (let step = 1; step <= 4; step++) await touch("touchMove", x + 2 * step, y);
+      await touch("touchEnd");
+      await expect(page.locator("#chosen")).toBeVisible();
+      expect(await page.evaluate(() => window.__cantor.loop)).toEqual([3 * (k + 1), 3 * (k + 1) + 2]);
+      await page.waitForTimeout(400);
+      expect(await page.evaluate(() => window.__cantor.loop)).toEqual([3 * (k + 1), 3 * (k + 1) + 2]);
+      await page.locator("#unchoose").evaluate((b) => (b as HTMLButtonElement).click());
+    }
+  });
+});
+
 test("on a phone, a chant of more phrases than fit has them gathered, a few to a segment, all in reach", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await open(page);
@@ -674,6 +747,9 @@ test("on a phone, a chant of more phrases than fit has them gathered, a few to a
   // Fewer segments than phrases, none narrower than a fingertip's edge, all on the screen, and
   // between them every note, in order.
   expect(runs.length).toBeLessThan(60);
+  // As many as fit, the phrases shared among them as evenly as they go.
+  const phrasesOf = runs.map(([a, b]) => (b! - a! + 1) / 2);
+  expect(Math.max(...phrasesOf) - Math.min(...phrasesOf)).toBeLessThanOrEqual(1);
   expect(await overview.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   const widths = await overview.getByRole("button").evaluateAll((els) => els.map((el) => el.getBoundingClientRect()));
   expect(widths.every((b) => b.width >= 12 - 0.01 && b.right <= 320)).toBe(true);
