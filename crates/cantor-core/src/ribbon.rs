@@ -35,6 +35,17 @@ pub struct Band {
     pub trace: Vec<(f32, f32)>,
 }
 
+impl Band {
+    /// The band with its times `by` seconds later, as of a take with that much more before it.
+    pub fn shifted(mut self, by: f32) -> Band {
+        for t in [&mut self.from_s, &mut self.to_s, &mut self.start_s, &mut self.end_s] {
+            *t += by;
+        }
+        self.trace.iter_mut().for_each(|p| p.0 += by);
+        self
+    }
+}
+
 /// The bands of a take of `notes` heard as `frames`, scored as `report` and judged as
 /// `verdict`. A take the judge did not hear has bands with no values.
 pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdict) -> Vec<Band> {
@@ -51,10 +62,19 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
                 _ => None,
             };
             let trace = reference.map_or_else(Vec::new, |reference| {
+                let off = |f: &Frame| f.midi.map(|m| m * 100.0 - reference);
+                let held = |f: &Frame| f.t >= from_s && f.t < to_s;
+                // Over the sustained part each point is folded to the note, as the judge folds
+                // its value; around it, where the singer may still be on the note before or
+                // already on the next, a fifth or more away, each is measured from the octave
+                // the note was held in, so that it keeps its side.
+                let mut octaves: Vec<f32> = frames.iter().filter(|f| held(f)).filter_map(off).collect();
+                octaves.sort_by(f32::total_cmp);
+                let octave = octaves.get(octaves.len() / 2).map_or(0.0, |c| (c / 1200.0).round() * 1200.0);
                 let voiced: Vec<(f32, f32)> = frames
                     .iter()
                     .filter(|f| f.t >= start_s && f.t < end_s)
-                    .filter_map(|f| f.midi.map(|m| (f.t, fold(m * 100.0 - reference))))
+                    .filter_map(|f| off(f).map(|c| (f.t, if held(f) { fold(c) } else { c - octave })))
                     .collect();
                 smooth(&voiced)
             });
@@ -172,6 +192,77 @@ mod tests {
             band.trace.iter().filter(|&&(t, _)| t >= band.from_s).all(|&(_, c)| c.abs() < 1.0),
             "{band:?}"
         );
+    }
+
+    #[test]
+    fn a_slide_from_a_note_a_fifth_away_keeps_its_side() {
+        // Up a fifth and down again, each note reached a tenth late, still on the note before.
+        let notes = [Note::new(60.0, 0.0, 1.0), Note::new(67.0, 1.0, 1.0), Note::new(60.0, 2.0, 1.0)];
+        let mut fr = frames(&notes, &[0.0, 0.0, 0.0]);
+        for f in fr.iter_mut().filter(|f| (f.t >= 1.0 && f.t < 1.1) || (f.t >= 2.0 && f.t < 2.1)) {
+            f.midi = Some(if f.t < 2.0 { 60.0 } else { 67.0 });
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let bands = ribbon(&notes, &fr, &report, &verdict);
+        let head = |b: &Band| {
+            b.trace
+                .iter()
+                .filter(|&&(t, _)| t < b.start_s + 0.05)
+                .map(|&(_, c)| c)
+                .collect::<Vec<_>>()
+        };
+        // Below the fifth it rose to, not above it; above the one it fell to.
+        assert!(
+            !head(&bands[1]).is_empty() && head(&bands[1]).iter().all(|&c| c < -600.0),
+            "{:?}",
+            bands[1]
+        );
+        assert!(
+            !head(&bands[2]).is_empty() && head(&bands[2]).iter().all(|&c| c > 600.0),
+            "{:?}",
+            bands[2]
+        );
+        // Held, each is on its note.
+        for b in &bands {
+            assert!(
+                b.trace
+                    .iter()
+                    .filter(|&&(t, _)| t >= b.from_s && t < b.to_s)
+                    .all(|&(_, c)| c.abs() < 1.0),
+                "{b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_band_sung_an_octave_down_is_drawn_on_its_note_throughout() {
+        // An octave below the score, each note reached a tenth late, still on the note before.
+        let notes = [Note::new(60.0, 0.0, 1.0), Note::new(62.0, 1.0, 1.0)];
+        let mut fr = frames(&notes, &[-1200.0, -1200.0]);
+        for f in fr.iter_mut().filter(|f| f.t >= 1.0 && f.t < 1.1) {
+            f.midi = Some(48.0);
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let band = &ribbon(&notes, &fr, &report, &verdict)[1];
+        // The note before, a whole tone below, as it is: not an octave and a tone.
+        let head: Vec<f32> = band.trace.iter().filter(|&&(t, _)| t < 1.05).map(|&(_, c)| c).collect();
+        assert!(!head.is_empty() && head.iter().all(|&c| (c + 200.0).abs() < 1.0), "{band:?}");
+    }
+
+    #[test]
+    fn a_band_shifted_is_later_throughout() {
+        let notes = [Note::new(60.0, 0.0, 1.0)];
+        let fr = frames(&notes, &[0.0]);
+        let report = score(&notes, &fr);
+        let band = ribbon(&notes, &fr, &report, &judge(&notes, &report)).remove(0);
+        let later = band.clone().shifted(2.0);
+        assert_eq!(
+            [later.from_s, later.to_s, later.start_s, later.end_s],
+            [band.from_s + 2.0, band.to_s + 2.0, band.start_s + 2.0, band.end_s + 2.0]
+        );
+        assert!(later.trace.iter().zip(&band.trace).all(|(l, b)| l.0 == b.0 + 2.0 && l.1 == b.1));
     }
 
     #[test]

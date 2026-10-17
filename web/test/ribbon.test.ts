@@ -151,6 +151,22 @@ describe("ribbon", () => {
     expect(unbased).toContain("band-trace");
   });
 
+  it("draws a recording seeded with only its sustained parts over the part the singer's value was read from", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    // The singer's whole note runs 0 to 1, its value read from 0.2 to 0.9; the recording's band,
+    // seeded before bands had the whole note, has its sustained part alone, at its own pace.
+    const bands = [{ index: 0, from_s: 0.2, to_s: 0.9, start_s: 0, end_s: 1, cents: 0, trace: [[0.2, 0], [0.9, 0]] as Array<[number, number]> }];
+    const recorded = [{ index: 0, from_s: 4, to_s: 6, cents: 0, trace: [[4, 0], [6, 0]] as Array<[number, number]> }];
+    const xs = (svg: string, cls: string) =>
+      svg.match(new RegExp(`<polyline class="${cls}" points="([^"]*)"`))![1]!.split(" ").map((p) => Number(p.split(",")[0]));
+    const svg = drawRibbon(notes, bands, () => 0, 0, null, undefined, recorded);
+    // The two traces' ends lie together, over the singer's sustained part.
+    expect(xs(svg, "band-recorded")).toEqual(xs(svg, "band-trace"));
+    // A recording with the whole note is drawn across it, as the singer's is.
+    const whole = [{ ...recorded[0]!, start_s: 3.5, end_s: 6.5, trace: [[3.5, 0], [6.5, 0]] as Array<[number, number]> }];
+    expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, whole), "band-recorded")).toEqual([88, 113]);
+  });
+
   it("names the key as a transposition", () => {
     expect(describeKey(-303.4)).toBe("3 semitones down, 3 cents flat");
     expect(describeKey(100)).toBe("1 semitone up");

@@ -179,6 +179,9 @@ describe("takes", () => {
       { ribbon: [{ ...judged.ribbon[0]!, index: 9000 }] },
       { ribbon: [{ ...judged.ribbon[0]!, start_s: "soon" }] },
       { ribbon: [{ ...judged.ribbon[0]!, end_s: undefined }] },
+      // The whole note round its sustained part, as the core makes it.
+      { ribbon: [{ ...judged.ribbon[0]!, start_s: 1.35 }] },
+      { ribbon: [{ ...judged.ribbon[0]!, end_s: 1.6 }] },
     ])
       expect((await send({ take: { ...record(), judged: { ...judged, ...over } } })).status).toBe(400);
     expect((await send({ audio: new Uint8Array(MAX_AUDIO + 1) })).status).toBe(413);

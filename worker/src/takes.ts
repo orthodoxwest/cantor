@@ -118,9 +118,10 @@ function ribbonOf(bands: unknown): Band[] | null {
     if (typeof b !== "object" || b === null || b.index !== i) return null;
     const { from_s, to_s, start_s, end_s, cents, trace } = b;
     if (!finite(from_s, -1e4, 1e4) || !finite(to_s, -1e4, 1e4) || !centsOrNull(cents) || !Array.isArray(trace)) return null;
-    // The whole note, both ends or neither.
+    // The whole note, both ends or neither, and round the sustained part, as the core makes it.
     const whole = start_s !== undefined || end_s !== undefined;
     if (whole && (!finite(start_s, -1e4, 1e4) || !finite(end_s, -1e4, 1e4))) return null;
+    if (whole && !((start_s as number) <= from_s && from_s <= to_s && to_s <= (end_s as number))) return null;
     const points: Array<[number, number]> = [];
     for (const p of trace as unknown[]) {
       if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], -1e4, 1e4) || !finite(p[1], -1e5, 1e5)) return null;

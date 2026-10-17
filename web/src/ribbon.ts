@@ -15,8 +15,8 @@ import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
 /** One note's band, as cantor-core's `Band` serializes: its sustained part, where its value was
- * read, and the whole note, where its trace lies; a take sent before the trace was drawn over
- * the whole note has only the sustained part, which its trace lies over. */
+ * read, and the whole note, where its trace lies; a take sent, or a recording seeded, before the
+ * trace was drawn over the whole note has only the sustained part, which its trace lies over. */
 export interface Band {
   index: number;
   from_s: number;
@@ -145,9 +145,18 @@ export function drawRibbon(
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
     // Each band's seconds across its width, but for a margin either side.
     const inner = Math.max(w - 4, 0);
-    const xOf = (b: Band) => {
+    const xOf = (b: Band): ((t: number) => number) | null => {
       const [from, to] = span(b);
-      return to > from ? (t: number) => p.left + (w - inner) / 2 + ((t - from) / (to - from)) * inner : null;
+      if (!(to > from)) return null;
+      // A recording's band with only its sustained part, under the singer's with the whole note,
+      // is drawn over the part the singer's value was read from, so that the two keep one time.
+      if (b !== band && b.start_s === undefined && band.start_s !== undefined) {
+        const own = xOf(band);
+        if (!own) return null;
+        const [x1, x2] = [own(band.from_s), own(band.to_s)];
+        return (t) => x1 + ((t - from) / (to - from)) * (x2 - x1);
+      }
+      return (t) => p.left + (w - inner) / 2 + ((t - from) / (to - from)) * inner;
     };
     const trace = (b: Band | undefined, by: number, cls: string) => {
       const x = b && b.trace.length > 0 ? xOf(b) : null;
