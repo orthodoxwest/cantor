@@ -43,14 +43,51 @@ const KINDS: Partial<Record<OfficePartKind, string>> = {
   versicle: "Versicle",
   psalm: "Psalm",
   canticle: "Canticle",
+  kyrie: "Kyrie",
+  gloria: "Gloria",
+  credo: "Creed",
+  sanctus: "Sanctus",
+  agnus: "Agnus Dei",
+  dismissal: "Dismissal",
 };
+
+/** The movements of the Ordinary of the Mass, in the order they are sung. */
+const ORDINARY: readonly OfficePartKind[] = ["kyrie", "gloria", "credo", "sanctus", "agnus", "dismissal"];
+export const isOrdinary = (kind: OfficePartKind | null): boolean => kind !== null && ORDINARY.includes(kind);
+
+// The Masses of the Kyriale by number, with the names they are known by.
+const MASSES = [
+  "", "Lux et origo", "Kyrie fons bonitatis", "Kyrie Deus sempiterne", "Cunctipotens Genitor Deus",
+  "Kyrie magnae Deus potentiae", "Kyrie Rex Genitor", "Kyrie Rex splendens", "De Angelis", "Cum jubilo",
+  "Alme Pater", "Orbis factor", "Pater cuncta", "Stelliferi Conditor orbis", "Jesu Redemptor",
+  "Dominator Deus", "", "", "Deus Genitor alme",
+];
+const NUMERALS_UPPER = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII"];
+
+/** The Kyriale Mass a movement belongs to, by the number its name gives ("Kyrie VIII", "Ite
+ * XI"); 0 when it gives none. A Creed's number is its own, not a Mass's. */
+export function massOf(c: Pick<LibraryChant, "kind" | "name">): number {
+  if (!isOrdinary(c.kind) || c.kind === "credo") return 0;
+  const m = /^(?:Kyrie|Gloria|Sanctus|Agnus(?: Dei)?|Ite|Benedicamus)\s+([IVX]+)\b/i.exec(c.name ?? "");
+  return m ? Math.max(0, NUMERALS_UPPER.indexOf(m[1]!.toUpperCase())) : 0;
+}
+
+/** "Mass VIII (De Angelis)", or null for a piece of no numbered Mass. */
+export function massName(c: Pick<LibraryChant, "kind" | "name">): string | null {
+  const n = massOf(c);
+  return n ? `Mass ${NUMERALS_UPPER[n]}${MASSES[n] ? ` (${MASSES[n]})` : ""}` : null;
+}
+
+/** Movements of the Mass by Mass, then in the order they are sung; the rest by title after. */
+export const byMass = (a: LibraryChant, b: LibraryChant) =>
+  (massOf(a) || 99) - (massOf(b) || 99) || ORDINARY.indexOf(a.kind!) - ORDINARY.indexOf(b.kind!) || byTitle(a, b);
 
 /** The kind as a heading word ("Antiphon"), or null. */
 export const kindName = (kind: OfficePartKind | null): string | null => (kind && KINDS[kind]) ?? null;
 
-/** "Antiphon · Mode viii", or what of it is known. */
-export function kicker(chant: Pick<LibraryChant, "kind" | "mode">): string {
-  return [kindName(chant.kind), chant.mode && `Mode ${chant.mode}`].filter(Boolean).join(" · ");
+/** "Antiphon · Mode viii", "Mass VIII (De Angelis) · Kyrie · Mode v", or what of it is known. */
+export function kicker(chant: Pick<LibraryChant, "kind" | "mode" | "name">): string {
+  return [massName(chant), kindName(chant.kind), chant.mode && `Mode ${chant.mode}`].filter(Boolean).join(" · ");
 }
 
 type Row = Omit<LibraryChant, "words"> & { words: string | null; mode: string | null };
@@ -90,12 +127,13 @@ const NUMERALS = new Set([...ROMAN.slice(1), "1", "2", "3", "4", "5", "6", "7", 
 export const terms = (q: string): string[] => wordsOf(q);
 
 const searched = new WeakMap<LibraryChant, string[]>();
-/** The words a chant is found by: its title, name and sung words, its kind, and its mode. */
+/** The words a chant is found by: its title, name and sung words, its Mass, its kind, and its
+ * mode. */
 function searchWords(c: LibraryChant): string[] {
   let words = searched.get(c);
   if (!words) {
     const n = ROMAN.indexOf(c.mode ?? "");
-    words = wordsOf([c.title, c.name, c.words, kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
+    words = wordsOf([c.title, c.name, c.words, massName(c), kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
     searched.set(c, words);
   }
   return words;

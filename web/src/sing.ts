@@ -34,7 +34,7 @@ const asked = params.get("chant") ?? DEFAULT;
 const [, found] = await Promise.all([init(), findChant(asked).catch(() => null)]);
 const piece = found ?? { slug: DEFAULT, title: "A light to lighten the Gentiles", kind: "antiphon" as const, mode: "viii", name: "Lumen gentium", gabc: DEFAULT_GABC };
 if (!found && asked !== DEFAULT) byId("status").textContent = "That chant is not in the library, so here is the first one.";
-byId("kicker").textContent = ["Practice", kicker({ kind: piece.kind, mode: piece.mode })].filter(Boolean).join(" · ");
+byId("kicker").textContent = ["Practice", kicker({ kind: piece.kind, mode: piece.mode, name: piece.name })].filter(Boolean).join(" · ");
 byId("title").textContent = piece.title;
 document.title = `${piece.title} · Practice · Cantor`;
 

@@ -132,3 +132,16 @@ test("the header switches between light and dark pages, and remembers the choice
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(250, 243, 233)");
   await expect(page.locator("#theme")).toBeHidden();
 });
+
+test("the Mass settings are browsed together, each Mass in the order it is sung", async ({ page }) => {
+  await page.goto("/library");
+  await page.getByRole("button", { name: /^Mass settings/ }).click();
+  const kickers = page.locator("#results > li .kicker");
+  await expect(kickers.first()).toHaveText(/^Mass VIII \(De Angelis\) · Kyrie/);
+  const viii = (await kickers.allTextContents()).filter((k) => k.startsWith("Mass VIII ")).map((k) => k.split(" · ")[1]);
+  expect(viii).toEqual(["Kyrie", "Kyrie", "Sanctus", "Agnus Dei", "Dismissal", "Dismissal"]);
+  // The Greek Kyrie and the Latin dismissal are found by their own words.
+  await page.getByPlaceholder("Search the words").fill("orbis factor ite");
+  await expect(page.locator("#results > li")).toHaveCount(1);
+  await expect(page.locator("#results > li .name")).toContainText("Ite, missa est");
+});

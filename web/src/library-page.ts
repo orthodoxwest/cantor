@@ -4,7 +4,7 @@
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
-import { chant as fetchChant, escape, finds, highlight, kicker, kindName, library, terms, type FullChant, type LibraryChant } from "./library";
+import { byMass, chant as fetchChant, escape, finds, highlight, isOrdinary, kicker, kindName, library, terms, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
 import { offerSignIn } from "./beam";
 import { neutralTable } from "./singer";
@@ -50,15 +50,18 @@ let limit = PAGE;
 const ALL = "";
 let kind = ALL;
 
-const kindOf = (c: LibraryChant) => kindName(c.kind) ?? "Other";
+/** The movements of the Mass are browsed together, a Mass's in the order they are sung. */
+const MASS = "Mass";
+const kindOf = (c: LibraryChant) => (isOrdinary(c.kind) ? MASS : (kindName(c.kind) ?? "Other"));
 const kinds = [...new Set(chants.map(kindOf))].sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
+const plural = (k: string) => (k === MASS ? "Mass settings" : k.endsWith("y") ? `${k.slice(0, -1)}ies` : `${k}s`);
 
 function drawKinds(): void {
   const chip = (value: string, label: string, n: number) =>
     `<button type="button" class="kind" data-kind="${escape(value)}" aria-pressed="${kind === value}">${escape(label)}<span class="n">${n}</span></button>`;
   els.kinds.innerHTML = [
     chip(ALL, "All", chants.length),
-    ...kinds.map((k) => chip(k, k.endsWith("y") ? `${k.slice(0, -1)}ies` : `${k}s`, chants.filter((c) => kindOf(c) === k).length)),
+    ...kinds.map((k) => chip(k, plural(k), chants.filter((c) => kindOf(c) === k).length)),
   ].join("");
 }
 
@@ -92,6 +95,7 @@ async function drawThumb(el: HTMLElement, slug: string): Promise<void> {
 function drawResults(): void {
   const q = terms(els.q.value);
   const shown = chants.filter((c) => (kind === ALL || kindOf(c) === kind) && finds(c, q));
+  if (kind === MASS) shown.sort(byMass);
   els.count.textContent = shown.length === 1 ? "1 piece" : `${shown.length} pieces`;
   thumbs.disconnect();
   els.more.hidden = shown.length <= limit;
