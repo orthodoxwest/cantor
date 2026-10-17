@@ -38,11 +38,16 @@ pub fn told(verdict: &Verdict) -> Vec<String> {
 pub struct Ending {
     pub first: usize,
     pub last: usize,
+    /// Its note furthest off, by index: the one its words tell of.
+    pub note: usize,
+    /// The mark over that note, by index, when one is: the same fault, told already.
+    pub mark: Option<usize>,
     pub words: String,
 }
 
-/// The phrase endings [`summary`] tells of as off pitch, in order, each in words: the places
-/// its second sentence is about. None for a take not heard.
+/// The phrase endings [`summary`] tells of as off pitch, in order, each with the note it tells
+/// of, and the mark over that note if there is one, in words: the places its second sentence is
+/// about. None for a take not heard.
 pub fn endings(verdict: &Verdict) -> Vec<Ending> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
@@ -52,10 +57,12 @@ pub fn endings(verdict: &Verdict) -> Vec<Ending> {
         .iter()
         .filter(|c| c.on_pitch() == Some(false))
         .filter_map(|c| {
-            let cents = c.cents?;
+            let (note, cents) = (c.note?, c.cents?);
             Some(Ending {
                 first: c.first,
                 last: c.last,
+                note,
+                mark: verdict.marks.iter().position(|m| m.covers(note)),
                 words: format!(
                     "This phrase ended off pitch: a note of its ending was sung {} where your key puts it ({cents:+.0} cents).",
                     interval(cents)
@@ -242,7 +249,12 @@ mod tests {
             cadences: cadences
                 .iter()
                 .enumerate()
-                .map(|(i, &cents)| Cadence { first: i, last: i, cents })
+                .map(|(i, &cents)| Cadence {
+                    first: i,
+                    last: i,
+                    note: cents.map(|_| i),
+                    cents,
+                })
                 .collect(),
         }
     }
@@ -382,5 +394,36 @@ mod tests {
         );
         // Endings on pitch are no place to go.
         assert!(endings(&heard(0.0, &[Some(20.0), Some(-99.0)])).is_empty());
+    }
+
+    #[test]
+    fn an_ending_tells_of_its_note_off_and_the_mark_over_it() {
+        // Two endings of two notes each, the second note of each the one off; a mark over the
+        // second's tells of the same fault.
+        let verdict = Verdict {
+            marks: vec![Mark {
+                kind: MarkKind::Note,
+                first: 3,
+                last: 3,
+                cents: Some(400.0),
+            }],
+            cadences: vec![
+                Cadence {
+                    first: 0,
+                    last: 1,
+                    note: Some(1),
+                    cents: Some(-150.0),
+                },
+                Cadence {
+                    first: 2,
+                    last: 3,
+                    note: Some(3),
+                    cents: Some(400.0),
+                },
+            ],
+            ..heard(0.0, &[])
+        };
+        let off = endings(&verdict);
+        assert_eq!(off.iter().map(|e| (e.note, e.mark)).collect::<Vec<_>>(), [(1, None), (3, Some(0))]);
     }
 }

@@ -199,8 +199,11 @@ main {
 #unchoose {
   margin-left: auto;
 }
+/* At the foot of the line, which stays where it is when the line's words take more lines on a
+   phone: the bar grows upwards. */
 .chosen .btn {
   flex: none;
+  align-self: flex-end;
   font-size: 0.95rem;
   padding: 0.4rem 0.8rem;
 }

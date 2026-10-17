@@ -117,14 +117,25 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await page.getByRole("button", { name: "Choose the phrase of note 1", exact: true }).click();
   await expect(page.locator("#chosen-text")).toHaveText(/^Notes? 1/);
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
-  // The endings it counts off pitch are the cadences off pitch the summary tells of, each a place
-  // with the marks.
-  const off = got.verdict.cadences.filter((c: { cents: number | null }) => offPitch(c)).length;
-  expect((got.endings ?? []).length).toBe(got.verdict.outcome === "heard" ? off : 0);
-  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-  await expect(page.locator("#chosen-text")).toHaveText(
-    `Whole chant · ${count(got.verdict.marks.length, "mark")}${(got.endings ?? []).length ? `, ${count(got.endings!.length, "ending")} off pitch` : ""}`,
+  type Marked = { first: number; last: number };
+  // The endings it counts off pitch are the cadences off pitch the summary tells of, each told of
+  // its note furthest off; a place with the marks unless a mark tells of that note already.
+  type Told = { first: number; last: number; note: number; mark: number | null; words: string };
+  type Off = { first: number; last: number; note: number | null; cents: number | null };
+  const endings: Told[] = got.endings ?? [];
+  const off: Off[] = got.verdict.cadences.filter((c: Off) => offPitch(c));
+  expect(endings.map(({ first, last, note }) => ({ first, last, note }))).toEqual(
+    got.verdict.outcome === "heard" ? off.map(({ first, last, note }) => ({ first, last, note })) : [],
   );
+  for (const e of endings) {
+    expect(e.note).toBeGreaterThanOrEqual(e.first);
+    expect(e.note).toBeLessThanOrEqual(e.last);
+    const over = got.verdict.marks.findIndex((m: Marked) => m.first <= e.note && e.note <= m.last);
+    expect(e.mark).toBe(over < 0 ? null : over);
+  }
+  const alone = endings.filter((e) => e.mark === null);
+  const count = (n: number, one: string) => (n ? [` · ${n} ${one}${n === 1 ? "" : "s"}`] : []);
+  await expect(page.locator("#chosen-text")).toHaveText(["Whole chant", ...count(got.verdict.marks.length, "mark"), ...count(alone.length, "ending")].join(""));
   // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
   // a mark tapped (or entered) shows the core's words for it in its card, and only one is open
   // at a time.
@@ -139,7 +150,6 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(got.summary[0]).toEqual(want.summary[0]);
   if (!borderline(want) && !borderline(got)) expect(got.summary).toEqual(want.summary);
   await expect(page.locator("#summary")).toHaveText(got.summary.join(" "));
-  type Marked = { first: number; last: number };
   const notesOf = (marks: Marked[]) => marks.flatMap((m) => Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k));
   const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
   expect(ringed).toEqual(notesOf(got.verdict.marks));
@@ -163,7 +173,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   // sung. The places are the marks, then the endings.
   const places: Array<Marked & { words: string }> = [
     ...got.verdict.marks.map((m: Marked, k: number) => ({ first: m.first, last: m.last, words: got.told[k] })),
-    ...(got.endings ?? []),
+    ...alone,
   ];
   const listed = page.locator("#marked button");
   await expect(listed).toHaveCount(places.length);
