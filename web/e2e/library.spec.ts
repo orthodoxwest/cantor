@@ -145,3 +145,20 @@ test("the Mass settings are browsed together, each Mass in the order it is sung"
   await expect(page.locator("#results > li")).toHaveCount(1);
   await expect(page.locator("#results > li .name")).toContainText("Ite, missa est");
 });
+
+test("on a phone the library's kinds are a list to pick from", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/library");
+  const pieces = async () => Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0]);
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  const total = await pieces();
+  await expect(page.locator("#kinds")).toBeHidden();
+  const pick = page.getByRole("combobox", { name: "Kind" });
+  await expect(pick).toBeVisible();
+  await pick.selectOption({ label: (await pick.locator("option", { hasText: /^Hymns/ }).textContent())! });
+  const hymns = await pieces();
+  expect(hymns).toBeGreaterThan(0);
+  expect(hymns).toBeLessThan(total);
+  // The page never scrolls sideways.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
