@@ -1,7 +1,10 @@
 //! What a take says to the singer, in words: the explanation the page shows when a marked
-//! note is tapped and `cantor explain` gives each mark, and the two sentences the page shows
-//! after a take. It tells what was heard against the singer's own key and nothing else; the
-//! judge decides which notes are marked, whether the tone held and which cadences were on pitch.
+//! note is tapped and `cantor explain` gives each mark, the two sentences the page shows
+//! after a take, and each phrase ending the second tells of as off pitch, for the page to go
+//! to. It tells what was heard against the singer's own key and nothing else; the judge
+//! decides which notes are marked, whether the tone held and which cadences were on pitch.
+
+use serde::{Deserialize, Serialize};
 
 use crate::judge::{Mark, MarkKind, Outcome, Verdict, recited};
 use crate::score::fold;
@@ -28,6 +31,45 @@ pub fn tell(mark: &Mark) -> String {
 /// The words for each of `verdict`'s marks, in order.
 pub fn told(verdict: &Verdict) -> Vec<String> {
     verdict.marks.iter().map(tell).collect()
+}
+
+/// A phrase ending the judge heard off pitch, over the notes `first..=last`, in words.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Ending {
+    pub first: usize,
+    pub last: usize,
+    /// Its note furthest off, by index: the one its words tell of.
+    pub note: usize,
+    /// The mark over that note, by index, when one is: the same fault, told already.
+    pub mark: Option<usize>,
+    pub words: String,
+}
+
+/// The phrase endings [`summary`] tells of as off pitch, in order, each with the note it tells
+/// of, and the mark over that note if there is one, in words: the places its second sentence is
+/// about. None for a take not heard.
+pub fn endings(verdict: &Verdict) -> Vec<Ending> {
+    if verdict.outcome != Outcome::Heard {
+        return Vec::new();
+    }
+    verdict
+        .cadences
+        .iter()
+        .filter(|c| c.on_pitch() == Some(false))
+        .filter_map(|c| {
+            let (note, cents) = (c.note?, c.cents?);
+            Some(Ending {
+                first: c.first,
+                last: c.last,
+                note,
+                mark: verdict.marks.iter().position(|m| m.covers(note)),
+                words: format!(
+                    "This phrase ended off pitch: a note of its ending was sung {} where your key puts it ({cents:+.0} cents).",
+                    interval(cents)
+                ),
+            })
+        })
+        .collect()
 }
 
 /// What the singer is told of the take as a whole, in two sentences: whether the reciting
@@ -207,7 +249,12 @@ mod tests {
             cadences: cadences
                 .iter()
                 .enumerate()
-                .map(|(i, &cents)| Cadence { first: i, last: i, cents })
+                .map(|(i, &cents)| Cadence {
+                    first: i,
+                    last: i,
+                    note: cents.map(|_| i),
+                    cents,
+                })
                 .collect(),
         }
     }
@@ -323,5 +370,60 @@ mod tests {
             ..heard(0.0, &[Some(0.0)])
         };
         assert!(summary(&psalm(), &verdict).is_empty());
+        assert!(endings(&verdict).is_empty());
+    }
+
+    #[test]
+    fn the_endings_off_pitch_are_the_ones_counted() {
+        // Of four endings, one on pitch, one not heard clearly and two off: the two are the
+        // places "two of the three" is about, in order, each told how far it went.
+        let verdict = heard(0.0, &[Some(20.0), Some(-120.0), None, Some(310.0)]);
+        assert_eq!(
+            summary(&psalm(), &verdict)[1],
+            "But two of the three phrase endings heard clearly went off pitch."
+        );
+        let off = endings(&verdict);
+        assert_eq!(off.iter().map(|e| (e.first, e.last)).collect::<Vec<_>>(), [(1, 1), (3, 3)]);
+        assert_eq!(
+            off[0].words,
+            "This phrase ended off pitch: a note of its ending was sung a semitone below where your key puts it (-120 cents)."
+        );
+        assert_eq!(
+            off[1].words,
+            "This phrase ended off pitch: a note of its ending was sung a minor third above where your key puts it (+310 cents)."
+        );
+        // Endings on pitch are no place to go.
+        assert!(endings(&heard(0.0, &[Some(20.0), Some(-99.0)])).is_empty());
+    }
+
+    #[test]
+    fn an_ending_tells_of_its_note_off_and_the_mark_over_it() {
+        // Two endings of two notes each, the second note of each the one off; a mark over the
+        // second's tells of the same fault.
+        let verdict = Verdict {
+            marks: vec![Mark {
+                kind: MarkKind::Note,
+                first: 3,
+                last: 3,
+                cents: Some(400.0),
+            }],
+            cadences: vec![
+                Cadence {
+                    first: 0,
+                    last: 1,
+                    note: Some(1),
+                    cents: Some(-150.0),
+                },
+                Cadence {
+                    first: 2,
+                    last: 3,
+                    note: Some(3),
+                    cents: Some(400.0),
+                },
+            ],
+            ..heard(0.0, &[])
+        };
+        let off = endings(&verdict);
+        assert_eq!(off.iter().map(|e| (e.note, e.mark)).collect::<Vec<_>>(), [(1, None), (3, Some(0))]);
     }
 }

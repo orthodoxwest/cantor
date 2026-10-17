@@ -13,7 +13,7 @@ import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
-import { tapLoop } from "./loop";
+import { melismaNeumes, phraseOf, tapLoop } from "./loop";
 import { Replay } from "./replay";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
@@ -149,7 +149,7 @@ const recording = found?.recording ?? [];
 const placesSection = byId<HTMLElement>("places");
 const markedList = byId<HTMLOListElement>("marked");
 const cutText = byId<HTMLParagraphElement>("cut");
-// The card of the mark open (the bar names it): the core's words, how its first note is written
+// The card of the place open (the bar names it): the core's words, how its first note is written
 // from the note before, and the step into it to hear.
 const why = byId<HTMLDivElement>("why");
 const whyWords = byId<HTMLParagraphElement>("why-words");
@@ -157,6 +157,13 @@ const whyWords = byId<HTMLParagraphElement>("why-words");
  * are read out when a mark opens with its card. */
 const whySaid = byId<HTMLParagraphElement>("why-said");
 const whyStep = byId<HTMLSpanElement>("why-step");
+const unopenButton = byId<HTMLButtonElement>("unopen");
+/** Names `button` `label`, read aloud and shown on hover alike. */
+function labelButton(button: HTMLButtonElement, label: string): void {
+  if (button.getAttribute("aria-label") === label) return;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+}
 const stepButton = byId<HTMLButtonElement>("step");
 let shown: Judged | null = null;
 /** The note the singer stopped the take shown at, or null when it ran to the end; and whether
@@ -165,16 +172,64 @@ let cutAt: number | null = null;
 let shownWorn = false;
 /** The Pitch the take shown was sung at, in semitones from the score's. */
 let shownPitch = 0;
+
+/** A place in the take shown that the core tells of: one of its marks, or a phrase ending it
+ * heard off pitch (of those the summary's second sentence counts) with no mark over the note it
+ * tells of, over notes `first` to `last`, with the core's words for it and the note they are of
+ * (a mark's first, an ending's furthest off). */
+interface Spot {
+  first: number;
+  last: number;
+  at: number;
+  words: string;
+  mark: Mark | null;
+}
+/** The places of the take shown, when it was heard: its marks first, each at the index its ring
+ * on the score has, then its endings off pitch that no mark tells of already. */
+let spots: Spot[] = [];
+/** The place the summary's sentence of endings off pitch opens: the first ending's, or the mark
+ * over its note. */
+let saidAt: number | null = null;
+/** The place open, by index, or none. */
 let open: number | null = null;
-/** The mark last opened, which the steps go on from while the run chosen holds it. */
+/** The place last opened, which the steps go on from while the run chosen holds it. */
 let lastOpen: number | null = null;
 
-/** Opens mark `k`, or none; the step of another mark stops, so that it does not play on under
+/** Opens place `k`, or none; the step of another place stops, so that it does not play on under
  * a card that has moved on. */
 function setOpen(k: number | null): void {
   if (k !== open && playing?.button === stepButton) stopPlay();
   open = k;
   if (k !== null) lastOpen = k;
+}
+
+function spotsOf(judged: Judged | null): Spot[] {
+  if (!judged || judged.verdict.key_cents === null) return [];
+  return [
+    ...judged.verdict.marks.map((mark, k) => ({ first: mark.first, last: mark.last, at: mark.first, words: judged.told[k] ?? "", mark })),
+    ...(judged.endings ?? []).flatMap(({ first, last, note, mark, words }) => (mark === null ? [{ first, last, at: note, words, mark: null }] : [])),
+  ];
+}
+
+/** The place the first ending off pitch is (`saidAt`): the mark over its note, or the first of
+ * the endings among the places, after the marks. */
+function saidOf(judged: Judged | null): number | null {
+  const first = judged?.endings?.[0];
+  if (!first || spots.length === 0) return null;
+  return first.mark ?? judged.verdict.marks.length;
+}
+
+/** How many of `ks`, places, are marks and how many endings, in words: "2 marks, an ending off
+ * pitch". */
+function counted(ks: readonly number[]): string {
+  const marks = ks.filter((k) => spots[k]?.mark).length;
+  const endings = ks.length - marks;
+  return [
+    marks ? `${marks} mark${marks === 1 ? "" : "s"}` : "",
+    endings === 1 ? "an ending off pitch" : endings ? `${endings} endings off pitch` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 /** What the core found of a take it could not judge, and what to try. */
@@ -226,9 +281,6 @@ function reviewTranspose(): number | undefined {
   return key / 100;
 }
 
-/** The marks of the take shown, when it was heard. */
-const shownMarks = (): readonly Mark[] => (shown && shown.verdict.key_cents !== null ? shown.verdict.marks : []);
-
 /** The words sung on note `i`: its syllable, or for a note with none (a jubilus) the last
  * sung before it in its verse. */
 function syllableOf(i: number): string {
@@ -269,45 +321,43 @@ function ends(a: number, b: number): string {
   return sung.length ? `“${sung.join(" … ")}”` : "";
 }
 
-/** The take the marks are listed for. */
+/** The take the places are listed for. */
 let listedFor: Judged | null = null;
 
-/** The core's marks written out under the score, gathered by the phrase each chooses (one row a
- * phrase, folded, in the order sung), each with the note it is on, so that a phone can read
- * what the rings mean in a list; each opens its mark on the score. Listed once a take, so that
- * opening one keeps the rows as they were opened and the button its focus. */
-function listMarks(judged: Judged | null): void {
+/** The places the core tells of written out under the score, gathered by the phrase each is in
+ * (one row a phrase, folded, in the order sung), each with the note it is on, so that a phone can
+ * read what the rings mean in a list; each opens its place on the score. Listed once a take, so
+ * that opening one keeps the rows as they were opened and the button its focus. */
+function listSpots(judged: Judged | null): void {
   if (judged === listedFor) {
     for (const b of markedList.querySelectorAll<HTMLButtonElement>("[data-opens]"))
       b.setAttribute("aria-expanded", String(Number(b.dataset.opens) === open));
     return;
   }
   listedFor = judged;
-  const marks = judged?.verdict.marks ?? [];
-  placesSection.hidden = marks.length === 0;
+  placesSection.hidden = spots.length === 0;
   const { pauses, notes } = score.timeline;
   markedList.replaceChildren(
-    ...byPhrase(marks, pauses, notes.length).map(({ run: [a, b], marks: ks }) => {
+    ...byPhrase(spots, pauses, notes.length).map(({ run: [a, b], marks: ks }) => {
       const summary = document.createElement("summary");
-      const n = ks.length;
       summary.append(
         Object.assign(document.createElement("span"), { className: "phrase", textContent: wordsOf(a, b) || numbered(a, b) }),
         " ",
-        Object.assign(document.createElement("span"), { className: "count", textContent: `${n} mark${n === 1 ? "" : "s"}` }),
+        Object.assign(document.createElement("span"), { className: "count", textContent: counted(ks) }),
       );
       const list = document.createElement("ol");
       list.setAttribute("role", "list");
       list.append(
         ...ks.map((k) => {
-          const m = marks[k]!;
-          const sung = syllableOf(m.first);
-          const where = `${numbered(m.first, m.last)}${sung ? `, “${sung}”` : ""}: `;
+          const spot = spots[k]!;
+          const sung = syllableOf(spot.at);
+          const where = `${numbered(spot.first, spot.last)}${sung ? `, “${sung}”` : ""}: `;
           const button = document.createElement("button");
           button.type = "button";
           button.dataset.opens = String(k);
           button.setAttribute("aria-controls", "why");
           button.setAttribute("aria-expanded", String(k === open));
-          button.append(Object.assign(document.createElement("span"), { className: "where", textContent: where }), judged?.told[k] ?? "");
+          button.append(Object.assign(document.createElement("span"), { className: "where", textContent: where }), spot.words);
           const item = document.createElement("li");
           item.append(button);
           return item;
@@ -325,17 +375,27 @@ markedList.addEventListener("click", (e) => {
   const button = (e.target as Element | null)?.closest<HTMLButtonElement>("[data-opens]");
   if (!button || !shown) return;
   const k = Number(button.dataset.opens);
-  toggleMark(k);
-  // The mark's ring on the score, clear of its card above the bar.
+  toggleSpot(k);
+  // The place on the score, clear of its card above the bar.
   if (open !== null) bringIntoView(k);
 });
 
-/** Scrolls mark `k`'s ring, with the band under its first note that shows why it is marked, to
- * the middle of what the bar and the card leave of the window, unless they are already clear of
- * them; where both do not fit, the ring goes to the top. */
+/** What shows place `k` on the score: a mark's ring, or an ending's note off. */
+function spotOnScore(k: number): Element | null {
+  const spot = spots[k];
+  if (!spot) return null;
+  if (spot.mark) return score.host.querySelector(`[data-mark="${k}"]`);
+  const note = score.timeline.notes[spot.at];
+  return note ? (score.ink(note.id)[0] ?? null) : null;
+}
+
+/** Scrolls place `k` on the score (a mark's ring, or an ending's note off), with the band under
+ * the note it is of that shows why it is told, to the middle of what the bar and the card leave of
+ * the window, unless they are already clear of them; where both do not fit, the place goes to
+ * the top. */
 function bringIntoView(k: number): void {
-  const mark = shownMarks()[k];
-  const els = [score.host.querySelector(`[data-mark="${k}"]`), mark ? score.host.querySelector(`[data-band="${mark.first}"]`) : null];
+  const spot = spots[k];
+  const els = [spotOnScore(k), spot ? score.host.querySelector(`[data-band="${spot.at}"]`) : null];
   const boxes = els.flatMap((el) => (el ? [el.getBoundingClientRect()] : []));
   if (boxes.length === 0) return;
   const top = Math.min(...boxes.map((b) => b.top));
@@ -348,28 +408,31 @@ function bringIntoView(k: number): void {
   window.scrollBy({ top: by, behavior: still ? "auto" : "smooth" });
 }
 
-/** Shows `text` as the core's words for the mark open, announcing it only when it changes. */
+/** Shows `text` as the core's words for the place open, announcing it only when it changes. */
 function say(text: string): void {
   if (whyWords.textContent !== text) whyWords.textContent = whySaid.textContent = text;
 }
 
-/** The card of the mark open, if one is: the core's words, and how its first note is written
- * from the one before, the step that Hear the step plays. */
-function drawCard(judged: Judged): void {
-  const mark = open === null ? undefined : shownMarks()[open];
-  why.hidden = !mark;
-  if (!mark || open === null) return say("");
-  const { first, last } = mark;
-  say(judged.told[open] ?? "");
+/** The card of the place open, if one is: the core's words, and how the note they are of is
+ * written from the one before, the step that Hear the step plays. */
+function drawCard(): void {
+  const spot = open === null ? undefined : spots[open];
+  why.hidden = !spot;
+  if (!spot) return say("");
+  const kind = spot.mark ? "mark" : "ending";
+  why.setAttribute("aria-label", `The ${kind} open`);
+  labelButton(unopenButton, `Close the ${kind}`);
+  say(spot.words);
   const { notes } = score.timeline;
-  const before = notes[first - 1];
-  const at = notes[first];
+  const before = notes[spot.at - 1];
+  const at = notes[spot.at];
   // Of a verse not heard there is nothing of the singer's to hear.
-  const step = before && at && mark.kind !== "verse-missing";
+  const step = before && at && spot.mark?.kind !== "verse-missing";
   // A keyboard on a step going, as at a mark with none, stays in the card.
-  if (!step && document.activeElement === stepButton) byId("unopen").focus({ preventScroll: true });
+  if (!step && document.activeElement === stepButton) unopenButton.focus({ preventScroll: true });
   stepButton.hidden = !step;
-  whyStep.textContent = step ? `${first === last ? "Written" : "Its first note is written"} ${writtenStep(at.semitones - before.semitones)}.` : "";
+  const which = !spot.mark ? "That note is written" : spot.first === spot.last ? "Written" : "Its first note is written";
+  whyStep.textContent = step ? `${which} ${writtenStep(at.semitones - before.semitones)}.` : "";
   // Measured now, not when the observer next runs, so that a ring brought into view at once
   // keeps clear of it.
   document.documentElement.style.setProperty("--why-h", `${why.getBoundingClientRect().height}px`);
@@ -380,8 +443,7 @@ function drawResult(): void {
   const judged = shown;
   const key = judged?.verdict.key_cents ?? null;
   result.hidden = !judged;
-  summaryText.textContent = judged?.summary.join(" ") ?? "";
-  summaryText.hidden = !summaryText.textContent;
+  drawSummary(judged);
   // A take stopped is judged to the end of the last phrase finished (the ear's `judge_gabc`).
   const total = score.timeline.notes.length;
   const through = judged?.ribbon.length ?? 0;
@@ -391,7 +453,7 @@ function drawResult(): void {
       through === 0
         ? `You stopped the take at note ${cutAt + 1} of ${total}, before its first phrase was sung through, so there is nothing to judge yet.`
         : `You stopped the take at note ${cutAt + 1} of ${total}, so it is judged through note ${through}, where the last phrase you sang through ended.`;
-  listMarks(key === null ? null : judged);
+  listSpots(key === null ? null : judged);
   if (!judged || key === null) {
     score.showStrips(null);
     why.hidden = true;
@@ -413,10 +475,39 @@ function drawResult(): void {
     (timeline, room) =>
       // The marks first, so that the keyboard reaches them before the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, (i) => `Choose the phrase of note ${i + 1}`, underlay),
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, bandName, underlay),
   );
-  drawCard(judged);
+  drawCard();
   keyText.textContent = keyLine(key, shownPitch);
+}
+
+/** The take the summary is drawn for. */
+let summarisedFor: Judged | null = null;
+
+/** The core's two sentences of the take; the second, when it tells of endings off pitch, opens
+ * the first of them, from which the bar steps to the rest. Drawn once a take, so that the button
+ * keeps its focus. */
+function drawSummary(judged: Judged | null): void {
+  if (judged === summarisedFor) {
+    summaryText.querySelector(".said")?.setAttribute("aria-expanded", String(open !== null && open === saidAt));
+    return;
+  }
+  summarisedFor = judged;
+  const [whole, endings, ...rest] = judged?.summary ?? [];
+  const k = saidAt;
+  if (endings === undefined || k === null) summaryText.textContent = judged?.summary.join(" ") ?? "";
+  else {
+    const button = Object.assign(document.createElement("button"), { type: "button", className: "said", textContent: endings });
+    button.setAttribute("aria-controls", "why");
+    button.setAttribute("aria-describedby", "said-hint");
+    button.setAttribute("aria-expanded", String(open === k));
+    button.addEventListener("click", () => {
+      if (open !== k) chooseSpot(k);
+      bringIntoView(k);
+    });
+    summaryText.replaceChildren(...[whole ?? "", " ", button, ...rest.map((r) => ` ${r}`)]);
+  }
+  summaryText.hidden = !summaryText.textContent;
 }
 // The guide sings anew from where it is next played; the take alone plays on.
 inKeyBox.addEventListener("change", () => {
@@ -507,6 +598,8 @@ function showResult(judged: Judged | null, cut: number | null = null, worn = fal
   // A run chosen before the take, or beside another, is let go: Yours plays the take whole
   // until a phrase of it is chosen.
   shown = judged;
+  spots = spotsOf(judged);
+  saidAt = saidOf(judged);
   if (judged && loop) setLoop(null);
   cutAt = judged ? cut : null;
   shownWorn = worn;
@@ -543,7 +636,7 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   let again: string;
   if (mark) {
     const k = Number(mark.dataset.mark);
-    steadily(() => toggleMark(k));
+    steadily(() => toggleSpot(k));
     again = `[data-mark="${k}"]`;
   } else if (band && !taking) {
     const index = Number(band.dataset.band);
@@ -572,41 +665,41 @@ score.host.addEventListener("keydown", (e) => {
   score.host.querySelector<SVGGElement>(`[data-band="${to}"]`)?.focus();
 });
 
-/** Opens mark `k`, choosing the phrase or phrases it is in, so that Compare, Guide and Yours
- * play them; what plays goes on if they were chosen already. */
-function chooseMark(k: number): void {
-  const mark = shownMarks()[k];
-  if (!mark) return;
+/** Opens place `k`, choosing what Compare, Guide and Yours play there: a mark's phrase or
+ * phrases, an ending's own notes; what plays goes on if they were chosen already. */
+function chooseSpot(k: number): void {
+  const spot = spots[k];
+  if (!spot) return;
   if (taking || !guide) {
     setOpen(k);
     return drawResult();
   }
-  const run = runOf(mark, score.timeline.pauses, score.timeline.notes.length);
+  const run = spot.mark ? runOf(spot, score.timeline.pauses, score.timeline.notes.length) : ([spot.first, spot.last] as [number, number]);
   if (!loop || loop[0] !== run[0] || loop[1] !== run[1]) stopPlay();
   setLoop(run, k);
 }
 
-/** Opens mark `k`, or closes it, leaving its phrase chosen. */
-function toggleMark(k: number): void {
-  if (open !== k) return chooseMark(k);
+/** Opens place `k`, or closes it, leaving what it chose chosen. */
+function toggleSpot(k: number): void {
+  if (open !== k) return chooseSpot(k);
   setOpen(null);
   drawResult();
 }
 
-/** The mark the steps go on from: the one open, or the one last opened while the run chosen
+/** The place the steps go on from: the one open, or the one last opened while the run chosen
  * still holds it; else none, and they go from the run chosen. */
 function stepFrom(): number | null {
   if (open !== null) return open;
-  const last = lastOpen === null ? undefined : shownMarks()[lastOpen];
+  const last = lastOpen === null ? undefined : spots[lastOpen];
   return last && loop && last.first >= loop[0] && last.last <= loop[1] ? lastOpen : null;
 }
 
-/** Opens the mark before or after the one open (or last opened, or the phrase chosen), in the
- * order sung, with its ring brought into view. */
-function stepMark(by: 1 | -1): void {
-  const k = stepTo(shownMarks(), stepFrom(), loop, by);
+/** Opens the place before or after the one open (or last opened, or the run chosen), in the
+ * order sung, brought into view. */
+function stepSpot(by: 1 | -1): void {
+  const k = stepTo(spots, stepFrom(), loop, by);
   if (k === null) return;
-  chooseMark(k);
+  chooseSpot(k);
   bringIntoView(k);
 }
 
@@ -827,11 +920,13 @@ for (const select of [speedSelect, pitchSelect]) {
 
 // A loop: tapping a note or its syllable plays its phrase, between divisions (loop.ts), over and
 // over, the cursor following; tapping another phrase stretches the loop to it, a bar loops the
-// phrase it ends, and a tap in the loop, or Whole chant, lets it go. Beside a take the run chosen
-// is played once, by Compare, Guide or Yours, or by Repeat over and over.
+// phrase it ends, and a tap in the loop narrows it, to the phrase, between breaths, then to a
+// neume of a melisma, until nothing narrower is left and it lets the loop go, as Whole chant
+// does. Beside a take the run chosen is played once, by Compare, Guide or Yours, or by Repeat
+// over and over.
 const loopText = byId<HTMLSpanElement>("loop-text");
 const unloopButton = byId<HTMLButtonElement>("unloop");
-// Beside a take, the bar names the mark open or the run chosen, steps from mark to mark, and
+// Beside a take, the bar names the place open or the run chosen, steps from place to place, and
 // lets the run go.
 const chosenLine = byId<HTMLDivElement>("chosen");
 const chosenText = byId<HTMLSpanElement>("chosen-text");
@@ -848,6 +943,8 @@ const measure = (el: HTMLElement, name: string) =>
 measure(bar, "--bar-h");
 measure(why, "--why-h");
 let loop: [number, number] | null = null;
+/** The neumes of the chant's melismas, and the chant they are of. */
+let neumes: { of: string; at: ReturnType<typeof melismaNeumes> } | null = null;
 /** The pause between times round a loop, and in Compare between the guide and the take, in
  * pulses. */
 const BREATH = 2;
@@ -871,49 +968,61 @@ function setLoop(next: [number, number] | null, mark: number | null = null): voi
       `${free} :is(${bands}){fill:color-mix(in srgb, var(--rubric) 10%, transparent)}`
     : "";
   unloopButton.hidden = !next;
+  const narrows = next !== null && Array.from({ length: b - a + 1 }, (_, k) => tapped(next, a + k)).some(Boolean);
   loopText.textContent = next
-    ? `Play goes over notes ${a + 1} to ${b + 1} until you stop it.`
+    ? `Play goes over notes ${a + 1} to ${b + 1} until you stop it.${narrows ? " Tap a note in it to play less of it." : ""}`
     : "Tap a phrase or a bar on the score to play it over and over.";
   // Beside a take, its bands say which are chosen, and the card which mark is open.
   if (shown) drawResult();
   else drawChosen();
 }
 
-/** The bar's line beside a take shown: the mark open, as its place among the marks in the order
- * sung, or the run chosen, or the whole chant and how many marks it has, with the steps to the
- * mark before and after. */
+/** The bar's line beside a take shown: the place open, as a mark among the marks or an ending
+ * among the endings, in the order sung; or the run chosen; or the whole chant and how many of
+ * each it has; with the steps to the place before and after. */
 function drawChosen(): void {
-  const marks = shownMarks();
-  chosenLine.hidden = !shown || taking || (!loop && marks.length === 0);
+  chosenLine.hidden = !shown || taking || (!loop && spots.length === 0);
   if (chosenLine.hidden || !shown) return;
   // Kept in its place while there is no run to let go, so that the steps do not move under a
   // finger stepping on.
   unchooseButton.style.visibility = loop ? "" : "hidden";
-  prevButton.hidden = nextButton.hidden = marks.length === 0;
+  prevButton.hidden = nextButton.hidden = spots.length === 0;
+  // Named for what they step among.
+  const among = spots.every((s) => s.mark) ? "mark" : spots.some((s) => s.mark) ? "mark or ending" : "ending";
+  labelButton(prevButton, `Previous ${among}`);
+  labelButton(nextButton, `Next ${among}`);
   // At either end the step is off but keeps the keyboard.
-  prevButton.setAttribute("aria-disabled", String(stepTo(marks, stepFrom(), loop, -1) === null));
-  nextButton.setAttribute("aria-disabled", String(stepTo(marks, stepFrom(), loop, 1) === null));
-  const mark = open === null ? undefined : marks[open];
+  prevButton.setAttribute("aria-disabled", String(stepTo(spots, stepFrom(), loop, -1) === null));
+  nextButton.setAttribute("aria-disabled", String(stepTo(spots, stepFrom(), loop, 1) === null));
+  const spot = open === null ? undefined : spots[open];
   const quoted = (a: number, b: number) => {
     const sung = ends(a, b);
     return sung ? ` · ${sung}` : "";
   };
   let text: string;
-  if (mark && open !== null) text = `Mark ${sungOrder(marks).indexOf(open) + 1} of ${marks.length}${quoted(mark.first, mark.last)}`;
-  else if (loop) {
+  if (spot && open !== null) {
+    // Its place among those of its kind.
+    const kind = sungOrder(spots).filter((k) => !spots[k]!.mark === !spot.mark);
+    text = `${spot.mark ? "Mark" : "Ending"} ${kind.indexOf(open) + 1} of ${kind.length}${quoted(spot.first, spot.last)}`;
+  } else if (loop) {
     const [a, b] = loop;
     // A take stopped short is judged, and heard, only so far.
     text = `${numbered(a, b)}${quoted(a, b)}${a >= shown.ribbon.length ? " · after your take stopped" : ""}`;
-  } else text = `Whole chant · ${marks.length} mark${marks.length === 1 ? "" : "s"}`;
+  } else {
+    const marks = spots.filter((s) => s.mark).length;
+    const endings = spots.length - marks;
+    const many = (n: number, what: string) => (n ? [` · ${n} ${what}${n === 1 ? "" : "s"}`] : []);
+    text = ["Whole chant", ...many(marks, "mark"), ...many(endings, "ending")].join("");
+  }
   // Announced only when it changes.
   if (chosenText.textContent !== text) chosenText.textContent = text;
 }
 
 prevButton.addEventListener("click", () => {
-  if (prevButton.getAttribute("aria-disabled") !== "true") stepMark(-1);
+  if (prevButton.getAttribute("aria-disabled") !== "true") stepSpot(-1);
 });
 nextButton.addEventListener("click", () => {
-  if (nextButton.getAttribute("aria-disabled") !== "true") stepMark(1);
+  if (nextButton.getAttribute("aria-disabled") !== "true") stepSpot(1);
 });
 unloopButton.addEventListener("click", () => {
   if (taking) return;
@@ -927,13 +1036,16 @@ unchooseButton.addEventListener("click", () => {
   (hearButton.hidden ? playButton : hearButton).focus();
   setLoop(null);
 });
-byId<HTMLButtonElement>("unopen").addEventListener("click", () => {
+unopenButton.addEventListener("click", () => {
   if (open === null) return;
   const k = open;
   setOpen(null);
   drawResult();
-  // The keyboard goes back to the mark's ring.
-  score.host.querySelector<SVGGElement>(`[data-mark="${k}"]`)?.focus({ preventScroll: true });
+  // The keyboard goes back to the place on the score: a mark's ring, or the band of an ending's
+  // note off.
+  const spot = spots[k];
+  const on = spot && score.host.querySelector<SVGGElement>(spot.mark ? `[data-mark="${k}"]` : `[data-band="${spot.at}"]`);
+  (on ?? nextButton).focus({ preventScroll: true });
 });
 
 /** The note a tap on the score means: a note's ink, a syllable's first note, or the last note
@@ -964,11 +1076,27 @@ function tapScore(e: MouseEvent): void {
   if (i >= 0) choose(i);
 }
 
-/** Chooses the phrase of note `i`, or stretches the run to it, or lets it go (`tapLoop`). */
+/** The run a tap on note `i` chooses with `run` chosen (`tapLoop`). */
+function tapped(run: readonly [number, number] | null, i: number): [number, number] | null {
+  const { notes, pauses } = score.timeline;
+  if (neumes?.of !== score.source) neumes = { of: score.source, at: melismaNeumes(notes, score.source, pauses) };
+  return tapLoop(run, i, pauses, notes.length, neumes.at);
+}
+
+/** What a tap on note `i`'s band does (`tapped`), in words: chooses its phrase, or the run it
+ * stretches or narrows the run chosen to, or lets the run go. */
+function bandName(i: number): string {
+  const run = tapped(loop, i);
+  if (!run) return "Let the run go";
+  const [a, b] = phraseOf(i, score.timeline.pauses, score.timeline.notes.length);
+  return run[0] === a && run[1] === b ? `Choose the phrase of note ${i + 1}` : `Choose ${numbered(run[0], run[1]).toLowerCase()}`;
+}
+
+/** Chooses the phrase of note `i`, or stretches the run to it, narrows it or lets it go. */
 function choose(i: number): void {
   if (taking || !guide) return;
   stopPlay();
-  setLoop(tapLoop(loop, i, score.timeline.pauses, score.timeline.notes.length));
+  setLoop(tapped(loop, i));
 }
 
 // What plays, one thing at a time: the guide (Play; beside a take Guide once, Repeat over and
@@ -1152,10 +1280,10 @@ toggle(repeatButton, () => {
   setStatus("");
   return play(repeatButton, "always");
 });
-// The step into the mark open: the note before it and its first.
+// The step into the place open: the note before the one its words are of, and that one.
 toggle(stepButton, async () => {
-  const mark = open === null ? undefined : shownMarks()[open];
-  if (mark && mark.first > 0) await compare([mark.first - 1, mark.first], stepButton);
+  const spot = open === null ? undefined : spots[open];
+  if (spot && spot.at > 0) await compare([spot.at - 1, spot.at], stepButton);
 });
 
 if (!guide) {
