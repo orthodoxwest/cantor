@@ -237,22 +237,54 @@ test("a phrase tapped plays over and over with the cursor, a bar loops the phras
   expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
 });
 
-test("a loop is not shown beside a take's result, even one too short to draw", async ({ page }) => {
+test("beside a take, a note, a band or a mark tapped chooses its phrase, named in the bar", async ({ page }) => {
   await open(page);
   const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
   await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
   const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
-  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
-  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
   const fillOf = (id: number) => page.evaluate((i) => getComputedStyle(document.querySelector(`#score [data-note~="${i}"]`)!).fill, id);
-  expect(await fillOf(ids[3]!)).not.toBe(await fillOf(ids[0]!));
   await page.evaluate(() => void window.__cantor.listen());
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
   await page.evaluate(() => void window.__cantor.listen());
   await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
   await expect(page.locator("#result")).toBeVisible();
+  await expect(page.locator("#reading")).toBeVisible();
+  const chosen = page.locator("#chosen");
+  await expect(chosen).toBeHidden();
+  // A note tapped chooses its phrase, tinted on the score and named in the bar.
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  expect(await fillOf(ids[3]!)).not.toBe(await fillOf(ids[0]!));
   await expect(page.locator("#loop")).toBeHidden();
-  expect(await fillOf(ids[3]!)).toBe(await fillOf(ids[0]!));
+  await expect(chosen).toBeVisible();
+  await expect(page.locator("#chosen-text")).toHaveText(/^Notes 3 to 6 \(“al … ia”\): Play sings the guide here, Your take plays you\.$/);
+  // The bands do not move when tapped: a band chooses its phrase as its note does, and the
+  // phrase chosen tapped again lets it go.
+  const band = page.getByRole("button", { name: "Choose the phrase of note 1", exact: true });
+  const before = await page.locator("[data-band] .band-held").evaluateAll((els) => els.map((el) => el.getAttribute("y1")));
+  await band.click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 5]);
+  expect(await page.locator("[data-band] .band-held").evaluateAll((els) => els.map((el) => el.getAttribute("y1")))).toEqual(before);
+  await page.getByRole("button", { name: "Choose the phrase of note 2", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  await expect(chosen).toBeHidden();
+  await page.getByRole("button", { name: "Choose the phrase of note 5", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  // Whole chant in the bar lets it go.
+  await chosen.getByRole("button", { name: "Whole chant" }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  await expect(chosen).toBeHidden();
+  // A mark opened, on the score or in the list, chooses the phrase it is in (the A4 heard is
+  // marked on note 3); closed, it leaves the phrase chosen.
+  const ring = page.getByRole("button", { name: "Why note 3 is marked" });
+  await ring.click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await ring.click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await chosen.getByRole("button", { name: "Whole chant" }).click();
+  await page.locator("#marked button").first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await expect(chosen).toBeVisible();
 });
 
 test("your take plays back against the score with the cursor, and stops for Play", async ({ page }) => {
@@ -275,16 +307,18 @@ test("your take plays back against the score with the cursor, and stops for Play
   const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
   expect(await page.evaluate(() => window.__cantor.replayed.visited)).toEqual(ids);
   await expect(page.locator("#score .cursor")).toBeHidden();
-  // Play stops it.
+  // Play stops it, and keeps the take, to hear again against the guide.
   await hear.click();
   await expect.poll(() => page.evaluate(() => window.__cantor.replayed.playing)).toBe(true);
-  await page.getByRole("button", { name: "Play" }).click();
+  const play = page.getByRole("button", { name: "Play" });
+  await play.click();
   expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
   await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
-  // Play clears the take, and with it the way to hear it.
-  await expect(hear).toBeHidden();
+  await expect(page.locator("#result")).toBeVisible();
+  await expect(hear).toBeVisible();
+  await play.click();
+  await expect(play).toHaveAttribute("aria-pressed", "false");
   // Start note pressed while the take's audio is still being fetched stops it before it sounds.
-  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
   await expect(page.locator("#note")).toBeEnabled();
   await page.evaluate(() => {
     document.getElementById("hear")!.click();
@@ -293,6 +327,26 @@ test("your take plays back against the score with the cursor, and stops for Play
   await page.waitForTimeout(1000);
   expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
   await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
+});
+
+test("your take plays only the phrase chosen, from a moment before it", async ({ page }) => {
+  await open(page);
+  // Four seconds heard, judged as a chant of two phrases from 0.2 s.
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  await page.getByRole("button", { name: "Choose the phrase of note 4", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  const hear = page.getByRole("button", { name: "Your take" });
+  await hear.click();
+  await expect(hear).toHaveAttribute("aria-pressed", "true");
+  await expect(hear).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
+  // The phrase's notes, and only those.
+  expect(await page.evaluate(() => window.__cantor.replayed.visited)).toEqual(ids.slice(2));
 });
 
 test("listen hears A4 from the microphone", async ({ page }) => {

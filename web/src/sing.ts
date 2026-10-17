@@ -12,7 +12,7 @@ import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { Drone, droneNote, modeNumber } from "./drone";
-import { tapLoop } from "./loop";
+import { phraseOf, tapLoop } from "./loop";
 import { Replay } from "./replay";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, timed } from "./timing";
@@ -130,17 +130,17 @@ foundList.addEventListener("keydown", (e) => {
 const score = new Score(byId("score"), new Chant(piece.gabc), SCALE);
 const cursor = new Cursor(score);
 
-// After a scored take: above the score, the core's two sentences on the take, the singer's key
-// and the note the ribbon is re-based on; on the score, the ribbon under the staff and the core's
-// marks on the notes; below it, the words of the mark tapped. Where the chant has an aligned
-// recording of the same notes, the ribbon draws its trace under the singer's.
+// After a scored take: above the score, the core's two sentences on the take, the singer's key,
+// the marks in words and how to read the ribbon; on the score, the ribbon under the staff and the
+// core's marks on the notes; below it, the words of the mark tapped. Where the chant has an
+// aligned recording of the same notes, the ribbon draws its trace under the singer's. A note, a
+// band or a mark tapped chooses its phrase, for Play and Your take to play alone.
 const result = byId<HTMLElement>("result");
 const summaryText = byId<HTMLParagraphElement>("summary");
 const keyText = byId<HTMLParagraphElement>("key");
 const recordedText = byId<HTMLParagraphElement>("recorded");
+const readingText = byId<HTMLParagraphElement>("reading");
 const recording = found?.recording ?? [];
-const baseLine = byId<HTMLParagraphElement>("base");
-const baseText = byId<HTMLSpanElement>("base-text");
 const why = byId<HTMLParagraphElement>("why");
 const markedList = byId<HTMLOListElement>("marked");
 const cutText = byId<HTMLParagraphElement>("cut");
@@ -149,7 +149,6 @@ let shown: Judged | null = null;
  * the guide was in their headphones. */
 let cutAt: number | null = null;
 let shownWorn = false;
-let base: number | null = null;
 let open: number | null = null;
 
 /** What the core found of a take it could not judge, and what to try. */
@@ -211,6 +210,7 @@ markedList.addEventListener("click", (e) => {
   if (!button || !shown) return;
   const k = Number(button.dataset.opens);
   open = open === k ? null : k;
+  if (open !== null) chooseMark(k);
   drawResult();
   // The mark's ring on the score; its words stay in view above the bar.
   if (open !== null) score.host.querySelector(`[data-mark="${k}"]`)?.scrollIntoView({ block: "center" });
@@ -222,6 +222,7 @@ function say(text: string): void {
 }
 
 function drawResult(): void {
+  drawChosen();
   const judged = shown;
   const key = judged?.verdict.key_cents ?? null;
   result.hidden = !judged;
@@ -240,28 +241,25 @@ function drawResult(): void {
   if (!judged || key === null) {
     score.showStrips(null);
     say("");
-    baseLine.hidden = true;
+    readingText.hidden = true;
     recordedText.hidden = true;
     keyText.hidden = judged?.ribbon.length === 0;
     if (judged) keyText.textContent = unheard(judged);
     return;
   }
   keyText.hidden = false;
-  const from = base === null ? 0 : (judged.ribbon[base]?.cents ?? 0);
+  readingText.hidden = false;
   // The recording is of the chant as the library gave it, so not of another put on the page.
   const underlay = score.source === piece.gabc && recording.length === judged.ribbon.length ? recording : [];
-  // Re-based on a note the recording has no value for, the ribbon draws no recording.
-  recordedText.hidden = !underlay.some((b) => b.trace.length > 0) || (base !== null && (underlay[base]?.cents ?? null) === null);
+  recordedText.hidden = !underlay.some((b) => b.trace.length > 0);
   score.showStrips(
     (timeline, room) =>
       // The marks first, so that the keyboard reaches them before the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, from, base, undefined, underlay),
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, null, (i) => `Choose the phrase of note ${i + 1}`, underlay),
   );
   say(open === null ? "" : (judged.told[open] ?? ""));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
-  baseLine.hidden = base === null;
-  if (base !== null) baseText.textContent = `Measured from note ${base + 1}: ${describeKey(key + from)}.`;
 }
 
 // A take shown may be sent, by a signed-in singer: the button gives a link to it.
@@ -348,7 +346,6 @@ function showResult(judged: Judged | null, cut: number | null = null, worn = fal
   shown = judged;
   cutAt = judged ? cut : null;
   shownWorn = worn;
-  base = null;
   open = null;
   toSend = null;
   sendLine.hidden = true;
@@ -369,8 +366,8 @@ function steadily(change: () => void): void {
   if (moved !== 0) window.scrollBy(0, moved);
 }
 
-// Tapping a heard note's band re-bases the ribbon on it, and tapping a mark shows its words;
-// tapping either again goes back.
+// Tapping a mark shows its words and chooses the phrase it is in; tapping it again hides them.
+// Tapping a note's band chooses its phrase, as tapping the note does.
 function tap(target: EventTarget | null, keyboard: boolean): boolean {
   if (!shown) return false;
   const el = target as Element | null;
@@ -380,10 +377,11 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   if (mark) {
     const k = Number(mark.dataset.mark);
     open = open === k ? null : k;
+    if (open !== null) chooseMark(k);
     again = `[data-mark="${k}"]`;
-  } else if (band && !band.classList.contains("unheard")) {
+  } else if (band && !taking) {
     const index = Number(band.dataset.band);
-    base = base === index ? null : index;
+    choose(index);
     again = `[data-band="${index}"]`;
   } else {
     return false;
@@ -401,10 +399,18 @@ score.host.addEventListener("click", (e) => {
 score.host.addEventListener("keydown", (e) => {
   if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) e.preventDefault();
 });
-byId<HTMLButtonElement>("rebase").addEventListener("click", () => {
-  base = null;
-  steadily(drawResult);
-});
+
+/** Chooses the phrase or phrases mark `k` is in, so that Play and Your take play them. */
+function chooseMark(k: number): void {
+  const mark = shown?.verdict.marks[k];
+  if (!mark || taking) return;
+  const { pauses, notes } = score.timeline;
+  const [a] = phraseOf(mark.first, pauses, notes.length);
+  const [, b] = phraseOf(mark.last, pauses, notes.length);
+  if (loop && loop[0] === a && loop[1] === b) return;
+  stopPlay();
+  setLoop([a, b]);
+}
 
 const readout = byId<HTMLOutputElement>("readout");
 const status = byId<HTMLParagraphElement>("status");
@@ -615,6 +621,10 @@ for (const select of [speedSelect, pitchSelect]) {
 // phrase it ends, and a tap in the loop, or Whole chant, lets it go.
 const loopText = byId<HTMLSpanElement>("loop-text");
 const unloopButton = byId<HTMLButtonElement>("unloop");
+// Beside a take, the run chosen is named in the bar, where Play and Your take are.
+const chosenLine = byId<HTMLParagraphElement>("chosen");
+const chosenText = byId<HTMLSpanElement>("chosen-text");
+const unchooseButton = byId<HTMLButtonElement>("unchoose");
 const loopStyle = document.head.appendChild(document.createElement("style"));
 let loop: [number, number] | null = null;
 /** Counts plays, so a loop stopped while it waits between times round does not go on. */
@@ -629,22 +639,37 @@ function setLoop(next: [number, number] | null): void {
   const [a, b] = next ?? [0, -1];
   const ids = score.timeline.notes.slice(a, b + 1).map((n) => n.id);
   // A rule rather than classes on the ink, so the run stays marked when the score is drawn again.
-  // Tinted lighter than the cursor's note, so it stands out within it, and only while the score
-  // is free: not in a take, nor beside a take's result.
-  const free = "body:not(.taking) main:not(:has(#result:not([hidden]))) #score";
+  // Tinted lighter than the cursor's note, so it stands out within it, and not in a take; beside
+  // a take's result its bands are tinted too.
+  const free = "body:not(.taking) #score";
+  const bands = Array.from({ length: ids.length }, (_, k) => `[data-band="${a + k}"] .band-hit`).join(",");
   loopStyle.textContent = ids.length
-    ? `${free} :is(${ids.map((id) => `[data-note~="${id}"]`).join(",")}):not(.cantor-current){fill:color-mix(in srgb, var(--rubric) 50%, var(--bg))}`
+    ? `${free} :is(${ids.map((id) => `[data-note~="${id}"]`).join(",")}):not(.cantor-current){fill:color-mix(in srgb, var(--rubric) 50%, var(--bg))}` +
+      `${free} :is(${bands}){fill:color-mix(in srgb, var(--rubric) 10%, transparent)}`
     : "";
   unloopButton.hidden = !next;
   loopText.textContent = next
     ? `Play goes over notes ${a + 1} to ${b + 1} until you stop it.`
     : "Tap a phrase or a bar on the score to play it over and over.";
+  drawChosen();
 }
-unloopButton.addEventListener("click", () => {
-  if (taking) return;
-  stopPlay();
-  setLoop(null);
-});
+
+/** Names the run chosen in the bar, beside a take shown. */
+function drawChosen(): void {
+  chosenLine.hidden = !loop || !shown || taking;
+  if (!loop) return;
+  const [a, b] = loop;
+  const sung = [syllableOf(a), a === b ? "" : syllableOf(b)].filter(Boolean);
+  const words = sung.length ? ` (“${sung.join(" … ")}”)` : "";
+  chosenText.textContent = `${a === b ? `Note ${a + 1}` : `Notes ${a + 1} to ${b + 1}`}${words}: Play sings the guide here, Your take plays you.`;
+}
+
+for (const button of [unloopButton, unchooseButton])
+  button.addEventListener("click", () => {
+    if (taking) return;
+    stopPlay();
+    setLoop(null);
+  });
 
 /** The note a tap on the score means: a note's ink, a syllable's first note, or the last note
  * before a bar tapped; -1 for none. */
@@ -670,9 +695,13 @@ function tappedNote(e: MouseEvent): number {
 }
 
 function tapScore(e: MouseEvent): void {
-  if (shown || taking || !guide) return;
   const i = tappedNote(e);
-  if (i < 0) return;
+  if (i >= 0) choose(i);
+}
+
+/** Chooses the phrase of note `i`, or stretches the run to it, or lets it go (`tapLoop`). */
+function choose(i: number): void {
+  if (taking || !guide) return;
   stopPlay();
   setLoop(tapLoop(loop, i, score.timeline.pauses, score.timeline.notes.length));
 }
@@ -736,7 +765,7 @@ async function hear(): Promise<void> {
     const ctx = await audioContext();
     const { wav } = await listener.audio();
     if (press !== hears) return;
-    await replay.play(ctx, wav, take.pulse, take.offset);
+    await replay.play(ctx, wav, take.pulse, take.offset, loop ?? undefined);
   } catch (error) {
     if (press !== hears) return;
     stopHear();
@@ -761,8 +790,8 @@ if (!guide) {
   playButton.addEventListener("click", () => {
     if (guide.playing || playing !== null) return stopPlay();
     stopPitch();
+    stopHear();
     setStatus("");
-    showResult(null);
     void play();
   });
   noteButton.addEventListener("click", () => {
@@ -1014,6 +1043,7 @@ function endTake(): void {
   headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = false;
   holdChant(false);
   modeLine.hidden = !guide;
+  drawChosen();
   void detect();
 }
 
