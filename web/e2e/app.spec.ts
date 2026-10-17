@@ -373,6 +373,18 @@ test("a phrase after where a take was stopped is sung by the guide, and your tak
   expect(await page.evaluate(() => window.__cantor.visited)).toEqual(ids.slice(0, 2));
   expect((await page.evaluate(() => window.__cantor.played)).midi).toHaveLength(2);
   expect(await page.evaluate(() => window.__cantor.replayed.visited)).toEqual(ids.slice(0, 2));
+  // Stopped before its first phrase was sung through, Compare has nothing to play; Yours plays
+  // what there is.
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2, 0), [gabc] as const);
+  const asked = (await page.evaluate(() => window.__cantor.played)).plays;
+  await compare.click();
+  await expect(page.locator("#status")).toHaveText("You stopped the take before its first phrase was sung through, so there is nothing to compare yet.");
+  expect((await page.evaluate(() => window.__cantor.played)).plays).toBe(asked);
+  await expect(compare).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Yours" }).click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.replayed.playing)).toBe(true);
+  await expect(page.locator("#status")).toHaveText("");
+  await page.getByRole("button", { name: "Yours" }).click();
 });
 
 test("on a phone, beside a take, the bar puts Compare, Guide and Yours above Repeat, Drone and Sing a take", async ({ page }) => {
@@ -506,9 +518,11 @@ test("the key a take was sung in is told against the guide's, which then sings i
       const { sung, played } = window.__cantor;
       return played.midi.map((m, i) => ((((m - sung[i]!.midi + 6) % 12) + 12) % 12) - 6);
     });
+  // Each play is let end by itself, so that a click after it starts the next.
+  const ended = () => expect(guide).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
   await guide.click();
   expect(await moved()).toEqual([0, 0]);
-  await guide.click();
+  await ended();
   // With the guide two semitones up, the same singer is two below it.
   await page.getByLabel("Pitch").selectOption("2");
   const { verdict } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
@@ -521,21 +535,28 @@ test("the key a take was sung in is told against the guide's, which then sings i
   await expect(inKey).toBeChecked();
   await guide.click();
   for (const by of await moved()) expect(by).toBeCloseTo(verdict.key_cents / 100 - 2, 5);
-  await guide.click();
+  await ended();
   // A drone holds the Pitch, so it does not sound against the guide moved from it.
-  await page.getByRole("button", { name: "Drone" }).click();
+  const drone = page.getByRole("button", { name: "Drone" });
+  await drone.click();
   await expect.poll(() => page.evaluate(() => window.__cantor.drone)).not.toBeNull();
   await guide.click();
-  await expect(page.getByRole("button", { name: "Drone" })).toHaveAttribute("aria-pressed", "false");
+  await expect(drone).toHaveAttribute("aria-pressed", "false");
   expect(await page.evaluate(() => window.__cantor.drone)).toBeNull();
-  // Nor does one started while the guide sings moved.
-  await page.evaluate(() => {
+  await ended();
+  // Nor does one started while the guide sings moved: the guide stops for it. Pressed in the
+  // page as soon as the guide is heard, long before its first note ends.
+  // Asked at once, before the guide could have ended by itself.
+  const stopped = await page.evaluate(async () => {
     document.getElementById("play")!.click();
+    while (!window.__cantor.following) await new Promise(requestAnimationFrame);
     document.getElementById("drone")!.click();
+    return [document.getElementById("play")!.getAttribute("aria-pressed"), window.__cantor.following];
   });
-  await expect(guide).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByRole("button", { name: "Drone" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Drone" }).click();
+  expect(stopped).toEqual(["false", false]);
+  await expect(drone).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => window.__cantor.drone)).not.toBeNull();
+  await drone.click();
   await inKey.uncheck();
   await guide.click();
   expect(await moved()).toEqual([0, 0]);
@@ -612,13 +633,27 @@ test("beside a take Guide plays the phrase chosen once, and Repeat over and over
   await expect(guide).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
   expect(await plays()).toBe(asked + 1);
   const repeat = page.getByRole("button", { name: "Repeat" });
+  // Round again after a breath, still pressed, until pressed again: over the phrase chosen, and
+  // with none over the whole chant.
+  for (const chosen of [true, false]) {
+    if (!chosen) await page.getByRole("button", { name: "Whole chant" }).click();
+    const from = await plays();
+    await repeat.click();
+    await expect.poll(plays, { timeout: 20_000 }).toBeGreaterThanOrEqual(from + 2);
+    await expect(repeat).toHaveAttribute("aria-pressed", "true");
+    await repeat.click();
+    await expect(repeat).toHaveAttribute("aria-pressed", "false");
+    expect(await page.evaluate(() => window.__cantor.following)).toBe(false);
+  }
+  // It clears what the status said of a guide that failed.
+  await page.evaluate(() => {
+    const status = document.getElementById("status")!;
+    status.textContent = "The guide voice failed. Try again.";
+    status.classList.add("error");
+  });
   await repeat.click();
-  // Round again after a breath, still pressed, until pressed again.
-  await expect.poll(plays, { timeout: 10_000 }).toBe(asked + 3);
-  await expect(repeat).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#status")).toHaveText("");
   await repeat.click();
-  await expect(repeat).toHaveAttribute("aria-pressed", "false");
-  expect(await page.evaluate(() => window.__cantor.following)).toBe(false);
 });
 
 test("your take's audio is decoded once a take, and again after it failed", async ({ page }) => {
@@ -723,6 +758,15 @@ test("the bar steps from mark to mark in the order sung, each opening its card a
   // The steps go on from the mark closed; from a phrase tapped, into it, or back before it.
   await next.click();
   await expect(text).toHaveText("Mark 3 of 3 · “o”");
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  await page.getByRole("button", { name: "Choose the phrase of note 3", exact: true }).click();
+  await expect(text).toHaveText("Notes 3 to 6 · “al … ia”");
+  await next.click();
+  await expect(text).toHaveText("Mark 1 of 3 · “al”");
+  // A phrase let go and tapped afresh is stepped into from its start, whichever of its marks was
+  // open before.
+  await next.click();
+  await expect(text).toHaveText("Mark 2 of 3 · “ia”");
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   await page.getByRole("button", { name: "Choose the phrase of note 3", exact: true }).click();
   await expect(text).toHaveText("Notes 3 to 6 · “al … ia”");
