@@ -1,11 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { byTitle, finds, highlight, terms, type LibraryChant } from "../src/library";
+import { byMass, byTitle, finds, highlight, kicker, massName, terms, type LibraryChant } from "../src/library";
 
 describe("the library's order", () => {
   it("files titles by their words, past a leading versicle sign or number", () => {
     const titles = ["℣. Rest eternal", "O God", "Of the Father", "1. Israel's King", "a light", "Behold", "3rd Sunday", "... of blessed Edmund"];
     const sorted = titles.map((title, i) => ({ title, slug: `s${i}` })).sort(byTitle).map((c) => c.title);
     expect(sorted).toEqual(["3rd Sunday", "a light", "Behold", "1. Israel's King", "O God", "... of blessed Edmund", "Of the Father", "℣. Rest eternal"]);
+  });
+});
+
+describe("the Mass settings", () => {
+  const piece = (kind: LibraryChant["kind"], name: string | null, title = name ?? "x"): LibraryChant => ({
+    slug: `${kind}-${name}`,
+    title,
+    name,
+    kind,
+    mode: null,
+    book: null,
+    source: null,
+    url: null,
+    words: "",
+  });
+
+  it("names a movement's Mass by the number its name gives, never a Creed's", () => {
+    expect(massName(piece("kyrie", "Kyrie VIII"))).toBe("Mass VIII (De Angelis)");
+    expect(massName(piece("agnus", "Agnus Dei XI"))).toBe("Mass XI (Orbis factor)");
+    expect(massName(piece("dismissal", "Benedicamus IX"))).toBe("Mass IX (Cum jubilo)");
+    expect(massName(piece("kyrie", "Kyrie XVI"))).toBe("Mass XVI");
+    expect(massName(piece("credo", "Credo III"))).toBeNull();
+    expect(massName(piece("kyrie", "Kyrie"))).toBeNull();
+    expect(massName(piece("antiphon", "Ite VIII"))).toBeNull();
+    expect(finds(piece("gloria", "Gloria"), terms("mass gloria"))).toBe(true);
+    expect(kicker({ kind: "sanctus", mode: "vi", name: "Sanctus VIII" })).toBe("Mass VIII (De Angelis) · Sanctus · Mode vi");
+  });
+
+  it("files movements by Mass, then in the order they are sung, then the rest by title", () => {
+    const sorted = [
+      piece("dismissal", "Ite XI"),
+      piece("credo", "Credo III"),
+      piece("kyrie", "Kyrie XI"),
+      piece("agnus", "Agnus Dei VIII"),
+      piece("kyrie", "Kyrie", "Kyrie eleison"),
+      piece("kyrie", "Kyrie VIII"),
+      piece("sanctus", "Sanctus XI"),
+    ]
+      .sort(byMass)
+      .map((c) => c.name);
+    expect(sorted).toEqual(["Kyrie VIII", "Agnus Dei VIII", "Kyrie XI", "Sanctus XI", "Ite XI", "Kyrie", "Credo III"]);
   });
 });
 

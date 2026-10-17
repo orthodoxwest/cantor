@@ -1,4 +1,4 @@
-// A score as a row of the `chants` table and an entry of the library: its English title, the
+// A score as a row of the `chants` table and an entry of the library: its title (English, or the Greek and Latin of the Mass), the
 // score's own name, kind, mode, book and words, read with neuma's summary. Shared by
 // content/build.mjs and the private seed scripts in cantor-content; call after neuma's init().
 
