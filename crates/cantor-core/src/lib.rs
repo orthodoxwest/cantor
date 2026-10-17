@@ -26,13 +26,13 @@ pub mod voice;
 
 pub use diction::{Language, Lyric, Sung, Vowel};
 pub use entry::{Entry, entry};
-pub use judge::{Cadence, Mark, MarkKind, Outcome, Verdict, judge, judge_part};
+pub use judge::{Cadence, Mark, MarkKind, Outcome, Verdict, judge, judge_again, judge_part};
 pub use listen::{Guide, Listening, Track, listen, listen_with, live};
 pub use pitch::{Frame, track};
 pub use ribbon::{Band, ribbon};
 pub use score::{NoteResult, Report, score};
 pub use synth::{Note, Planted, Profile, Take, render, render_take};
-pub use tell::{Ending, endings, summary, tell, told};
+pub use tell::{Ending, again, endings, summary, tell, told};
 pub use timeline::{notes_from_gabc, part_from_gabc};
 pub use voice::{Voice, VoiceError, sing};
 

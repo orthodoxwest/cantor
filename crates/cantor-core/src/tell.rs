@@ -1,12 +1,15 @@
 //! What a take says to the singer, in words: the explanation the page shows when a marked
 //! note is tapped and `cantor explain` gives each mark, the two sentences the page shows
-//! after a take, and each phrase ending the second tells of as off pitch, for the page to go
-//! to. It tells what was heard against the singer's own key and nothing else; the judge
-//! decides which notes are marked, whether the tone held and which cadences were on pitch.
+//! after a take, each phrase ending the second tells of as off pitch, for the page to go to,
+//! and a run sung again beside the take it was sung after. It tells what was heard against the
+//! singer's own key and nothing else; the judge decides which notes are marked, whether the
+//! tone held and which cadences were on pitch.
+
+use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-use crate::judge::{CADENCE_CENTS, Mark, MarkKind, Outcome, Verdict, recited};
+use crate::judge::{CADENCE_CENTS, IN_TUNE_CENTS, Mark, MarkKind, Outcome, Verdict, recited};
 use crate::score::fold;
 use crate::synth::Note;
 
@@ -129,6 +132,74 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
         )),
     };
     out.extend(sentence.map(|s| if verdict.steady && off > 0 { but(&s) } else { s }));
+    out
+}
+
+/// The notes `run` sung again (`after`, as [`crate::judge::judge_again`] judges them) beside the
+/// same notes in the take they were sung after (`before`), in a sentence or two: how many were in
+/// tune each time, then the marks on them, when they have or had any. A note is in tune, as the
+/// judge counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. None for a run not
+/// heard.
+pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String> {
+    if after.outcome != Outcome::Heard || run.is_empty() {
+        return Vec::new();
+    }
+    let n = run.len();
+    let tuned = |v: &Verdict| {
+        run.clone()
+            .filter(|&i| {
+                v.relative.get(i).copied().flatten().is_some_and(|c| c.abs() < IN_TUNE_CENTS) && !v.marks.iter().any(|m| m.covers(i))
+            })
+            .count()
+    };
+    let (was, now) = (if before.outcome == Outcome::Heard { tuned(before) } else { 0 }, tuned(after));
+    let mut out = vec![if n == 1 {
+        match (now, was) {
+            (1, 1) => "Its note was in tune, as before.",
+            (1, _) => "Its note was in tune this time, where it was not before.",
+            (_, 1) => "Its note was not in tune this time, where it was before.",
+            _ => "Its note was not in tune, as before.",
+        }
+        .to_string()
+    } else {
+        let these = match now {
+            k if k == n && n == 2 => "Both its notes were".to_string(),
+            k if k == n => format!("All {} of its notes were", number(n)),
+            0 => format!("None of its {} notes were", number(n)),
+            1 => format!("One of its {} notes was", number(n)),
+            k => format!("{} of its {} notes were", capitalise(&number(k)), number(n)),
+        };
+        let then = match was {
+            k if k == now => ", as before".to_string(),
+            0 => ", where none were before".to_string(),
+            2 if n == 2 => ", where both were before".to_string(),
+            1 => ", where one was before".to_string(),
+            k if k == n => ", where all were before".to_string(),
+            k => format!(", where {} were before", number(k)),
+        };
+        let again = if was == now { "" } else { " this time" };
+        format!("{these} in tune{again}{then}.")
+    }];
+    let marks = |k: usize| {
+        if k == 1 {
+            "one mark".to_string()
+        } else {
+            format!("{} marks", number(k))
+        }
+    };
+    let had = before.marks.iter().filter(|m| m.first < run.end && m.last >= run.start).count();
+    let has = after.marks.len();
+    out.extend(match (had, has) {
+        (0, 0) => None,
+        (1, 0) => Some("Its mark is gone.".to_string()),
+        (_, 0) => Some(format!("Its {} are gone.", marks(had))),
+        (0, _) => Some(format!("It has {} now.", marks(has))),
+        _ => Some(format!(
+            "It has {} now, where it had {}.",
+            marks(has),
+            if had == 1 { "one".to_string() } else { number(had) }
+        )),
+    });
     out
 }
 
@@ -523,5 +594,107 @@ mod tests {
         // Both marked, slower: the mark of the note furthest off, though the other is at its
         // level too.
         assert_eq!(ending(0.5, 250.0, 300.0), (2, Some(1)));
+    }
+
+    /// A verdict on `cents` of eight notes, two phrases of four, judged whole (`run` None) or as
+    /// a run sung again in the key 0.
+    fn judged(cents: &[Option<f32>], run: Option<std::ops::Range<usize>>) -> Verdict {
+        let notes: Vec<Note> = (0..8)
+            .map(|i| Note {
+                phrase: (i / 4) as u32,
+                ..Note::new(60.0, 0.6 * i as f32, 0.5)
+            })
+            .collect();
+        let report = crate::score::Report {
+            notes: cents
+                .iter()
+                .enumerate()
+                .map(|(index, &c)| crate::score::NoteResult {
+                    index,
+                    expected_midi: 60.0,
+                    voiced_frames: if c.is_some() { 12 } else { 0 },
+                    masked_frames: 0,
+                    quiet_frames: if c.is_some() { 0 } else { 12 },
+                    frames: 12,
+                    spread_cents: c.map(|_| 10.0),
+                    cents: c,
+                })
+                .collect(),
+            heard_fraction: 1.0,
+            gross_error_rate: 0.0,
+            mean_abs_cents: 0.0,
+        };
+        match run {
+            None => crate::judge::judge(&notes, &report),
+            Some(run) => crate::judge::judge_again(&notes, run, &report, 0.0),
+        }
+    }
+
+    #[test]
+    fn a_run_sung_again_is_told_beside_the_take_it_was_sung_after() {
+        // The second phrase: one note a whole tone high, one a quarter tone flat.
+        let mut cents = [Some(0.0); 8];
+        cents[5] = Some(200.0);
+        cents[6] = Some(-60.0);
+        let before = judged(&cents, None);
+        assert_eq!(before.marks.len(), 1);
+        let after = |c: [f32; 4]| judged(&c.map(Some), Some(4..8));
+        assert_eq!(
+            again(&before, &after([0.0, 10.0, -20.0, 0.0]), 4..8),
+            [
+                "All four of its notes were in tune this time, where two were before.",
+                "Its mark is gone."
+            ]
+        );
+        assert_eq!(
+            again(&before, &after([0.0, 200.0, -60.0, 0.0]), 4..8),
+            [
+                "Two of its four notes were in tune, as before.",
+                "It has one mark now, where it had one."
+            ]
+        );
+        assert_eq!(
+            again(&before, &after([300.0, 0.0, -200.0, 0.0]), 4..8),
+            [
+                "Two of its four notes were in tune, as before.",
+                "It has two marks now, where it had one."
+            ]
+        );
+        assert_eq!(
+            again(&before, &after([80.0, 80.0, 80.0, 0.0]), 4..8),
+            [
+                "One of its four notes was in tune this time, where two were before.",
+                "Its mark is gone."
+            ]
+        );
+        // A run of two, and of one.
+        assert_eq!(
+            again(&before, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
+            ["Both its notes were in tune this time, where one was before."]
+        );
+        assert_eq!(
+            again(&before, &judged(&[Some(0.0)], Some(5..6)), 5..6),
+            ["Its note was in tune this time, where it was not before.", "Its mark is gone."]
+        );
+        assert_eq!(
+            again(&before, &judged(&[Some(0.0)], Some(4..5)), 4..5),
+            ["Its note was in tune, as before."]
+        );
+        // Not heard, nothing.
+        assert!(again(&before, &judged(&[None; 4], Some(4..8)), 4..8).is_empty());
+    }
+
+    #[test]
+    fn a_first_phrase_sung_again_may_be_marked_where_the_take_could_not_be() {
+        let mut cents = [Some(0.0); 8];
+        cents[1] = Some(300.0);
+        let before = judged(&cents, None);
+        assert!(before.marks.is_empty());
+        let after = judged(&[Some(0.0), Some(300.0), Some(0.0), Some(0.0)], Some(0..4));
+        assert_eq!(after.marks.len(), 1);
+        assert_eq!(
+            again(&before, &after, 0..4),
+            ["Three of its four notes were in tune, as before.", "It has one mark now."]
+        );
     }
 }

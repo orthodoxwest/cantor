@@ -79,6 +79,19 @@
 //! recited, would not be, and stopped there (`expert-stopped` 0) its second cadence would be
 //! "na-tions", not the tone's termination "all ye na-tions".
 //!
+//! A run of a take may be sung again (`cantor_ear::judge_again_notes`): the singer chooses a
+//! phrase and sings it alone, judged in the take's key. Every take heard whole is sung again
+//! so in its first, second, middle and last phrases, each heard from the take's own frames
+//! over the phrase and half a second either side, in the key the take was in there (its key
+//! moved along its drift line), and compared with the take: no mark it does not deserve; no run
+//! the take heard enough of to judge left unheard; and, where the two are judged alike, the same
+//! note marks past the first phrase, verse marks on a verse the run holds whole, and its
+//! cadences placed and called alike. Sung again in a key given, a first phrase may be marked
+//! where a take never is: under the student and wrong gates the faults planted there are
+//! caught as the take's are. Every suite is gated on it; how far a note's error sung again lies
+//! from its error in the take is held to the baseline. Not covered: a run heard in a take of its
+//! own, with its own loudness floor and the guide's cue before it.
+//!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
 //! mark nothing, but the NSDF tracker alone loses notes, and by -6 dB whole takes go
@@ -87,6 +100,7 @@
 //! stop it, but would mask a singer in unison with a loud guide too, which is the app's case.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Mutex;
@@ -572,6 +586,139 @@ struct Metrics {
     /// What the takes stopped short are judged by; none when no take was.
     #[serde(skip_serializing_if = "Option::is_none")]
     stopped: Option<StopMetrics>,
+    /// What runs of the takes sung again are judged by; none when no take was heard whole.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    again: Option<AgainMetrics>,
+}
+
+/// How long before a run's first note and after its last the run sung again is heard, in
+/// seconds.
+const AGAIN_PAD_S: f32 = 0.5;
+
+/// The runs of a take sung again: its first, second, middle and last phrases (each once), as
+/// the notes each spans.
+fn again_runs(notes: &[Note]) -> Vec<Range<usize>> {
+    let Some(last) = notes.last() else { return Vec::new() };
+    let phrases = last.phrase as usize + 1;
+    let mut chosen = vec![0, 1, phrases / 2, phrases - 1];
+    chosen.retain(|&p| p < phrases);
+    chosen.sort_unstable();
+    chosen.dedup();
+    chosen
+        .into_iter()
+        .filter_map(|p| {
+            let first = notes.iter().position(|n| n.phrase as usize == p)?;
+            let last = notes.iter().rposition(|n| n.phrase as usize == p)?;
+            Some(first..last + 1)
+        })
+        .collect()
+}
+
+/// The key take `v` (scored as `report`) was in at the notes `run`: its key, moved along its
+/// drift line to there, as the judge read each heard note's error from the line. A singer who
+/// sinks sings a run again where they had sunk to, as a take cut from the whole take is sung.
+fn key_at(v: &Verdict, report: &cantor_core::Report, run: Range<usize>) -> Option<f32> {
+    let key = v.key_cents?;
+    let mut moved: Vec<f32> = run
+        .filter_map(
+            |i| match (report.notes.get(i).and_then(|r| r.cents), v.relative.get(i).copied().flatten()) {
+                (Some(c), Some(rel)) => Some(fold(c - key - rel)),
+                _ => None,
+            },
+        )
+        .collect();
+    moved.sort_by(f32::total_cmp);
+    Some(fold(key + moved.get(moved.len() / 2).copied().unwrap_or(0.0)))
+}
+
+/// The numbers a suite's runs sung again are judged by: each of [`again_runs`] of every take
+/// heard whole, heard again from the take's own frames over the run ([`AGAIN_PAD_S`] either
+/// side) and judged by the ear's [`cantor_ear::judge_again_notes`] in the key the take was in
+/// there ([`key_at`]), beside the take.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct AgainMetrics {
+    runs: u32,
+    /// Runs the take heard enough of to judge (as the judge's own floor counts) not heard again.
+    unheard: u32,
+    /// Runs judged otherwise than in the take ([`again_otherwise`]).
+    otherwise: u32,
+    /// The furthest a note's error sung again is from its error in the take, in cents.
+    apart_cents: f32,
+    /// Marks on runs sung again that were not deserved (see [`deserved`]).
+    false_marks: u32,
+    /// Faults planted in a first phrase, which a take is never marked in but a run sung again,
+    /// in a key given, may be; and those caught.
+    first_faults: u32,
+    first_caught: u32,
+}
+
+impl AgainMetrics {
+    fn add(&mut self, take: &Judged) {
+        for run in again_runs(&take.notes) {
+            let (from, to) = (
+                take.notes[run.start].start_s - AGAIN_PAD_S,
+                take.notes[run.end - 1].end_s() + AGAIN_PAD_S,
+            );
+            let frames: Vec<Frame> = take.frames.iter().filter(|f| f.t >= from && f.t < to).cloned().collect();
+            let Some(key) = key_at(&take.verdict, &take.report, run.clone()) else {
+                continue;
+            };
+            let again = cantor_ear::judge_again_notes(take.notes.clone(), run.clone(), key, &take.verdict, &frames);
+            let v = &again.verdict;
+            self.runs += 1;
+            if v.outcome != Outcome::Heard {
+                let counted: Vec<usize> = run.clone().filter(|&i| take.notes[i].dur_s >= COUNTED_MIN_S).collect();
+                let heard = counted.iter().filter(|&&i| take.report.notes[i].cents.is_some()).count();
+                self.unheard += u32::from(heard as f32 >= cantor_core::judge::TAKE_HEARD_FLOOR * counted.len() as f32);
+                continue;
+            }
+            self.false_marks += v.marks.iter().filter(|m| !deserved(m, &take.planted)).count() as u32;
+            for i in run.clone().filter(|&i| take.notes[i].phrase == 0) {
+                let p = &take.planted[i];
+                if !p.silent && fold(p.cents).abs() >= FLAGRANT_CENTS && take.notes[i].dur_s >= FLAGRANT_MIN_S {
+                    self.first_faults += 1;
+                    self.first_caught += u32::from(v.marks.iter().any(|m| catches(m, i, p)));
+                }
+            }
+            self.otherwise += u32::from(again_otherwise(&take.notes, v, &take.verdict, run.clone()));
+            for i in run {
+                if let (Some(a), Some(w)) = (v.relative[i], take.verdict.relative[i]) {
+                    self.apart_cents = self.apart_cents.max(fold(a - w).abs());
+                }
+            }
+        }
+    }
+}
+
+/// Whether a run of `notes` sung again (`again`) was judged otherwise than the same notes in
+/// the take (`whole`), where the two are judged alike: other note marks past the first phrase
+/// (where a take is never marked), save on a note a verse mark of the take covers (sung again
+/// part of a verse is judged note by note); other verse marks on a verse the run holds whole;
+/// or the cadences inside it placed or called otherwise (see [`contradicts`]).
+fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
+    let in_verse = |i: usize| whole.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i));
+    let noted = |v: &Verdict| -> Vec<usize> {
+        v.marks
+            .iter()
+            .filter(|m| m.kind == MarkKind::Note && run.contains(&m.first) && notes[m.first].phrase > 0 && !in_verse(m.first))
+            .map(|m| m.first)
+            .collect()
+    };
+    let verses = |v: &Verdict| -> Vec<(MarkKind, usize, usize)> {
+        v.marks
+            .iter()
+            .filter(|m| m.kind != MarkKind::Note && run.contains(&m.first) && run.contains(&m.last))
+            .map(|m| (m.kind, m.first, m.last))
+            .collect()
+    };
+    let inside: Vec<Cadence> = whole
+        .cadences
+        .iter()
+        .filter(|c| run.contains(&c.first) && run.contains(&c.last))
+        .copied()
+        .collect();
+    noted(again) != noted(whole) || verses(again) != verses(whole) || contradicts(&again.cadences, &inside)
 }
 
 /// The numbers a suite's takes stopped short are judged by, besides its gate's over the notes
@@ -647,6 +794,7 @@ impl Metrics {
         let (mut caught, mut cadences_caught) = (0u32, 0u32);
         let (mut both, mut agreed) = (0usize, 0usize);
         let mut stopped: Option<StopMetrics> = None;
+        let mut again: Option<AgainMetrics> = None;
         for take in takes {
             for f in &take.frames {
                 if let (Some(m), Some(o)) = (f.midi, f.other)
@@ -667,6 +815,9 @@ impl Metrics {
                 }
             }
             let v = &take.verdict;
+            if take.stop.is_none() && v.outcome == Outcome::Heard {
+                again.get_or_insert_default().add(take);
+            }
             let (mut take_counted, mut take_heard) = (0, 0);
             for (i, note) in take.notes.iter().enumerate() {
                 let r = &take.report.notes[i];
@@ -729,6 +880,7 @@ impl Metrics {
             m.in_tune += v.in_tune as u32;
         }
         m.stopped = stopped;
+        m.again = again;
         m.heard_fraction = ratio(heard, counted);
         m.heard_all = ratio(all_heard, all);
         m.masked_fraction = ratio(masked, counted);
@@ -838,6 +990,35 @@ impl Metrics {
                 );
                 need(self.in_tune == 0, format!("{} notes heard in tune", self.in_tune));
             }
+        }
+        out
+    }
+
+    /// Why runs sung again fail their gates, if they do: every suite's, and under the student
+    /// and wrong gates the faults planted in a first phrase caught.
+    fn again_failures(&self, gate: Gate) -> Vec<String> {
+        let Some(a) = self.again else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut need = |ok: bool, what: String| {
+            if !ok {
+                out.push(what);
+            }
+        };
+        need(a.false_marks == 0, format!("{} false marks on runs sung again", a.false_marks));
+        need(a.unheard == 0, format!("{} of {} runs sung again not heard", a.unheard, a.runs));
+        need(
+            a.otherwise == 0,
+            format!("{} of {} runs sung again judged otherwise than in the take", a.otherwise, a.runs),
+        );
+        if matches!(gate, Gate::Student | Gate::Wrong) && a.first_faults > 0 {
+            let recall = a.first_caught as f32 / a.first_faults as f32;
+            need(
+                recall >= RECALL_FLOOR,
+                format!(
+                    "{} of {} faults in a first phrase sung again caught",
+                    a.first_caught, a.first_faults
+                ),
+            );
         }
         out
     }
@@ -996,6 +1177,22 @@ impl Metrics {
             now.key_apart_cents,
             was.key_apart_cents,
             now.key_apart_cents > was.key_apart_cents + 10.0,
+        );
+        // Which runs are sung again, and what is planted in them, is fixed by the suites too.
+        let again = |m: &Metrics| m.again.unwrap_or_default();
+        let (now, was) = (again(self), again(base));
+        check("runs sung again", now.runs as f32, was.runs as f32, now.runs != was.runs);
+        check(
+            "faults in a first phrase sung again",
+            now.first_faults as f32,
+            was.first_faults as f32,
+            now.first_faults != was.first_faults,
+        );
+        check(
+            "again apart_cents",
+            now.apart_cents,
+            was.apart_cents,
+            now.apart_cents > was.apart_cents + 10.0,
         );
         // SwiftF0 going deaf on a suite would otherwise drop its agreement from the gate.
         if let (None, Some(was)) = (self.agreement, base.agreement) {
@@ -1180,6 +1377,7 @@ pub fn run(
         let oracle = OracleStats::of(judged);
         let mut gated = metrics.gate_failures(*gate);
         gated.extend(metrics.agreement_failures());
+        gated.extend(metrics.again_failures(*gate));
         let mut moved = Vec::new();
         // Real takes are held to their gate only: the set and its audio live elsewhere.
         if !is_real(name) {
@@ -1811,6 +2009,89 @@ mod tests {
                 assert!(apart <= want.ribbon.len().div_ceil(50), "{at}: {apart} notes heard by one ear only");
             }
         }
+    }
+
+    /// Notes in the phrases given, a note to each.
+    fn phrased(phrases: &[u32]) -> Vec<Note> {
+        phrases
+            .iter()
+            .enumerate()
+            .map(|(i, &phrase)| Note {
+                phrase,
+                ..Note::new(60.0, i as f32, 0.9)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_runs_sung_again_are_the_first_second_middle_and_last_phrases_each_once() {
+        let runs = again_runs(&phrased(&[0, 0, 1, 1, 2, 2, 3, 4, 4, 4]));
+        assert_eq!(runs, [0..2, 2..4, 4..6, 7..10]);
+        // A chant of two phrases sings each once; of one, it once.
+        assert_eq!(again_runs(&phrased(&[0, 0, 1])), [0..2, 2..3]);
+        assert_eq!(again_runs(&phrased(&[0, 0])), [0..2]);
+        assert!(again_runs(&[]).is_empty());
+        // A phrase no note is in has no run.
+        assert_eq!(again_runs(&phrased(&[0, 2, 2])), [0..1, 1..3]);
+    }
+
+    /// A verdict in `key` with the notes' errors from the key and the drift line `relative`,
+    /// scored as `cents` from the score.
+    fn read(key: f32, relative: &[Option<f32>], cents: &[Option<f32>]) -> (Verdict, cantor_core::Report) {
+        let verdict = Verdict {
+            outcome: Outcome::Heard,
+            key_cents: Some(key),
+            drift_cents: 0.0,
+            steady: true,
+            marks: Vec::new(),
+            relative: relative.to_vec(),
+            in_tune: 0,
+            cadences: Vec::new(),
+        };
+        let notes = cents
+            .iter()
+            .enumerate()
+            .map(|(index, &cents)| cantor_core::NoteResult {
+                index,
+                expected_midi: 60.0,
+                voiced_frames: 10,
+                masked_frames: 0,
+                quiet_frames: 0,
+                frames: 10,
+                spread_cents: cents.map(|_| 20.0),
+                cents,
+            })
+            .collect();
+        (
+            verdict,
+            cantor_core::Report {
+                notes,
+                heard_fraction: 1.0,
+                gross_error_rate: 0.0,
+                mean_abs_cents: 0.0,
+            },
+        )
+    }
+
+    #[test]
+    fn a_run_is_sung_again_in_the_key_the_take_had_drifted_to_there() {
+        // Key 100, the line 50 above it over notes 2..5, and each note off the line by its own.
+        let (v, report) = read(
+            100.0,
+            &[Some(0.0), Some(0.0), Some(10.0), None, Some(-30.0), Some(5.0)],
+            &[Some(100.0), Some(100.0), Some(160.0), Some(900.0), Some(120.0), Some(155.0)],
+        );
+        assert_eq!(key_at(&v, &report, 0..2), Some(100.0));
+        // The note the judge did not read an error of is left out, as are the notes past the run.
+        assert_eq!(key_at(&v, &report, 2..5), Some(150.0));
+        // Drifted past a tritone, the key folds as the judge's does.
+        let (v, report) = read(550.0, &[Some(0.0)], &[Some(-500.0)]);
+        assert_eq!(key_at(&v, &report, 0..1), Some(-500.0));
+        // Nothing read there leaves the key where it started; nothing heard, no key.
+        assert_eq!(key_at(&v, &report, 1..1), Some(550.0));
+        let (mut v, report) = read(0.0, &[None], &[None]);
+        v.key_cents = None;
+        assert_eq!(key_at(&v, &report, 0..1), None);
     }
 
     /// How far a note's band may be from the eval's wherever the frames fall, in cents; the

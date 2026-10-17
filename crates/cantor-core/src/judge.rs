@@ -10,6 +10,8 @@
 //! high), or when it was silent throughout. A verse that was loud but not pitched (a clash
 //! with the guide, a noisy room) is not marked. Smaller errors are left to the trace.
 
+use std::ops::Range;
+
 use serde::{Deserialize, Serialize};
 
 use crate::score::{NoteResult, Report, fold};
@@ -140,6 +142,59 @@ impl Verdict {
     pub fn clean(&self) -> bool {
         self.outcome == Outcome::Heard && self.steady && self.marks.is_empty()
     }
+
+    /// The verdict on notes from `first` on, with its notes indexed as among `len`: those before
+    /// and after them not heard.
+    fn placed(mut self, first: usize, len: usize) -> Verdict {
+        for m in &mut self.marks {
+            m.first += first;
+            m.last += first;
+        }
+        for c in &mut self.cadences {
+            c.first += first;
+            c.last += first;
+            c.note = c.note.map(|n| n + first);
+        }
+        let mut relative = vec![None; len];
+        for (i, r) in self.relative.into_iter().enumerate() {
+            if let Some(at) = relative.get_mut(first + i) {
+                *at = r;
+            }
+        }
+        self.relative = relative;
+        self
+    }
+
+    /// The verdict on the notes `run` alone, indexed from its first, as [`judge_again`] judged
+    /// them.
+    pub fn within(&self, run: Range<usize>) -> Verdict {
+        let inside = |first: usize, last: usize| first >= run.start && last < run.end;
+        Verdict {
+            marks: self
+                .marks
+                .iter()
+                .filter(|m| inside(m.first, m.last))
+                .map(|m| Mark {
+                    first: m.first - run.start,
+                    last: m.last - run.start,
+                    ..*m
+                })
+                .collect(),
+            cadences: self
+                .cadences
+                .iter()
+                .filter(|c| inside(c.first, c.last))
+                .map(|c| Cadence {
+                    first: c.first - run.start,
+                    last: c.last - run.start,
+                    note: c.note.map(|n| n - run.start),
+                    ..*c
+                })
+                .collect(),
+            relative: self.relative.get(run).map_or_else(Vec::new, <[_]>::to_vec),
+            ..self.clone()
+        }
+    }
 }
 
 /// Judges a scored take of `notes`. A report that does not match the notes is not heard.
@@ -153,7 +208,25 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
 /// finished is judged as when the chant is sung whole. A report that does not match those
 /// notes is not heard.
 pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
-    let notes = &chant[..judged.min(chant.len())];
+    judge_run(chant, 0..judged.min(chant.len()), report, None)
+}
+
+/// Judges a scored take of `chant`'s notes `run` alone, sung again after a take of the whole
+/// chant in that take's key, `key_cents`: against that key, with no drift (a run is too short to
+/// read one from, and not sung long enough to drift), and with the cadences the whole chant has
+/// there. The key is given, so a note may be marked in the first phrase too; a verse is marked
+/// only when the run holds the whole of it, and a run that holds part of one is judged note by
+/// note. The verdict's notes are the chant's, by index, those outside the run not heard; `report`
+/// scores the run's alone, from its first. A report that does not match them is not heard.
+pub fn judge_again(chant: &[Note], run: Range<usize>, report: &Report, key_cents: f32) -> Verdict {
+    let run = run.start.min(chant.len())..run.end.min(chant.len());
+    judge_run(chant, run.clone(), report, Some(key_cents)).placed(run.start, chant.len())
+}
+
+/// Judges a scored take of `chant`'s notes `run`, indexed from the run's first: in `key` when it
+/// is given (see [`judge_again`]), else in the key the take starts in, following its drift.
+fn judge_run(chant: &[Note], run: Range<usize>, report: &Report, key: Option<f32>) -> Verdict {
+    let notes = &chant[run.clone()];
     let silent = |outcome| Verdict {
         outcome,
         key_cents: None,
@@ -182,22 +255,32 @@ pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
         });
     }
 
-    let (key, t0) = key_cents(notes, results);
+    let given = key.is_some();
+    let (key, t0) = key.map_or_else(|| key_cents(notes, results), |key| (key, 0.0));
     let errors: Vec<Option<f32>> = results.iter().map(|r| r.cents.map(|c| fold(c - key))).collect();
-    let slope = drift_slope(notes, &errors, t0);
+    let slope = if given { 0.0 } else { drift_slope(notes, &errors, t0) };
     let relative: Vec<Option<f32>> = errors
         .iter()
         .enumerate()
         .map(|(i, e)| e.map(|e| fold(e - slope * (mid(&notes[i]) - t0))))
         .collect();
 
-    let mut marks = verse_marks(notes, results, &relative);
+    // Sung again, a verse the run holds only part of is not the verse.
+    let whole = |m: &Mark| {
+        let verse = notes[m.first].verse;
+        let (a, b) = (run.start + m.first, run.start + m.last);
+        (a == 0 || chant[a - 1].verse != verse) && chant.get(b + 1).is_none_or(|n| n.verse != verse)
+    };
+    let mut marks: Vec<Mark> = verse_marks(notes, results, &relative)
+        .into_iter()
+        .filter(|m| !given || whole(m))
+        .collect();
     for i in 0..notes.len() {
         if marks.iter().any(|m| m.covers(i)) {
             continue;
         }
         let (Some(rel), r) = (relative[i], &results[i]) else { continue };
-        if notes[i].phrase > 0 && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS && agreed(r) {
+        if (given || notes[i].phrase > 0) && notes[i].dur_s >= MARK_MIN_S && rel.abs() >= MARK_CENTS && agreed(r) {
             marks.push(Mark {
                 kind: MarkKind::Note,
                 first: i,
@@ -218,7 +301,8 @@ pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
         .count();
     let cadences = cadences(chant)
         .into_iter()
-        .filter(|&(_, last)| last < notes.len())
+        .filter(|&(first, last)| first >= run.start && last < run.end)
+        .map(|(first, last)| (first - run.start, last - run.start))
         .map(|(first, last)| {
             let worst = cadence_cents(
                 (first..=last)
@@ -705,6 +789,70 @@ mod tests {
         // Judged whole, a take is judged as by `judge`.
         let cents = vec![Some(0.0); notes.len()];
         assert_eq!(judge_part(&notes, notes.len(), &report(&cents)), judge(&notes, &report(&cents)));
+    }
+
+    #[test]
+    fn a_run_sung_again_is_judged_in_the_key_given_with_its_notes_where_they_are_in_the_chant() {
+        // Notes 3 to 5 again, the middle one a major second high, in the key the take was in.
+        let v = judge_again(&notes(), 3..6, &report(&[Some(-370.0), Some(-150.0), Some(-360.0)]), -370.0);
+        assert_eq!(v.outcome, Outcome::Heard);
+        assert_eq!(v.key_cents, Some(-370.0));
+        assert_eq!((v.drift_cents, v.steady), (0.0, true));
+        assert_eq!(
+            v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(),
+            [(MarkKind::Note, 4, 4)]
+        );
+        assert_eq!(v.relative.len(), 10);
+        assert_eq!(v.relative[3..6], [Some(0.0), Some(220.0), Some(10.0)]);
+        assert!(v.relative[..3].iter().chain(&v.relative[6..]).all(Option::is_none));
+        assert_eq!(v.in_tune, 2);
+        // Within the run, as it was judged.
+        let w = v.within(3..6);
+        assert_eq!((w.marks[0].first, w.relative.len()), (1, 3));
+    }
+
+    #[test]
+    fn a_run_sung_again_is_off_the_key_given_however_steadily_it_is_sung() {
+        // A whole take sung a tone high is in its own key; a run sung again so is off the take's.
+        assert!(judge(&notes(), &report(&[Some(200.0); 10])).marks.is_empty());
+        let v = judge_again(&notes(), 6..9, &report(&[Some(200.0); 3]), 0.0);
+        assert_eq!(v.marks.iter().map(|m| m.first).collect::<Vec<_>>(), [6, 7, 8]);
+    }
+
+    #[test]
+    fn sung_again_a_note_of_the_first_phrase_may_be_marked() {
+        // The key is not found there, but given.
+        let v = judge_again(&notes(), 0..3, &report(&[Some(0.0), Some(300.0), Some(0.0)]), 0.0);
+        assert_eq!(v.marks.iter().map(|m| m.first).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn sung_again_a_verse_is_marked_only_when_the_run_holds_it_whole() {
+        let v = judge_again(&notes(), 5..10, &report(&[Some(200.0); 5]), 0.0);
+        assert_eq!(
+            v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(),
+            [(MarkKind::Verse, 5, 9)]
+        );
+        // Part of it, note by note.
+        let v = judge_again(&notes(), 5..8, &report(&[Some(200.0); 3]), 0.0);
+        assert!(v.marks.iter().all(|m| m.kind == MarkKind::Note), "{v:?}");
+        assert_eq!(v.marks.len(), 3);
+        // Silent throughout, the run is not heard: a whole verse sung again is not marked missing.
+        let v = judge_again(&notes(), 5..10, &report(&[None; 5]), 0.0);
+        assert_eq!(v.outcome, Outcome::NotHeard);
+    }
+
+    #[test]
+    fn a_run_sung_again_keeps_the_whole_chants_cadences_inside_it() {
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        let whole = judge(&notes, &report(&vec![Some(0.0); notes.len()]));
+        let again = judge_again(&notes, 14..notes.len(), &report(&vec![Some(0.0); notes.len() - 14]), 0.0);
+        let spans = |v: &Verdict| v.cadences.iter().map(|c| (c.first, c.last, c.note)).collect::<Vec<_>>();
+        assert!(!again.cadences.is_empty());
+        assert_eq!(spans(&again), spans(&whole).into_iter().filter(|c| c.0 >= 14).collect::<Vec<_>>());
+        // A run that does not match its report is not heard, and its notes are the chant's.
+        let unheard = judge_again(&notes, 14..20, &report(&[Some(0.0); 3]), 0.0);
+        assert_eq!((unheard.outcome, unheard.relative.len()), (Outcome::NotHeard, notes.len()));
     }
 
     #[test]

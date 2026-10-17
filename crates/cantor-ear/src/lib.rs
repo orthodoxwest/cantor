@@ -9,7 +9,8 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge_part, notes_from_gabc, ribbon, score, summary, told,
+    Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, notes_from_gabc, ribbon, score,
+    summary, told,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
@@ -146,6 +147,59 @@ pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
     let endings = endings(&verdict);
+    Judged {
+        notes,
+        report,
+        verdict,
+        ribbon,
+        told,
+        summary,
+        endings,
+    }
+}
+
+/// The notes `first..=last` of `gabc` at `pulse_s` a pulse sung again, the first due `offset_s`
+/// into the take, scored and judged on its `frames` in `key_cents`, the key the guide sang them
+/// in, beside the take of the whole chant they were sung after, judged `before`: as
+/// [`judge_again_notes`] judges them.
+pub fn judge_again_gabc(
+    gabc: &str,
+    pulse_s: f32,
+    offset_s: f32,
+    run: (usize, usize),
+    key_cents: f32,
+    before: &Verdict,
+    frames: &[Frame],
+) -> Judged {
+    let mut notes = notes_from_gabc(gabc, pulse_s);
+    let at = notes.get(run.0).map_or(0.0, |n| n.start_s);
+    for n in &mut notes {
+        n.start_s += offset_s - at;
+    }
+    judge_again_notes(notes, run.0..run.1 + 1, key_cents, before, frames)
+}
+
+/// The chant's `notes`, timed on the take's clock, of which those of `run` were sung again,
+/// scored and judged on its `frames` in `key_cents` ([`judge_again`]): its notes are the run's,
+/// its report theirs from the run's first, while its verdict, bands and endings are of the
+/// chant's notes by index, so that they are drawn and told where the take's are. Its summary
+/// tells of the run beside the take it was sung after, judged `before` ([`again`]).
+pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_cents: f32, before: &Verdict, frames: &[Frame]) -> Judged {
+    let run = run.start.min(notes.len())..run.end.min(notes.len());
+    let report = score(&notes[run.clone()], frames);
+    let verdict = judge_again(&notes, run.clone(), &report, key_cents);
+    let summary = again(before, &verdict, run.clone());
+    let ribbon = ribbon(&notes[run.clone()], frames, &report, &verdict.within(run.clone()))
+        .into_iter()
+        .map(|mut band| {
+            band.index += run.start;
+            band
+        })
+        .collect();
+    let told = told(&verdict);
+    let endings = endings(&verdict);
+    notes.truncate(run.end);
+    notes.drain(..run.start);
     Judged {
         notes,
         report,
@@ -317,6 +371,51 @@ pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through:
         }
         _ => Err("no take heard".to_string()),
     });
+    output_json(json)
+}
+
+/// Scores and judges the heard take as the notes `first..=last` of a chant sung again, in
+/// `key_cents`, beside the take of the whole chant they were sung after: the byte buffer holds
+/// the chant's GABC in its first `gabc_len` bytes, then that take's verdict as JSON in the next
+/// `before_len`; the notes are at `pulse_s` a pulse, the first due `offset_s` into the take
+/// ([`judge_again_gabc`]). The length of the JSON left in the output buffer, or -1 with the
+/// error there.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ear_judge_again(
+    gabc_len: u32,
+    before_len: u32,
+    pulse_s: f32,
+    offset_s: f32,
+    first: u32,
+    last: u32,
+    key_cents: f32,
+) -> i32 {
+    let (gabc, before) = BYTES.with(|b| {
+        let b = b.borrow();
+        let split = (gabc_len as usize).min(b.len());
+        let end = (split + before_len as usize).min(b.len());
+        (
+            String::from_utf8_lossy(&b[..split]).into_owned(),
+            serde_json::from_slice::<Verdict>(&b[split..end]),
+        )
+    });
+    let json = match before {
+        Err(e) => Err(format!("the take before could not be read: {e}")),
+        Ok(before) => TAKE.with(|t| match t.borrow().as_ref() {
+            Some(Take::Heard(heard)) => serde_json::to_string(&judge_again_gabc(
+                &gabc,
+                pulse_s,
+                offset_s,
+                (first as usize, (last as usize).max(first as usize)),
+                key_cents,
+                &before,
+                &heard.frames,
+            ))
+            .map_err(|e| e.to_string()),
+            _ => Err("no take heard".to_string()),
+        }),
+    };
     output_json(json)
 }
 
