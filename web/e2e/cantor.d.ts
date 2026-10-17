@@ -24,7 +24,7 @@ declare global {
       take: () => { due: number; sound: number | null; at: number } | null;
       practise: (gabc: string, pulse: number) => void;
       timed: (pulse: number) => Array<{ start: number; duration: number }>;
-      show: (gabc: string, pulse: number, offset: number) => Promise<string>;
+      show: (gabc: string, pulse: number, offset: number, through?: number | null) => Promise<string>;
     };
   }
 }

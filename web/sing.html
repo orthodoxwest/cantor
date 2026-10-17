@@ -67,8 +67,8 @@
         <p id="summary"></p>
         <p id="key"></p>
         <ol id="marked" class="marked" role="list" hidden></ol>
+        <p id="reading" hidden>Under each line of the score, a short bar shows the pitch you held on each note, against a line for the note itself: above it is sharp, below it flat. Tap a note, or the bars under it, to choose its phrase; then <b>Play</b> sings the guide there and <b>Your take</b> plays what you sang there.</p>
         <p id="recorded" hidden>The broad grey line under yours is a recording of this chant.</p>
-        <p id="base" hidden><span id="base-text"></span> <button id="rebase" class="btn" type="button">Back to your key</button></p>
         <p id="send-line" class="send" hidden>
           <button id="send" class="btn" type="button">Send to a director</button>
           <span id="sent" aria-live="polite"></span>
@@ -79,6 +79,7 @@
     </main>
 
     <div class="bar">
+      <p id="chosen" class="chosen" hidden><span id="chosen-text" aria-live="polite"></span> <button id="unchoose" class="btn" type="button">Whole chant</button></p>
       <div class="bar-in">
         <button id="play" class="btn primary" type="button" aria-pressed="false" disabled>Play</button>
         <button id="note" class="btn" type="button" aria-pressed="false" title="The first note, then the reciting tone if there is one" disabled>Start note</button>

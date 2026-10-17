@@ -22,6 +22,18 @@ describe("ribbon", () => {
     expect(at[1]).toEqual({ line: 0, left: 157.8 - MIN_WIDTH / 2, right: 157.8 + MIN_WIDTH / 2 });
   });
 
+  it("presses a run of bands, the first of them the one tab stop, or the first drawn past them", () => {
+    const notes = [note(100, 0), note(130, 0), note(160, 0)];
+    const band = (index: number) => ({ index, from_s: index, to_s: index + 1, cents: 0, trace: [] });
+    const states = (svg: string) => [...svg.matchAll(/tabindex="(-?\d)" role="button" aria-label="[^"]*" aria-pressed="(\w+)"/g)].map((m) => [m[1], m[2]]);
+    const choose = (i: number) => `Note ${i + 1}`;
+    const all = [band(0), band(1), band(2)];
+    expect(states(drawRibbon(notes, all, () => 0, 0, [1, 2], choose))).toEqual([["-1", "false"], ["0", "true"], ["-1", "true"]]);
+    expect(states(drawRibbon(notes, all, () => 0, 0, null, choose))).toEqual([["0", "false"], ["-1", "false"], ["-1", "false"]]);
+    // A take stopped after note 2, a run chosen past it: the ribbon is still reached.
+    expect(states(drawRibbon(notes, all.slice(0, 2), () => 0, 0, [2, 2], choose))).toEqual([["0", "false"], ["-1", "false"]]);
+  });
+
   it("measures every band in the same cents, clipped at its edge", () => {
     expect(yOf(0, 10)).toBe(10 + STRIP / 2);
     expect(yOf(50, 0) - yOf(100, 0)).toBeCloseTo(yOf(0, 0) - yOf(50, 0));

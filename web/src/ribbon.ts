@@ -2,7 +2,7 @@
 // its target at the centre, and the pitch heard over the note's sustained part. Each band is
 // measured in cents from the note itself, as the core's judge placed it in the singer's key,
 // so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note when the singer taps it. Each heard
+// ribbon.rs); the page only draws them, re-based on a note only where a caller asks. Each heard
 // note's value, the pitch it was held at, is drawn as a short bar across its band, over the
 // faint trace it was taken from, so the take reads at a glance as steps against the targets,
 // which reach past the bars' ends. Where the chant has an aligned recording, its trace is drawn
@@ -79,24 +79,30 @@ export function yOf(cents: number, top: number): number {
 const f = (x: number) => x.toFixed(1);
 
 /** The strips' SVG, each line's at `stripTop(line)`. Every band's centre is its note in the
- * key; the traces are drawn `base` cents lower, a note's own value when the singer re-based on
- * it (so that note's trace sits on its centre), else 0; `baseIndex` is that note, the one
- * pressed. A heard band is a button to re-base on it; given `choose`, every band is a button
- * named by it instead. Given `recorded`, the bands of a recording of the same notes, each
- * note's recorded trace is drawn under the singer's, re-based on the same note. */
+ * key; the traces are drawn `base` cents lower, a note's own value when re-based on it (so that
+ * note's trace sits on its centre), else 0; `baseIndex` is that note, the one pressed, or a run
+ * of notes pressed together. A heard band is a button to re-base on it; given `choose`, every
+ * band is a button named by it instead, the first pressed (else the first band) the one tab
+ * stop among them. Given `recorded`, the bands of a recording of the same notes, each note's
+ * recorded trace is drawn under the singer's, re-based on the same note. */
 export function drawRibbon(
   notes: readonly TimelineNote[],
   bands: readonly Band[],
   stripTop: (line: number) => number,
   base = 0,
-  baseIndex: number | null = null,
+  baseIndex: number | readonly [number, number] | null = null,
   choose?: (index: number) => string,
   recorded: readonly Band[] = [],
 ): string {
   const at = places(notes);
   // Re-based on a note the recording has no value for, the recording has no base to be drawn
   // from, so it is not drawn.
-  const recordedBase = baseIndex === null ? 0 : (recorded.find((b) => b.index === baseIndex)?.cents ?? null);
+  const recordedBase = typeof baseIndex === "number" ? (recorded.find((b) => b.index === baseIndex)?.cents ?? null) : 0;
+  const [first, last] = baseIndex === null ? [null, null] : typeof baseIndex === "number" ? [baseIndex, baseIndex] : baseIndex;
+  // Choosing among every note, only one band is a tab stop; the arrows move along.
+  // The first band pressed, or the first drawn when none is (a run chosen past a take stopped).
+  const inRun = (index: number) => first !== null && last !== null && index >= first && index <= last;
+  const stop = bands.find((b) => inRun(b.index))?.index ?? bands[0]?.index;
   const sung = new Map(recordedBase === null ? [] : recorded.map((b) => [b.index, b]));
   const out: string[] = [];
   for (const band of bands) {
@@ -108,12 +114,12 @@ export function drawRibbon(
     const heard = band.cents !== null;
     const cents = heard ? band.cents!.toFixed(1) : "";
     const label = choose ? choose(band.index) : heard ? `Measure from note ${band.index + 1}` : null;
-    // Choosing among every note, only the chosen band is a tab stop; the arrows move along.
-    const tab = choose && baseIndex !== null && band.index !== baseIndex ? "-1" : "0";
+    const tab = choose && band.index !== stop ? "-1" : "0";
+    const pressed = inRun(band.index);
     const attrs =
       label === null
         ? `data-band="${band.index}" data-cents=""`
-        : `data-band="${band.index}" data-cents="${cents}" tabindex="${tab}" role="button" aria-label="${label}" aria-pressed="${band.index === baseIndex}"`;
+        : `data-band="${band.index}" data-cents="${cents}" tabindex="${tab}" role="button" aria-label="${label}" aria-pressed="${pressed}"`;
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
