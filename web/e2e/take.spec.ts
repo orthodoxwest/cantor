@@ -140,10 +140,10 @@ test("a take of a chant the reader may not see is heard without its score", asyn
   await expect(page.locator("#comments li")).toHaveText("No comments yet.");
   await expect(page.locator("#audio")).toHaveAttribute("src", `/api/takes/${ID}/audio`);
   // Choosing a note puts the take where its band begins, its times being the take's own.
-  const band = (sent.record.judged.ribbon as Array<{ from_s: number }>)[1]!;
+  const band = (sent.record.judged.ribbon as Array<{ start_s: number }>)[1]!;
   await page.locator("#note").fill("2");
   await page.locator("#note").dispatchEvent("change");
-  await expect.poll(() => page.locator("#audio").evaluate((a: HTMLAudioElement) => a.currentTime)).toBeCloseTo(Math.max(0, band.from_s - 0.2), 1);
+  await expect.poll(() => page.locator("#audio").evaluate((a: HTMLAudioElement) => a.currentTime)).toBeCloseTo(Math.max(0, band.start_s - 0.2), 1);
 });
 
 test("one signed in puts their name to their comment", async ({ page }) => {

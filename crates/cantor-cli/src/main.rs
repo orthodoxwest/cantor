@@ -338,11 +338,7 @@ fn take_cmd(args: &[String]) -> Result<(), String> {
     let shift = pad.len() as f32 / rate;
     file.lead_in_s += shift;
     file.onset_s = file.onset_s.map(|t| t + shift);
-    for band in &mut file.ribbon {
-        band.from_s += shift;
-        band.to_s += shift;
-        band.trace.iter_mut().for_each(|p| p.0 += shift);
-    }
+    file.ribbon = file.ribbon.into_iter().map(|band| band.shifted(shift)).collect();
     wav::write_mono_16(&out, &samples, rate)?;
     println!("{}", serde_json::to_string(&file).map_err(|e| e.to_string())?);
     Ok(())
@@ -359,6 +355,8 @@ fn recording_cmd(args: &[String]) -> Result<(), String> {
     for band in &mut bands {
         band.from_s = round(band.from_s, 100.0);
         band.to_s = round(band.to_s, 100.0);
+        band.start_s = round(band.start_s, 100.0);
+        band.end_s = round(band.end_s, 100.0);
         band.cents = band.cents.map(|c| round(c, 10.0));
         band.trace.iter_mut().for_each(|p| *p = (round(p.0, 100.0), round(p.1, 10.0)));
     }

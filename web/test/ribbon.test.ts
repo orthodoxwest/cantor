@@ -76,6 +76,23 @@ describe("ribbon", () => {
     expect(bar![1]).toBeLessThan(157.8 + MIN_WIDTH / 2 - 1);
   });
 
+  it("draws the trace over the whole note, and the value over the part it was read from", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    // Slid up into the note over its first tenth, then held 10 cents sharp.
+    const bands = [{ index: 0, from_s: 0.2, to_s: 0.9, start_s: 0, end_s: 1, cents: 10, trace: [[0.05, -120], [0.5, 10]] as Array<[number, number]> }];
+    const svg = drawRibbon(notes, bands, () => 0);
+    // Its band is 86 to 115; the whole note across it, less 2 each side.
+    const points = svg.match(/<polyline class="band-trace" points="([^"]*)"/)![1]!.split(" ").map((p) => p.split(",").map(Number));
+    expect(points.map((p) => p[0])).toEqual([89.3, 100.5]);
+    expect(points[0]![1]).toBe(Number(yOf(-120, 0).toFixed(1)));
+    const held = svg.match(/<line class="band-held" x1="([^"]*)" x2="([^"]*)"/)!.slice(1).map(Number);
+    expect(held).toEqual([93, 110.5]);
+    // Never shorter than a dot, in a neume's narrow band.
+    const stacked = [note(157.5, 0), note(157.8, 0), note(163.5, 0)];
+    const narrow = drawRibbon(stacked, [{ ...bands[0]!, index: 1 }], () => 0).match(/<line class="band-held" x1="([^"]*)" x2="([^"]*)"/)!.slice(1).map(Number);
+    expect(narrow[1]! - narrow[0]!).toBeCloseTo(4);
+  });
+
   it("re-bases the traces on a note, keeping every target where it was", () => {
     const notes = [note(100, 0), note(130, 0)];
     const bands = [
@@ -132,6 +149,25 @@ describe("ribbon", () => {
     const unbased = drawRibbon(notes, bands, () => 0, 50, 0, undefined, missed);
     expect(unbased).not.toContain("band-recorded");
     expect(unbased).toContain("band-trace");
+  });
+
+  it("draws a recording seeded with only its sustained parts over the part the singer's value was read from", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    // The singer's whole note runs 0 to 1, its value read from 0.2 to 0.9; the recording's band,
+    // seeded before bands had the whole note, has its sustained part alone, at its own pace.
+    const bands = [{ index: 0, from_s: 0.2, to_s: 0.9, start_s: 0, end_s: 1, cents: 0, trace: [[0.2, 0], [0.9, 0]] as Array<[number, number]> }];
+    const recorded = [{ index: 0, from_s: 4, to_s: 6, cents: 0, trace: [[4, 0], [6, 0]] as Array<[number, number]> }];
+    const xs = (svg: string, cls: string) =>
+      svg.match(new RegExp(`<polyline class="${cls}" points="([^"]*)"`))![1]!.split(" ").map((p) => Number(p.split(",")[0]));
+    const svg = drawRibbon(notes, bands, () => 0, 0, null, undefined, recorded);
+    // The two traces' ends lie together, over the singer's sustained part.
+    expect(xs(svg, "band-recorded")).toEqual(xs(svg, "band-trace"));
+    // A recording with the whole note is drawn across it, as the singer's is.
+    const whole = [{ ...recorded[0]!, start_s: 3.5, end_s: 6.5, trace: [[3.5, 0], [6.5, 0]] as Array<[number, number]> }];
+    expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, whole), "band-recorded")).toEqual([88, 113]);
+    // One with only one of the whole note's times is drawn as one with neither.
+    const half = [{ ...recorded[0]!, start_s: 3.5 }];
+    expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, half), "band-recorded")).toEqual(xs(svg, "band-trace"));
   });
 
   it("names the key as a transposition", () => {
