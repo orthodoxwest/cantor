@@ -170,14 +170,22 @@ pub fn part(language: Language, lyrics: &[Lyric]) -> Vec<Sung> {
         .filter(|&k| k == 0 || (lyrics[k].word, lyrics[k].syllable) != (lyrics[k - 1].word, lyrics[k - 1].syllable))
         .collect();
     let text = |s: usize| lyrics[firsts[s]].text.as_str();
-    let sung = |s: usize| !letters(text(s)).is_empty();
+    let sung = |s: usize| text(s).chars().any(char::is_alphabetic);
+    let verse = |s: usize| lyrics[firsts[s]].note.verse;
     let mut dictions = vec![neutral(); firsts.len()];
     let mut s = 0;
     while s < firsts.len() {
-        let word = lyrics[firsts[s]].word;
+        // A word, with any words after it that begin by continuing its melisma, as where a breath
+        // splits "peo- (,) -ple".
         let mut end = s;
-        while end < firsts.len() && lyrics[firsts[end]].word == word {
-            end += 1;
+        loop {
+            let word = lyrics[firsts[end]].word;
+            while end < firsts.len() && lyrics[firsts[end]].word == word {
+                end += 1;
+            }
+            if end == firsts.len() || sung(end) || verse(end) != verse(end - 1) {
+                break;
+            }
         }
         // The word as read: its syllables with letters.
         let read: Vec<usize> = (s..end).filter(|&k| sung(k)).collect();
@@ -189,9 +197,8 @@ pub fn part(language: Language, lyrics: &[Lyric]) -> Vec<Sung> {
     }
     let mut s = 0;
     while s < firsts.len() {
-        let verse = lyrics[firsts[s]].note.verse;
         let mut end = s + 1;
-        while sung(s) && end < firsts.len() && !sung(end) && lyrics[firsts[end]].note.verse == verse {
+        while sung(s) && end < firsts.len() && !sung(end) && verse(end) == verse(s) {
             end += 1;
         }
         let d = dictions[s];
@@ -1112,6 +1119,20 @@ mod tests {
         assert_eq!(sung[0].diction.vowel, alone.vowel);
         assert_eq!(sung[1].diction.vowel, alone.vowel);
         assert_eq!(sung[1].diction.coda, alone.coda);
+    }
+
+    #[test]
+    fn a_word_split_by_a_breath_is_read_whole() {
+        let lyric = |text: &str, word, syllable| Lyric {
+            note: Note::new(60.0, 0.5 * syllable as f32, 0.5),
+            text: text.into(),
+            word,
+            syllable,
+        };
+        let whole = part(Language::English, &[lyric("peo", 0, 0), lyric("ple.", 0, 1)]);
+        let split = part(Language::English, &[lyric("peo", 0, 0), lyric("", 1, 1), lyric("ple.", 1, 2)]);
+        assert_eq!(split[0].diction.vowel, whole[0].diction.vowel);
+        assert_eq!(split[2].diction, whole[1].diction);
     }
 
     #[test]
