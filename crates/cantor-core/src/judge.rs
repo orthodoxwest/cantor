@@ -96,6 +96,9 @@ impl Mark {
 pub struct Cadence {
     pub first: usize,
     pub last: usize,
+    /// The note `cents` is of, by index.
+    #[serde(default)]
+    pub note: Option<usize>,
     /// Its note furthest from the key and the drift, in cents, of the notes at least
     /// [`HEARD_MIN_S`] long heard with frames that agree, as a marked note's must. None when
     /// none was, or when one was not and none of the others is off pitch: it could have been.
@@ -205,14 +208,18 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         .count();
     let cadences = cadences(notes)
         .into_iter()
-        .map(|(first, last)| Cadence {
-            first,
-            last,
-            cents: cadence_cents(
+        .map(|(first, last)| {
+            let worst = cadence_cents(
                 (first..=last)
                     .filter(|&i| notes[i].dur_s >= HEARD_MIN_S)
-                    .map(|i| relative[i].filter(|_| agreed(&results[i]))),
-            ),
+                    .map(|i| (i, relative[i].filter(|_| agreed(&results[i])))),
+            );
+            Cadence {
+                first,
+                last,
+                note: worst.map(|(i, _)| i),
+                cents: worst.map(|(_, cents)| cents),
+            }
         })
         .collect();
     Verdict {
@@ -286,13 +293,17 @@ pub fn cadences(notes: &[Note]) -> Vec<(usize, usize)> {
     out
 }
 
-/// A cadence's note furthest from the line, of its notes' errors when clearly heard. A note
-/// clearly heard off pitch puts it off whatever else was heard; otherwise a note not clearly
-/// heard could be the one off, and it is not judged.
-fn cadence_cents(errors: impl Iterator<Item = Option<f32>>) -> Option<f32> {
-    let errors: Vec<Option<f32>> = errors.collect();
-    let worst = errors.iter().flatten().copied().max_by(|a, b| a.abs().total_cmp(&b.abs()))?;
-    (worst.abs() >= CADENCE_CENTS || errors.iter().all(Option::is_some)).then_some(worst)
+/// A cadence's note furthest from the line, of its notes' errors (by index) when clearly
+/// heard, the first of them on a tie, with its error. A note clearly heard off pitch puts it off
+/// whatever else was heard; otherwise a note not clearly heard could be the one off, and it is
+/// not judged.
+fn cadence_cents(errors: impl Iterator<Item = (usize, Option<f32>)>) -> Option<(usize, f32)> {
+    let errors: Vec<(usize, Option<f32>)> = errors.collect();
+    let worst = errors
+        .iter()
+        .filter_map(|&(i, e)| Some((i, e?)))
+        .reduce(|a, b| if b.1.abs() > a.1.abs() { b } else { a })?;
+    (worst.1.abs() >= CADENCE_CENTS || errors.iter().all(|(_, e)| e.is_some())).then_some(worst)
 }
 
 /// Whether a note's frames agree on its pitch: enough of them, close together.
@@ -720,11 +731,14 @@ mod tests {
         assert!(v.marks.is_empty(), "{:?}", v.marks);
         let on: Vec<Option<bool>> = v.cadences.iter().map(Cadence::on_pitch).collect();
         assert_eq!(on, [Some(false), Some(true), Some(true)]);
+        // Each names its note furthest off, the first of two as far.
+        assert_eq!(v.cadences[0].note, Some(6));
         // A note clearly heard off puts its cadence off, whatever trailed away after it.
         let mut trailing = cents.clone();
         trailing[12] = Some(200.0);
         trailing[13] = None;
-        assert_eq!(judge(&notes, &report(&trailing)).cadences[1].on_pitch(), Some(false));
+        let off = judge(&notes, &report(&trailing)).cadences[1];
+        assert_eq!((off.on_pitch(), off.note), (Some(false), Some(12)));
         // Otherwise a cadence with a note whose frames disagree is not judged, nor one not heard.
         let mut disagreeing = report(&cents);
         disagreeing.notes[12].spread_cents = Some(200.0);

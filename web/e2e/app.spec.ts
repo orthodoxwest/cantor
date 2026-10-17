@@ -26,18 +26,19 @@ async function open(page: Page, query = ""): Promise<Timeline> {
   return page.evaluate(() => window.__cantor.timeline);
 }
 
-/** Waits until the ring of mark `k` and the band under its first note are on the screen, clear of
- * the card over the bar. */
-async function clearOfCard(page: Page, k: number, first: number): Promise<void> {
+/** Waits until the ring of mark `k` (or the element `k` selects, an ending's note) and the band
+ * under its first note are on the screen, clear of the card over the bar. */
+async function clearOfCard(page: Page, k: number | string, first: number): Promise<void> {
+  const place = typeof k === "number" ? `[data-mark="${k}"]` : k;
   await expect
     .poll(() =>
       page.evaluate(
-        ([k, first]) => {
+        ([place, first]) => {
           const card = document.getElementById("why")!.getBoundingClientRect();
-          const boxes = [`[data-mark="${k}"]`, `[data-band="${first}"]`].map((q) => document.querySelector(q)!.getBoundingClientRect());
+          const boxes = [place, `[data-band="${first}"]`].map((q) => document.querySelector(q)!.getBoundingClientRect());
           return boxes.every((b) => b.top >= 0 && b.bottom <= card.top + 1);
         },
-        [k, first] as const,
+        [place, first] as const,
       ),
     )
     .toBe(true);
@@ -277,14 +278,19 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   await expect(page.locator("#loop")).toBeHidden();
   await expect(chosen).toBeVisible();
   await expect(chosenText).toHaveText("Notes 3 to 6 · “al … ia”");
-  // The bands do not move when tapped: a band chooses its phrase as its note does, and the
-  // phrase chosen tapped again lets it go.
-  const band = page.getByRole("button", { name: "Choose the phrase of note 1", exact: true });
+  // The bands do not move when tapped: a band does as its note does, named for it: outside the
+  // run chosen it stretches the run to take in its phrase.
+  const band = page.locator('[data-band="0"]');
+  await expect(band).toHaveAttribute("aria-label", "Note 1: choose notes 1 to 6");
   const before = await page.locator("[data-band] .band-held").evaluateAll((els) => els.map((el) => el.getAttribute("y1")));
   await band.click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 5]);
   expect(await page.locator("[data-band] .band-held").evaluateAll((els) => els.map((el) => el.getAttribute("y1")))).toEqual(before);
+  // A band in the run chosen narrows it to its phrase, and with nothing narrower lets it go.
   await page.getByRole("button", { name: "Choose the phrase of note 2", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 1]);
+  await expect(page.locator('[data-band="1"]')).toHaveAttribute("aria-label", "Note 2: let the run go");
+  await page.locator('[data-band="1"]').click();
   expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
   await expect(chosenText).toHaveText("Whole chant · 1 mark");
   await page.getByRole("button", { name: "Choose the phrase of note 5", exact: true }).click();
@@ -292,9 +298,9 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   // The bands chosen are pressed, the first of them the one tab stop; the arrows move along.
   const pressed = () => page.locator("[data-band]").evaluateAll((els) => els.map((el) => [el.getAttribute("aria-pressed"), el.getAttribute("tabindex")]));
   expect(await pressed()).toEqual([["false", "-1"], ["false", "-1"], ["true", "0"], ["true", "-1"], ["true", "-1"], ["true", "-1"]]);
-  await page.getByRole("button", { name: "Choose the phrase of note 3", exact: true }).focus();
+  await page.locator('[data-band="2"]').focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("button", { name: "Choose the phrase of note 4", exact: true })).toBeFocused();
+  await expect(page.locator('[data-band="3"]')).toBeFocused();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
   // Whole chant in the bar lets it go, and leaves the keyboard on Yours.
   await chosen.getByRole("button", { name: "Whole chant" }).click();
@@ -318,7 +324,8 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
   await expect(chosen).toBeVisible();
   // Another phrase chosen closes the card, so that its words do not stay with another phrase.
-  await page.getByRole("button", { name: "Choose the phrase of note 1", exact: true }).click();
+  await expect(band).toHaveAttribute("aria-label", "Note 1: choose notes 1 to 6");
+  await band.click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 5]);
   await expect(page.locator("#why")).toBeHidden();
   await page.locator("#marked button").first().click();
@@ -687,36 +694,68 @@ test("your take's audio is decoded once a take, and again after it failed", asyn
 });
 
 test("the bar steps from mark to mark in the order sung, each opening its card and the step to hear", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  // On a narrow phone first, where the bar's line takes the most lines.
+  await page.setViewportSize({ width: 320, height: 844 });
   await open(page);
   await page.evaluate(() => void window.__cantor.listen());
   await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
   await page.waitForTimeout(8000);
   await page.evaluate(() => void window.__cantor.listen());
   // The A4 heard against notes written a tone, a third and a fourth below it.
-  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(f) (:) De(h)o(e) gra(h)ti(h)as(h) (::)";
-  const { told, verdict } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const gabc = "(c4) A(h) men(g) (:) al(g)le(h)lu(h)ia(f) (:) De(h)o(e) gra(h)ti(h)as(h) (::)";
+  const { told, verdict, endings } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
   expect(verdict.marks.map((m: { first: number }) => m.first)).toEqual([2, 5, 7]);
+  // The endings of "Amen" and "alleluia" are heard off pitch, each on its last note; a mark tells
+  // of the second's already, so it is no place of its own.
+  expect(endings.map((e: { first: number; last: number; note: number; mark: number | null }) => [e.first, e.last, e.note, e.mark])).toEqual([
+    [0, 1, 1, null],
+    [4, 5, 5, 1],
+  ]);
   const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
   const text = page.locator("#chosen-text");
-  const prev = page.getByRole("button", { name: "Previous mark" });
-  const next = page.getByRole("button", { name: "Next mark" });
+  // Named for what they step among, marks and endings alike.
+  const prev = page.getByRole("button", { name: "Previous mark or ending" });
+  const next = page.getByRole("button", { name: "Next mark or ending" });
   const loop = () => page.evaluate(() => window.__cantor.loop);
-  await expect(text).toHaveText("Whole chant · 3 marks");
+  await expect(text).toHaveText("Whole chant · 3 marks · 1 ending");
+  // The steps keep their places as the line changes under them, from the first step on.
+  let at = await next.boundingBox();
+  // The ending comes first in the order sung, choosing its own notes, told of its note off.
+  await next.click();
+  await expect(text).toHaveText("Ending 1 of 1 · “A … men”");
+  expect(await next.boundingBox()).toEqual(at);
+  expect(await loop()).toEqual([0, 1]);
+  await expect(page.locator("#why-words")).toHaveText(endings[0].words);
+  await expect(page.locator("#why")).toHaveAttribute("aria-label", "The ending open");
+  await expect(prev).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator("#why-step")).toHaveText("That note is written a whole tone below the note before.");
+  await clearOfCard(page, `#score [data-note~="${ids[1]}"]`, 1);
+  // Its step is into that note: the guide's, then the take's.
+  const step = page.getByRole("button", { name: "Hear the step" });
+  await step.click();
+  await expect(step).toHaveAttribute("aria-pressed", "true");
+  await expect(step).toHaveAttribute("aria-pressed", "false", { timeout: 15_000 });
+  expect(await page.evaluate(() => window.__cantor.visited)).toEqual(ids.slice(0, 2));
+  expect(await page.evaluate(() => window.__cantor.replayed.visited)).toEqual(ids.slice(0, 2));
+  // Closed, it leaves its notes chosen and the keyboard on its note's band.
+  await page.getByRole("button", { name: "Close the ending" }).click();
+  await expect(page.locator("#why")).toBeHidden();
+  await expect(text).toHaveText("Notes 1 to 2 · “A … men”");
+  await expect(page.locator('[data-band="1"]')).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
   await next.click();
   await expect(text).toHaveText("Mark 1 of 3 · “al”");
   expect(await loop()).toEqual([2, 5]);
   await expect(page.locator("#why-words")).toHaveText(told[0]);
-  await expect(page.locator("#why-step")).toHaveText("Written a whole tone below the note before.");
-  await expect(prev).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator("#why-step")).toHaveText("Written on the same pitch as the note before.");
   await clearOfCard(page, 0, 2);
   // The card's words are where a screen reader hears them, outside the card that appeared.
   await expect(page.locator("#why-said")).toHaveText(told[0]);
-  // The steps keep their places as the line changes under them.
-  const at = await next.boundingBox();
+  at = await next.boundingBox();
   await next.click();
   await expect(text).toHaveText("Mark 2 of 3 · “ia”");
   expect(await next.boundingBox()).toEqual(at);
+  await expect(page.locator("#why")).toHaveAttribute("aria-label", "The mark open");
   expect(await loop()).toEqual([2, 5]);
   await next.click();
   await expect(text).toHaveText("Mark 3 of 3 · “o”");
@@ -733,7 +772,6 @@ test("the bar steps from mark to mark in the order sung, each opening its card a
   // The card, clear of the bar, plays the step into its note: the guide's, then the take's.
   const card = await page.locator("#why").boundingBox();
   expect(card!.y + card!.height).toBeLessThanOrEqual((await page.locator(".bar").boundingBox())!.y + 1);
-  const step = page.getByRole("button", { name: "Hear the step" });
   await step.click();
   await expect(step).toHaveAttribute("aria-pressed", "true");
   await expect(step).toHaveAttribute("aria-pressed", "false", { timeout: 15_000 });
@@ -749,7 +787,7 @@ test("the bar steps from mark to mark in the order sung, each opening its card a
     await expect(page.locator("#step")).toHaveAttribute("aria-pressed", "false");
     expect(await page.evaluate(() => [window.__cantor.following, window.__cantor.replayed.playing])).toEqual([false, false]);
     if (await page.locator("#why").isHidden()) break;
-    await expect(text).toHaveText(/^Mark /);
+    await expect(text).toHaveText(/^(Mark|Ending) /);
   }
   // Closed, it leaves the phrase chosen and the keyboard on the mark's ring.
   await expect(page.locator("#why")).toBeHidden();
@@ -763,8 +801,8 @@ test("the bar steps from mark to mark in the order sung, each opening its card a
   await expect(text).toHaveText("Notes 3 to 6 · “al … ia”");
   await next.click();
   await expect(text).toHaveText("Mark 1 of 3 · “al”");
-  // A phrase let go and tapped afresh is stepped into from its start, whichever of its marks was
-  // open before.
+  // A phrase let go and tapped afresh is stepped into from its start, whichever of its places
+  // was open before.
   await next.click();
   await expect(text).toHaveText("Mark 2 of 3 · “ia”");
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
@@ -772,6 +810,8 @@ test("the bar steps from mark to mark in the order sung, each opening its card a
   await expect(text).toHaveText("Notes 3 to 6 · “al … ia”");
   await next.click();
   await expect(text).toHaveText("Mark 1 of 3 · “al”");
+  await prev.click();
+  await expect(text).toHaveText("Ending 1 of 1 · “A … men”");
 });
 
 test("the marks are listed under the score, a folded row for each phrase they are in", async ({ page }) => {
@@ -780,17 +820,102 @@ test("the marks are listed under the score, a folded row for each phrase they ar
   await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
   await page.waitForTimeout(8000);
   await page.evaluate(() => void window.__cantor.listen());
-  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(f) (:) De(h)o(e) gra(h)ti(h)as(h) (::)";
-  const { told } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const gabc = "(c4) A(h) men(g) (:) al(g)le(h)lu(h)ia(f) (:) De(h)o(e) gra(h)ti(h)as(h) (::)";
+  const { told, endings } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
   // Under the score, not between it and the take's sentences.
   expect(await page.evaluate(() => !!(document.getElementById("score")!.compareDocumentPosition(document.getElementById("places")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await expect(page.locator("#marked summary")).toHaveText(["alleluia 2 marks", "Deo gratias 1 mark"]);
+  // The ending of "alleluia" is told by its mark, once.
+  await expect(page.locator("#marked summary")).toHaveText(["A men an ending off pitch", "alleluia 2 marks", "Deo gratias 1 mark"]);
   await expect(page.locator("#marked button").first()).toBeHidden();
-  await page.locator("#marked summary").first().click();
-  await expect(page.locator("#marked button:visible")).toHaveText([`Note 3, “al”: ${told[0]}`, `Note 6, “ia”: ${told[1]}`]);
-  await page.locator("#marked button").nth(1).click();
+  await page.locator("#marked summary").nth(0).click();
+  await page.locator("#marked summary").nth(1).click();
+  // The ending, named by the syllable of its note off, among the marks in the order sung, in the
+  // core's words.
+  await expect(page.locator("#marked button:visible")).toHaveText([`Notes 1 to 2, “men”: ${endings[0].words}`, `Note 3, “al”: ${told[0]}`, `Note 6, “ia”: ${told[1]}`]);
+  await page.locator("#marked button").nth(2).click();
   await expect(page.locator("#chosen-text")).toHaveText("Mark 2 of 3 · “ia”");
   await clearOfCard(page, 1, 5);
+  await page.locator("#marked button").nth(0).click();
+  await expect(page.locator("#chosen-text")).toHaveText("Ending 1 of 1 · “A … men”");
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 1]);
+  await clearOfCard(page, `#score [data-note~="${ids[1]}"]`, 1);
+});
+
+test("the summary's sentence of endings off pitch goes to the first of them", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(8000);
+  await page.evaluate(() => void window.__cantor.listen());
+  // The A4 heard against both endings, a tone below it.
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  const { summary, endings } = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  expect(endings.map((e: { first: number; last: number }) => [e.first, e.last])).toEqual([[0, 1], [4, 5]]);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  // The core's two sentences, the second a button.
+  await expect(page.locator("#summary")).toHaveText(summary.join(" "));
+  const said = page.locator("#summary").getByRole("button", { name: summary[1] });
+  await expect(said).toHaveAccessibleDescription("Opens the first of them.");
+  await expect(said).toHaveAttribute("aria-expanded", "false");
+  // From the foot of the page, where the score is out of sight.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await said.click();
+  await expect(page.locator("#chosen-text")).toHaveText("Ending 1 of 1 · “A … men”");
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([0, 1]);
+  await expect(page.locator("#why-words")).toHaveText(endings[0].words);
+  await expect(said).toHaveAttribute("aria-expanded", "true");
+  await clearOfCard(page, `#score [data-note~="${ids[endings[0].note]}"]`, endings[0].note);
+  // It keeps the keyboard, and goes to the first again once another is open.
+  await expect(said).toBeFocused();
+  await page.getByRole("button", { name: "Next mark or ending" }).click();
+  await expect(page.locator("#chosen-text")).toHaveText(/^Mark /);
+  await expect(said).toHaveAttribute("aria-expanded", "false");
+  await said.click();
+  await expect(page.locator("#chosen-text")).toHaveText("Ending 1 of 1 · “A … men”");
+  // Where the first ending's note off is marked, the sentence goes to its mark.
+  const marked = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(f) (:) De(h)o(e) gra(h)ti(h)as(h) (::)";
+  const second = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [marked] as const));
+  expect(second.endings.map((e: { note: number; mark: number | null }) => [e.note, e.mark])).toEqual([[5, 1]]);
+  await expect(page.locator("#chosen-text")).toHaveText("Whole chant · 3 marks");
+  const only = page.locator("#summary").getByRole("button", { name: second.summary[1] });
+  await expect(only).toHaveAccessibleDescription("Opens it.");
+  await only.click();
+  await expect(page.locator("#chosen-text")).toHaveText("Mark 2 of 3 · “ia”");
+  await expect(page.locator("#why-words")).toHaveText(second.told[1]);
+});
+
+test("a tap inside the run chosen narrows it, between breaths, then to a neume of a melisma, then lets it go", async ({ page }) => {
+  await open(page);
+  // A melisma on "lu" after a breath: its neumes written apart by a slash.
+  const gabc = "(c4) Al(gh/ji)le(hg) (,) lu(ghg/fe) ia(f) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  const loop = () => page.evaluate(() => window.__cantor.loop);
+  const tap = () => page.locator(`#score [data-note~="${ids[7]}"]`).first().click();
+  await tap();
+  expect(await loop()).toEqual([0, 11]);
+  await expect(page.locator("#loop-text")).toHaveText("Play goes over notes 1 to 12 until you stop it. Tap a note in it to play less of it.");
+  await tap();
+  expect(await loop()).toEqual([6, 11]);
+  await tap();
+  expect(await loop()).toEqual([6, 8]);
+  await expect(page.locator("#loop-text")).toHaveText("Play goes over notes 7 to 9 until you stop it.");
+  // The next neume tapped stretches it neume by neume, and tapped again narrows it back.
+  await page.locator(`#score [data-note~="${ids[9]}"]`).first().click();
+  expect(await loop()).toEqual([6, 10]);
+  await tap();
+  expect(await loop()).toEqual([6, 8]);
+  // Nothing narrower is left: the tap lets it go.
+  await tap();
+  expect(await loop()).toBeNull();
+  // A syllable of one neume is no melisma: in a run between breaths, a tap lets it go.
+  await page.locator(`#score [data-note~="${ids[4]}"]`).first().click();
+  await page.locator(`#score [data-note~="${ids[4]}"]`).first().click();
+  expect(await loop()).toEqual([0, 5]);
+  await page.locator(`#score [data-note~="${ids[4]}"]`).first().click();
+  expect(await loop()).toBeNull();
 });
 
 test("listen hears A4 from the microphone", async ({ page }) => {

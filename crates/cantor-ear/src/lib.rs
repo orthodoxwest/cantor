@@ -8,7 +8,9 @@
 
 use std::cell::RefCell;
 
-use cantor_core::{Band, Frame, Listening, Note, Report, Verdict, entry, judge, notes_from_gabc, ribbon, score, summary, told};
+use cantor_core::{
+    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge, notes_from_gabc, ribbon, score, summary, told,
+};
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
 
@@ -100,6 +102,8 @@ pub struct Judged {
     pub told: Vec<String>,
     /// The take as a whole in two sentences, or none when it was not heard.
     pub summary: Vec<String>,
+    /// The phrase endings the second sentence tells of as off pitch, each in words.
+    pub endings: Vec<Ending>,
 }
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
@@ -125,6 +129,7 @@ pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame], thr
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
     let summary = summary(&notes, &verdict);
+    let endings = endings(&verdict);
     Judged {
         notes,
         report,
@@ -132,6 +137,7 @@ pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame], thr
         ribbon,
         told,
         summary,
+        endings,
     }
 }
 
