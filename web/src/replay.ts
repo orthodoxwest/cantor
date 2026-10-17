@@ -1,5 +1,6 @@
 // The singer's last take played back against the score, the cursor on each note where it was
 // due in the take: from the audio the ear keeps for sending, through a buffer source and a gain.
+// The whole take, or only a run of its notes, from a moment before the first.
 import type { Cursor } from "./cursor";
 import type { Score } from "./score";
 import { noteAt, timed, type Timed } from "./timing";
@@ -7,6 +8,10 @@ import { noteAt, timed, type Timed } from "./timing";
 const LEVEL = 0.9;
 /** How fast a take stopped falls silent, in seconds. */
 const FADE = 0.004;
+/** How much of the take a run is heard from before its first note was due, and after its last
+ * ended, in seconds: a singer may come in a little early or hold on. */
+const BEFORE = 0.3;
+const AFTER = 0.4;
 
 export class Replay {
   playing = false;
@@ -27,8 +32,9 @@ export class Replay {
   ) {}
 
   /** Plays `wav`, a take judged at `pulse` seconds a pulse with its pulse 0 at `offset` seconds
-   * of the take; resolves when it has ended (true) or was stopped (false). */
-  async play(ctx: AudioContext, wav: ArrayBuffer, pulse: number, offset: number): Promise<boolean> {
+   * of the take, or only the notes `range` of it; resolves when it has ended (true) or was
+   * stopped (false). */
+  async play(ctx: AudioContext, wav: ArrayBuffer, pulse: number, offset: number, range?: readonly [number, number]): Promise<boolean> {
     this.stop();
     const play = ++this.plays;
     this.playing = true;
@@ -48,7 +54,14 @@ export class Replay {
     source.connect(gain);
     this.source = source;
     this.gain = gain;
-    const times = timed(this.score.timeline.notes, pulse);
+    const all = timed(this.score.timeline.notes, pulse);
+    const [from, to] = range ?? [0, all.length - 1];
+    const times = all.slice(0, to + 1);
+    const first = times[from];
+    const last = times.at(-1);
+    // Seconds of the take heard: all of it, or the run with a moment either side.
+    const begin = range && first ? Math.max(offset + first.start - BEFORE, 0) : 0;
+    const length = range && last ? Math.max(offset + last.start + last.duration + AFTER - begin, 0) : undefined;
     this.visited.length = 0;
     const startAt = ctx.currentTime + 0.05;
     // The cursor shows what is heard: the take's sound reaches the ear late by the output's latency.
@@ -57,10 +70,10 @@ export class Replay {
     source.onended = () => {
       if (play === this.plays) this.halt(true);
     };
-    source.start(startAt);
+    source.start(startAt, begin, length);
     const step = () => {
       if (play !== this.plays) return false;
-      this.follow(times, ctx.currentTime - startAt - late - offset);
+      this.follow(times, from, ctx.currentTime - startAt - late + begin - offset);
       return true;
     };
     const tick = () => {
@@ -106,9 +119,9 @@ export class Replay {
   }
 
   /** Puts the cursor where the take is, `t` seconds after its pulse 0: on the note due then, at
-   * the bar in a pause, hidden before the first note and after the last. */
-  private follow(times: readonly Timed[], t: number): void {
-    const first = times[0];
+   * the bar in a pause, hidden before note `from` and after the last of `times`. */
+  private follow(times: readonly Timed[], from: number, t: number): void {
+    const first = times[from];
     const last = times.at(-1);
     if (!first || !last || t < first.start || t >= last.start + last.duration) return this.cursor.hide();
     const i = Math.max(noteAt(times, t), 0);

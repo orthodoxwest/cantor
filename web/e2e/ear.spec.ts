@@ -113,13 +113,11 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(apart).toBeLessThanOrEqual(Math.ceil(HEARD_TOLERANCE * wanted.length));
   expect(Math.max(...both)).toBeLessThanOrEqual(BAND_TOLERANCE_CENTS);
   await expect(page.locator("#key")).toHaveText(/^Your key: /);
-  // A heard note's band is a button that re-bases the ribbon on it, and back.
-  const first = page.getByRole("button", { name: `Measure from note ${ours.findIndex((b) => b.cents !== null) + 1}`, exact: true });
-  await first.click();
-  await expect(page.locator("#base-text")).toHaveText(/^Measured from note /);
-  await expect(first).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Back to your key" }).click();
-  await expect(page.locator("#base")).toBeHidden();
+  // A note's band is a button that chooses its phrase, to hear it alone.
+  await page.getByRole("button", { name: "Choose the phrase of note 1", exact: true }).click();
+  await expect(page.locator("#chosen")).toBeVisible();
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  await expect(page.locator("#chosen")).toBeHidden();
   // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
   // a mark tapped (or entered) shows the core's words for it, and only one is open at a time.
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
