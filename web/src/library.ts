@@ -5,7 +5,7 @@ import type { Band } from "./ribbon";
 
 export interface LibraryChant {
   slug: string;
-  /** The English opening words, as a title. */
+  /** The opening words, as a title: English, or the Greek and Latin a parish keeps. */
   title: string;
   /** The score's own name, often the Latin incipit, less what the title repeats. */
   name: string | null;
@@ -133,7 +133,7 @@ function searchWords(c: LibraryChant): string[] {
   let words = searched.get(c);
   if (!words) {
     const n = ROMAN.indexOf(c.mode ?? "");
-    words = wordsOf([c.title, c.name, c.words, massName(c), kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
+    words = wordsOf([c.title, c.name, c.words, isOrdinary(c.kind) && "Mass", massName(c), kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
     searched.set(c, words);
   }
   return words;

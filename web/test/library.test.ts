@@ -30,6 +30,7 @@ describe("the Mass settings", () => {
     expect(massName(piece("credo", "Credo III"))).toBeNull();
     expect(massName(piece("kyrie", "Kyrie"))).toBeNull();
     expect(massName(piece("antiphon", "Ite VIII"))).toBeNull();
+    expect(finds(piece("gloria", "Gloria"), terms("mass gloria"))).toBe(true);
     expect(kicker({ kind: "sanctus", mode: "vi", name: "Sanctus VIII" })).toBe("Mass VIII (De Angelis) · Sanctus · Mode vi");
   });
 
