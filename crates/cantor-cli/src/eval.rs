@@ -4,7 +4,9 @@
 //! `evals/baseline-nsdf.json` (no metric may get worse
 //! past its tolerance, and the faults and takes counted must not change). Real takes from a
 //! directory given with `--takes` are held to the expert gate; they have no guide and no
-//! planted truth, so their tracking error is measured from the judge's own key. The scorecard
+//! planted truth, so their tracking error is measured from the judge's own key. A note a real
+//! take is known to sing off the score is named in its file (`off`), as a fault planted, so
+//! that a mark on it sung again is deserved. The scorecard
 //! is printed and written to `out/eval.json` and `out/eval.md` (`eval-nsdf.*` with
 //! `--nsdf-only`), and every take is drawn in `out/explain/` (`explain-nsdf/`). With
 //! `--oracle MODEL`, CREPE labels every take too (see `oracle.rs`), and a second, ungated
@@ -89,8 +91,9 @@
 //! cadences placed and called alike. Sung again in a key given, a first phrase may be marked
 //! where a take never is: under the student and wrong gates the faults planted there are
 //! caught as the take's are. Every suite is gated on it; how far a note's error sung again lies
-//! from its error in the take is held to the baseline. Not covered: a run heard in a take of its
-//! own, with its own loudness floor and the guide's cue before it.
+//! from its error in the take is held to the baseline, and a table counts what each suite's runs
+//! sung again were judged. Not covered: a run heard in a take of its own, with its own loudness
+//! floor and the guide's cue before it.
 //!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
@@ -109,8 +112,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{
-    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Take, Verdict, judge, judge_part, notes_from_gabc,
-    render_take, score,
+    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Take, Verdict, judge, judge_part, key_at,
+    notes_from_gabc, render_take, score,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -232,6 +235,17 @@ struct RealTake {
     audio: String,
     /// `[start, end]` in seconds for each note of the chant, in order.
     notes: Vec<[f32; 2]>,
+    /// Notes the singer is known to have sung off the score (the takes' README says why), as a
+    /// synthetic take's faults are planted, so that a mark on one is deserved.
+    #[serde(default)]
+    off: Vec<Off>,
+}
+
+/// A note of a real take sung off the score, by about `cents`.
+#[derive(Debug, Deserialize)]
+struct Off {
+    note: usize,
+    cents: f32,
 }
 
 /// One judged take, with what it is checked against.
@@ -612,23 +626,6 @@ fn again_runs(notes: &[Note]) -> Vec<Range<usize>> {
             Some(first..last + 1)
         })
         .collect()
-}
-
-/// The key take `v` (scored as `report`) was in at the notes `run`: its key, moved along its
-/// drift line to there, as the judge read each heard note's error from the line. A singer who
-/// sinks sings a run again where they had sunk to, as a take cut from the whole take is sung.
-fn key_at(v: &Verdict, report: &cantor_core::Report, run: Range<usize>) -> Option<f32> {
-    let key = v.key_cents?;
-    let mut moved: Vec<f32> = run
-        .filter_map(
-            |i| match (report.notes.get(i).and_then(|r| r.cents), v.relative.get(i).copied().flatten()) {
-                (Some(c), Some(rel)) => Some(fold(c - key - rel)),
-                _ => None,
-            },
-        )
-        .collect();
-    moved.sort_by(f32::total_cmp);
-    Some(fold(key + moved.get(moved.len() / 2).copied().unwrap_or(0.0)))
 }
 
 /// The numbers a suite's runs sung again are judged by: each of [`again_runs`] of every take
@@ -1269,6 +1266,8 @@ struct TakeOutput<'a> {
 
 /// The widths of the console's columns of takes stopped short, after the suite's name.
 const STOP_WIDTHS: [usize; 9] = [7, 10, 5, 9, 6, 6, 8, 9, 4];
+/// The widths of the columns of the table of runs sung again, after the suite's name.
+const AGAIN_WIDTHS: [usize; 6] = [5, 7, 9, 5, 6, 6];
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
 /// every take is also labelled by it and compared, outside the gates.
@@ -1372,6 +1371,8 @@ pub fn run(
     let mut oracle_console = String::new();
     let mut stop_md = String::new();
     let mut stop_console = String::new();
+    let mut again_md = String::new();
+    let mut again_console = String::new();
     for (name, gate, judged) in &suites {
         let metrics = Metrics::of(judged);
         let oracle = OracleStats::of(judged);
@@ -1445,6 +1446,13 @@ pub fn run(
             let cells: String = counts.iter().map(|c| format!(" {c} |")).collect();
             stop_md.push_str(&format!("| {name} |{cells} {:.1} |\n", s.key_apart_cents));
         }
+        if let Some(a) = metrics.again {
+            let counts = [a.runs, a.unheard, a.otherwise, a.false_marks, a.first_faults, a.first_caught];
+            let console: String = counts.iter().zip(AGAIN_WIDTHS).map(|(c, w)| format!(" {c:>w$}")).collect();
+            again_console.push_str(&format!("{name:<22}{console} {:>6.1}\n", a.apart_cents));
+            let cells: String = counts.iter().map(|c| format!(" {c} |")).collect();
+            again_md.push_str(&format!("| {name} |{cells} {:.1} |\n", a.apart_cents));
+        }
         if let Some(o) = oracle {
             let cents = o.tracking_cents.map_or("-".to_string(), |c| format!("{c:.2}"));
             let key = o.key_error_cents.map_or("-".to_string(), |c| format!("{c:.0}"));
@@ -1502,6 +1510,19 @@ pub fn run(
         println!("\n{note}\n{:<22}{heads} {:>9}\n{stop_console}", "suite", "key apart");
         md.push_str(&format!(
             "\n{note}\n\n| suite | stopped | unfinished | told | misjudged | cut faults | caught | compared with the whole take | judged otherwise | lost | key apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n{stop_md}"
+        ));
+    }
+    if !again_md.is_empty() {
+        let note = "Runs sung again: the first, second, middle and last phrases of every take heard whole, heard again \
+             from the take's own sound and judged in the key the take was in there. Unheard: not heard again though \
+             the take heard enough of them. Otherwise: judged otherwise than in the take where the two are judged alike. \
+             False: marks not deserved. First faults: planted in a first phrase, which only a run sung again is marked \
+             in (caught: by a mark). Apart: the furthest a note's error sung again was from its error in the take.";
+        let heads = ["runs", "unheard", "otherwise", "false", "first", "caught"];
+        let heads: String = heads.iter().zip(AGAIN_WIDTHS).map(|(h, w)| format!(" {h:>w$}")).collect();
+        println!("\n{note}\n{:<22}{heads} {:>6}\n{again_console}", "suite", "apart");
+        md.push_str(&format!(
+            "\n{note}\n\n| suite | runs | unheard | judged otherwise | false marks | first-phrase faults | caught | apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|\n{again_md}"
         ));
     }
     if !oracle_md.is_empty() {
@@ -1772,6 +1793,8 @@ pub fn recording(ear: &Ear, path: &Path) -> Result<Vec<cantor_core::Band>, Strin
 struct Recorded {
     name: String,
     notes: Vec<Note>,
+    /// What the singer is known to have sung off the score, note by note ([`RealTake::off`]).
+    planted: Vec<Planted>,
     samples: Vec<f32>,
     rate: f32,
 }
@@ -1795,6 +1818,13 @@ impl Recorded {
             n.start_s = *start;
             n.dur_s = end - start;
         }
+        let mut planted = vec![Planted::default(); notes.len()];
+        for off in &take.off {
+            let p = planted
+                .get_mut(off.note)
+                .ok_or_else(|| format!("{}: note {} is off but not in the chant", take.name, off.note))?;
+            p.cents = off.cents;
+        }
         // The page listens before the first note is due, so a take is timed as it would be.
         if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
             return Err(format!(
@@ -1806,6 +1836,7 @@ impl Recorded {
         Ok(Recorded {
             name: take.name,
             notes,
+            planted,
             samples,
             rate,
         })
@@ -1855,8 +1886,7 @@ fn judge_real(ear: &Ear, oracle: Option<&Oracle>, take: &Recorded, stop: Option<
             // A take stopped before its first note ended is not judged at all.
             let sung = if through.is_some() { take.notes.clone() } else { Vec::new() };
             let shown = cantor_ear::judge_notes(sung, &frames, through);
-            let planted = vec![Planted::default(); take.notes.len()];
-            let stop = Stop::of(&take.notes, &planted, through, &shown, whole.clone());
+            let stop = Stop::of(&take.notes, &take.planted, through, &shown, whole.clone());
             let name = format!("{REAL_STOPPED} {} in note {k}", take.name);
             (name, shown.notes, shown.report, shown.verdict, Some(stop))
         }
@@ -1871,7 +1901,7 @@ fn judge_real(ear: &Ear, oracle: Option<&Oracle>, take: &Recorded, stop: Option<
     Ok(Judged {
         name,
         notes,
-        planted: vec![Planted::default(); len],
+        planted: take.planted[..len].to_vec(),
         truth: vec![None; len],
         true_key: None,
         planted_drift: 0.0,
@@ -2029,69 +2059,10 @@ mod tests {
         assert_eq!(runs, [0..2, 2..4, 4..6, 7..10]);
         // A chant of two phrases sings each once; of one, it once.
         assert_eq!(again_runs(&phrased(&[0, 0, 1])), [0..2, 2..3]);
-        assert_eq!(again_runs(&phrased(&[0, 0])), [0..2]);
+        assert_eq!(again_runs(&phrased(&[0, 0])), [Range { start: 0, end: 2 }]);
         assert!(again_runs(&[]).is_empty());
         // A phrase no note is in has no run.
         assert_eq!(again_runs(&phrased(&[0, 2, 2])), [0..1, 1..3]);
-    }
-
-    /// A verdict in `key` with the notes' errors from the key and the drift line `relative`,
-    /// scored as `cents` from the score.
-    fn read(key: f32, relative: &[Option<f32>], cents: &[Option<f32>]) -> (Verdict, cantor_core::Report) {
-        let verdict = Verdict {
-            outcome: Outcome::Heard,
-            key_cents: Some(key),
-            drift_cents: 0.0,
-            steady: true,
-            marks: Vec::new(),
-            relative: relative.to_vec(),
-            in_tune: 0,
-            cadences: Vec::new(),
-        };
-        let notes = cents
-            .iter()
-            .enumerate()
-            .map(|(index, &cents)| cantor_core::NoteResult {
-                index,
-                expected_midi: 60.0,
-                voiced_frames: 10,
-                masked_frames: 0,
-                quiet_frames: 0,
-                frames: 10,
-                spread_cents: cents.map(|_| 20.0),
-                cents,
-            })
-            .collect();
-        (
-            verdict,
-            cantor_core::Report {
-                notes,
-                heard_fraction: 1.0,
-                gross_error_rate: 0.0,
-                mean_abs_cents: 0.0,
-            },
-        )
-    }
-
-    #[test]
-    fn a_run_is_sung_again_in_the_key_the_take_had_drifted_to_there() {
-        // Key 100, the line 50 above it over notes 2..5, and each note off the line by its own.
-        let (v, report) = read(
-            100.0,
-            &[Some(0.0), Some(0.0), Some(10.0), None, Some(-30.0), Some(5.0)],
-            &[Some(100.0), Some(100.0), Some(160.0), Some(900.0), Some(120.0), Some(155.0)],
-        );
-        assert_eq!(key_at(&v, &report, 0..2), Some(100.0));
-        // The note the judge did not read an error of is left out, as are the notes past the run.
-        assert_eq!(key_at(&v, &report, 2..5), Some(150.0));
-        // Drifted past a tritone, the key folds as the judge's does.
-        let (v, report) = read(550.0, &[Some(0.0)], &[Some(-500.0)]);
-        assert_eq!(key_at(&v, &report, 0..1), Some(-500.0));
-        // Nothing read there leaves the key where it started; nothing heard, no key.
-        assert_eq!(key_at(&v, &report, 1..1), Some(550.0));
-        let (mut v, report) = read(0.0, &[None], &[None]);
-        v.key_cents = None;
-        assert_eq!(key_at(&v, &report, 0..1), None);
     }
 
     /// How far a note's band may be from the eval's wherever the frames fall, in cents; the

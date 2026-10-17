@@ -9,11 +9,11 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, notes_from_gabc, ribbon, score,
-    summary, told,
+    Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, key_at, notes_from_gabc, ribbon,
+    score, summary, told,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A sample at least this loud is the take's first loud sample.
 const ONSET_PEAK: f32 = 1e-3;
@@ -419,6 +419,29 @@ pub extern "C" fn ear_judge_again(
     output_json(json)
 }
 
+/// A take a run is sung again after, as the page has it: its verdict and its report.
+#[derive(Deserialize)]
+pub struct Before {
+    pub verdict: Verdict,
+    pub report: Report,
+}
+
+/// The key the take in the byte buffer's first `len` bytes (a [`Before`], as JSON) was in at its
+/// notes `first..=last`, in cents, for them to be sung again in, and judged in by
+/// [`ear_judge_again`] ([`key_at`]); NaN when it had none, or could not be read.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ear_again_key(len: u32, first: u32, last: u32) -> f32 {
+    BYTES.with(|b| {
+        let b = b.borrow();
+        let run = first as usize..(last as usize).max(first as usize) + 1;
+        serde_json::from_slice::<Before>(&b[..(len as usize).min(b.len())])
+            .ok()
+            .and_then(|before| key_at(&before.verdict, &before.report, run))
+            .unwrap_or(f32::NAN)
+    })
+}
+
 /// Leaves `json` in the output buffer and returns its length, or -1 with the error there.
 fn output_json(json: Result<String, String>) -> i32 {
     match json {
@@ -499,6 +522,35 @@ mod tests {
         assert_eq!(ear_stop(), -1, "a take stops once");
         assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0, -1), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
+        // Its notes 1 to 3 sung again are judged as the core judges them, in the key the take
+        // was in there, read from the take's verdict and report, and beside its verdict.
+        let judged = judge_gabc(gabc, 0.5, 1.0, &whole, None);
+        let before = format!(
+            "{{\"verdict\":{},\"report\":{}}}",
+            serde_json::to_string(&judged.verdict).unwrap(),
+            serde_json::to_string(&judged.report).unwrap()
+        );
+        ear_bytes(before.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(before.as_bytes()));
+        let key = ear_again_key(before.len() as u32, 1, 3);
+        assert_eq!(key, key_at(&judged.verdict, &judged.report, 1..4).expect("a key"));
+        assert!(ear_again_key(3, 1, 3).is_nan(), "a take that cannot be read has no key");
+        let verdict = serde_json::to_string(&judged.verdict).unwrap();
+        let both = [bytes, verdict.as_bytes()].concat();
+        ear_bytes(both.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
+        // The take's own frames, its note 1 due where it was in the take.
+        let offset = 1.0 + notes_from_gabc(gabc, 0.5)[1].start_s;
+        let n = ear_judge_again(bytes.len() as u32, verdict.len() as u32, 0.5, offset, 1, 3, key);
+        let again = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
+        assert_eq!(n as usize, again.len());
+        let want = judge_again_gabc(gabc, 0.5, offset, (1, 3), key, &judged.verdict, &whole);
+        assert_eq!(again, serde_json::to_string(&want).unwrap());
+        assert_eq!(want.verdict.outcome, cantor_core::Outcome::Heard);
+        assert_eq!((want.notes.len(), want.ribbon.len(), want.ribbon[0].index), (3, 3, 1));
+        assert!(!want.summary.is_empty());
+        // The take before cut short cannot be read.
+        assert_eq!(ear_judge_again(bytes.len() as u32, 3, 0.5, offset, 1, 3, key), -1);
     }
 
     #[test]

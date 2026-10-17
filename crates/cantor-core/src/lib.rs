@@ -26,7 +26,7 @@ pub mod voice;
 
 pub use diction::{Language, Lyric, Sung, Vowel};
 pub use entry::{Entry, entry};
-pub use judge::{Cadence, Mark, MarkKind, Outcome, Verdict, judge, judge_again, judge_part};
+pub use judge::{Cadence, Mark, MarkKind, Outcome, Verdict, judge, judge_again, judge_part, key_at};
 pub use listen::{Guide, Listening, Track, listen, listen_with, live};
 pub use pitch::{Frame, track};
 pub use ribbon::{Band, ribbon};

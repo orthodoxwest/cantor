@@ -223,6 +223,28 @@ pub fn judge_again(chant: &[Note], run: Range<usize>, report: &Report, key_cents
     judge_run(chant, run.clone(), report, Some(key_cents)).placed(run.start, chant.len())
 }
 
+/// The key the take judged `verdict` (scored as `report`) was in at its notes `run`, for the run to
+/// be sung again in ([`judge_again`]): its key moved along its drift line to there, the median of
+/// where the line lay at each of the run's notes the judge read an error of; at the key the take
+/// started in when it read none there, and none when the take had no key. A singer who sinks
+/// sings a run again where they had sunk to, as the run was sung in the take.
+pub fn key_at(verdict: &Verdict, report: &Report, run: Range<usize>) -> Option<f32> {
+    let key = verdict.key_cents?;
+    let mut moved: Vec<f32> = run
+        .filter_map(|i| {
+            match (
+                report.notes.get(i).and_then(|r| r.cents),
+                verdict.relative.get(i).copied().flatten(),
+            ) {
+                (Some(c), Some(rel)) => Some(fold(c - key - rel)),
+                _ => None,
+            }
+        })
+        .collect();
+    moved.sort_by(f32::total_cmp);
+    Some(fold(key + moved.get(moved.len() / 2).copied().unwrap_or(0.0)))
+}
+
 /// Judges a scored take of `chant`'s notes `run`, indexed from the run's first: in `key` when it
 /// is given (see [`judge_again`]), else in the key the take starts in, following its drift.
 fn judge_run(chant: &[Note], run: Range<usize>, report: &Report, key: Option<f32>) -> Verdict {
@@ -840,6 +862,27 @@ mod tests {
         // Silent throughout, the run is not heard: a whole verse sung again is not marked missing.
         let v = judge_again(&notes(), 5..10, &report(&[None; 5]), 0.0);
         assert_eq!(v.outcome, Outcome::NotHeard);
+    }
+
+    #[test]
+    fn a_run_is_sung_again_in_the_key_the_take_had_drifted_to_there() {
+        // Key 100, the line 50 above it over notes 2..5, and each note off the line by its own.
+        let mut v = judge(&notes(), &report(&[Some(100.0); 10]));
+        v.key_cents = Some(100.0);
+        v.relative = vec![Some(0.0), Some(0.0), Some(10.0), None, Some(-30.0), Some(5.0)];
+        let r = report(&[Some(100.0), Some(100.0), Some(160.0), Some(900.0), Some(120.0), Some(155.0)]);
+        assert_eq!(key_at(&v, &r, 0..2), Some(100.0));
+        // A note the judge read no error of is left out, as are the notes past the run.
+        assert_eq!(key_at(&v, &r, 2..5), Some(150.0));
+        // Nothing read there leaves the key where it started.
+        assert_eq!(key_at(&v, &r, 6..9), Some(100.0));
+        // Drifted past a tritone, the key folds as the judge's does.
+        v.key_cents = Some(550.0);
+        v.relative = vec![Some(0.0)];
+        assert_eq!(key_at(&v, &report(&[Some(-500.0)]), 0..1), Some(-500.0));
+        // A take with no key gives none.
+        v.key_cents = None;
+        assert_eq!(key_at(&v, &r, 0..2), None);
     }
 
     #[test]
