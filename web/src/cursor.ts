@@ -1,5 +1,6 @@
-// Marks the sounding note and draws a bar over its staff line. SVG units are pixels: the
-// page is laid out at the host's width.
+// Marks the sounding note and draws a bar over its staff line, in the guide's colour or, for the
+// singer's own take played back, the trace's. SVG units are pixels: the page is laid out at the
+// host's width.
 import type { LineBox } from "neuma";
 import type { Score } from "./score";
 
@@ -14,8 +15,11 @@ export class Cursor {
     score.host.append(this.bar);
   }
 
-  /** Puts the bar at x on a line, marking the note (or none, during a pause). */
-  show(x: number, line: LineBox, note: number | null): void {
+  /** Puts the bar at x on a line, marking the note (or none, during a pause): the guide's, or
+   * the singer's when `take`. */
+  show(x: number, line: LineBox, note: number | null, take = false): void {
+    this.bar.classList.toggle("take", take);
+    this.score.host.classList.toggle("hearing", take);
     this.mark(note);
     this.bar.style.left = `${x}px`;
     this.bar.style.top = `${line.top}px`;
@@ -28,6 +32,7 @@ export class Cursor {
   }
 
   hide(): void {
+    this.score.host.classList.remove("hearing");
     this.mark(null);
     this.bar.hidden = true;
     this.top = null;

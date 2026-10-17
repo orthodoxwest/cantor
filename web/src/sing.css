@@ -146,16 +146,36 @@ main:has(#result:not([hidden])) #loop {
 #key {
   font-size: 1.15rem;
 }
-#reading {
+/* How to read the ribbon, folded so that the score follows the take's sentences closely. */
+.reading {
   color: var(--muted);
   font-size: 0.95rem;
 }
-/* The run chosen beside a take, over the bar's buttons that play it. */
+.reading summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  width: fit-content;
+}
+.reading p {
+  margin-top: 0;
+}
+/* Whether the guide sings in the singer's key beside the take. */
+.in-key label {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-height: var(--tap);
+  color: var(--text);
+}
+/* The mark open or the run chosen beside a take, between the steps to the mark before and after,
+   over the bar's buttons that play it. */
 .chosen {
   max-width: var(--measure);
   margin: 0 auto 0.5rem;
   display: flex;
-  gap: 0.5rem 0.75rem;
+  gap: 0.5rem;
   align-items: center;
   color: var(--muted);
   font-size: 0.95rem;
@@ -167,15 +187,39 @@ main {
   padding-bottom: calc(var(--bar-h, calc(4.1rem + env(safe-area-inset-bottom, 0px))) + 5rem);
 }
 :root {
-  scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + 6rem);
+  scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + var(--why-h, 0px) + 1.5rem);
 }
+/* As wide whatever it says, so that the steps either side stay where a finger left them, and
+   near each other on a wide screen. */
 .chosen span {
-  flex: 1;
+  flex: 0 1 20rem;
+  min-width: 0;
+  color: var(--text);
+}
+#unchoose {
+  margin-left: auto;
 }
 .chosen .btn {
   flex: none;
   font-size: 0.95rem;
   padding: 0.4rem 0.8rem;
+}
+.chosen .step {
+  min-width: var(--tap);
+  padding: 0;
+}
+.chosen .step svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chosen .step[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
 }
 /* Sending the take (send.ts): the button, then the link it made. */
 .send {
@@ -253,18 +297,46 @@ main {
 .marks .mark:focus-visible .mark-ring {
   stroke-dasharray: 3 2;
 }
-.why:empty {
-  padding: 0;
-  border: 0;
+/* The take played back moves the cursor in the trace's colour, the guide in the rubric's. */
+.score .cursor.take {
+  background: var(--trace);
 }
-/* The tapped mark's words stay in view, just above the bar. */
+.score.hearing .cantor-current {
+  fill: var(--trace);
+}
+/* The card of the mark open stays in view, just above the bar: which notes, the core's words,
+   and the step into them to hear. */
 .why {
   position: sticky;
   bottom: var(--bar-h, calc(4.1rem + env(safe-area-inset-bottom, 0px)));
   margin: 0;
-  padding: 0.5rem 0;
+  padding: 0.35rem 0 0.5rem;
   background: var(--bg);
   border-top: 1px solid var(--gold-line);
+}
+.why p {
+  margin: 0.2rem 0;
+}
+.why-step {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+.why-step span {
+  flex: 1;
+}
+.why .btn {
+  flex: none;
+  font-size: 0.95rem;
+  padding: 0.4rem 0.8rem;
+}
+#unopen {
+  min-width: var(--tap);
+  padding: 0;
+  font-size: 1.25rem;
 }
 /* The buttons and the readout keep to one row on a phone. */
 @media (max-width: 479.98px) {
@@ -282,16 +354,39 @@ main {
     font-size: 1rem;
   }
 }
+/* Beside a take shown, the bar has room for Compare and Yours: the readout, which has nothing
+   to say outside a take, goes. */
+.bar .break {
+  display: none;
+}
+body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
+  display: none;
+}
 /* Outside a take the readout has nothing to say, and in one Start note and Drone are off;
-   beside a take shown, Your take has Start note's room (a take gives its opening notes anyway).
-   So on a narrow screen the bar keeps to one row, or wraps to a second on the narrowest. */
+   beside a take shown, Yours has Start note's room (a take gives its opening notes anyway). So
+   on a narrow screen the bar keeps to one row, or beside a take two: Compare, Guide and Yours,
+   then Repeat, Drone and Sing a take. */
 @media (max-width: 699.98px) {
   body:not(.taking) #readout,
   body:not(.taking) .bar .spacer,
-  body:has(#hear:not([hidden])) #note,
   body.taking #note,
   body.taking #drone {
     display: none;
+  }
+}
+@media (max-width: 767.98px) {
+  body:has(#hear:not([hidden])) #note {
+    display: none;
+  }
+}
+@media (max-width: 699.98px) {
+  body:has(#hear:not([hidden])) .bar-in {
+    row-gap: 0.25rem;
+  }
+  body:has(#hear:not([hidden])) .bar .break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
   }
 }
 @media (max-width: 374.98px) {
@@ -314,13 +409,63 @@ main {
 #cut {
   color: var(--muted);
 }
-/* The core's marks in words, in the order sung (sing.ts listMarks); each opens its ring. */
-.marked {
+/* The core's marks in words under the score, a folded row for each phrase they are in, in the
+   order sung (sing.ts listMarks); each opens its ring. */
+.places {
+  border-top: 1px solid var(--gold-line);
+  margin-bottom: 1rem;
+}
+.places h2 {
+  margin: 0.6rem 0 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--titulus);
+}
+.marked,
+.marked ol {
   list-style: none;
-  margin: 0.5rem 0;
+  margin: 0;
   padding: 0;
   font-size: 0.95rem;
   line-height: 1.4;
+}
+.marked > li {
+  border-bottom: 1px solid var(--border);
+}
+.marked summary {
+  display: flex;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  font-size: 1.02rem;
+}
+.marked summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 0.8em;
+}
+.marked details[open] summary::before {
+  content: "▾";
+}
+.marked summary::-webkit-details-marker {
+  display: none;
+}
+.marked summary {
+  list-style: none;
+}
+.marked .phrase {
+  flex: 1;
+}
+.marked .count {
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.marked details ol {
+  padding: 0 0 0.4rem 1.1rem;
 }
 .marked button {
   display: block;

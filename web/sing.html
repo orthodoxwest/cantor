@@ -66,8 +66,11 @@
         <p id="cut" hidden></p>
         <p id="summary"></p>
         <p id="key"></p>
-        <ol id="marked" class="marked" role="list" hidden></ol>
-        <p id="reading" hidden>Under each line of the score, a short bar shows the pitch you held on each note, against a line for the note itself: above it is sharp, below it flat. Tap a note, or the bars under it, to choose its phrase; then <b>Play</b> sings the guide there and <b>Your take</b> plays what you sang there.</p>
+        <p id="in-key-line" class="in-key" hidden><label><input id="in-key" type="checkbox" checked /> The guide sings in your key</label></p>
+        <details id="reading" class="reading" hidden>
+          <summary>How to read the bars under the score</summary>
+          <p>Under each line of the score, a short bar shows the pitch you held on each note, against a line for the note itself: above it is sharp, below it flat. Tap a note, or the bars under it, to choose its phrase, or go from mark to mark with ‹ and ›. Then <b>Compare</b> plays the guide there and then you; <b>Guide</b> and <b>Yours</b> play each alone, once, and <b>Repeat</b> plays the guide over and over.</p>
+        </details>
         <p id="recorded" hidden>The broad grey line under yours is a recording of this chant.</p>
         <p id="send-line" class="send" hidden>
           <button id="send" class="btn" type="button">Send to a director</button>
@@ -75,16 +78,36 @@
         </p>
       </section>
       <div id="score" class="score"></div>
-      <p id="why" class="why" aria-live="polite"></p>
+      <section id="places" class="places" aria-labelledby="places-head" hidden>
+        <h2 id="places-head">The marks, phrase by phrase</h2>
+        <ol id="marked" class="marked" role="list"></ol>
+      </section>
+      <p id="why-said" class="sr" aria-live="polite"></p>
+      <div id="why" class="why" role="group" aria-label="The mark open" hidden>
+        <p id="why-words"></p>
+        <p class="why-step">
+          <span id="why-step"></span>
+          <button id="step" class="btn" type="button" aria-pressed="false" title="The guide sings the note before and this one, then your take of the same two plays">Hear the step</button>
+          <button id="unopen" class="btn" type="button" aria-label="Close the mark" title="Close the mark">×</button>
+        </p>
+      </div>
     </main>
 
     <div class="bar">
-      <p id="chosen" class="chosen" hidden><span id="chosen-text" aria-live="polite"></span> <button id="unchoose" class="btn" type="button">Whole chant</button></p>
+      <div id="chosen" class="chosen" hidden>
+        <button id="prev" class="btn step" type="button" aria-label="Previous mark" title="Previous mark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg></button>
+        <span id="chosen-text" aria-live="polite"></span>
+        <button id="next" class="btn step" type="button" aria-label="Next mark" title="Next mark"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg></button>
+        <button id="unchoose" class="btn" type="button">Whole chant</button>
+      </div>
       <div class="bar-in">
+        <button id="compare" class="btn primary" type="button" aria-pressed="false" title="The guide, then your take, over the phrase chosen" hidden disabled>Compare</button>
         <button id="play" class="btn primary" type="button" aria-pressed="false" disabled>Play</button>
+        <button id="hear" class="btn" type="button" aria-pressed="false" title="Your last take, with the cursor where each note was due" hidden>Yours</button>
+        <span class="break" aria-hidden="true"></span>
+        <button id="repeat" class="btn" type="button" aria-pressed="false" title="The guide over the phrase chosen, or the whole chant, over and over" hidden disabled>Repeat</button>
         <button id="note" class="btn" type="button" aria-pressed="false" title="The first note, then the reciting tone if there is one" disabled>Start note</button>
         <button id="drone" class="btn" type="button" aria-pressed="false" title="A soft held tone on the reciting note, to sing against" disabled>Drone</button>
-        <button id="hear" class="btn" type="button" aria-pressed="false" title="Your last take, with the cursor where each note was due" hidden>Your take</button>
         <button id="take" class="btn" type="button" disabled>Sing a take</button>
         <span class="spacer"></span>
         <output id="readout" aria-live="polite">–</output>

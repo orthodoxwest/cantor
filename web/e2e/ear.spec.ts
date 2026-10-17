@@ -115,11 +115,12 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await expect(page.locator("#key")).toHaveText(/^You started /);
   // A note's band is a button that chooses its phrase, to hear it alone.
   await page.getByRole("button", { name: "Choose the phrase of note 1", exact: true }).click();
-  await expect(page.locator("#chosen")).toBeVisible();
+  await expect(page.locator("#chosen-text")).toHaveText(/^Notes? 1/);
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
-  await expect(page.locator("#chosen")).toBeHidden();
+  await expect(page.locator("#chosen-text")).toHaveText(/^Whole chant · \d+ marks?$/);
   // The marks drawn are the core's, on exactly the notes it marked, and they are the eval's;
-  // a mark tapped (or entered) shows the core's words for it, and only one is open at a time.
+  // a mark tapped (or entered) shows the core's words for it in its card, and only one is open
+  // at a time.
   expect(marks(got.verdict)).toEqual(marks(want.verdict));
   // So are the two sentences on the take as a whole, but for a cadence too near the line to
   // call; the page shows the core's.
@@ -138,41 +139,63 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   expect(ringed.length).toBeGreaterThan(0);
   expect(got.told.length).toBeGreaterThanOrEqual(2);
   const last = got.told.length - 1;
+  const words = page.locator("#why-words");
   await page.locator('[data-mark="0"]').click();
-  await expect(page.locator("#why")).toHaveText(got.told[0]);
+  await expect(words).toHaveText(got.told[0]);
   await expect(page.locator('[data-mark="0"]')).toHaveAttribute("aria-expanded", "true");
   await page.locator(`[data-mark="${last}"]`).focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator("#why")).toHaveText(got.told[last]);
+  await expect(words).toHaveText(got.told[last]);
   await expect(page.locator(`[data-mark="${last}"]`)).toBeFocused();
   await expect(page.locator('[data-mark="0"]')).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator("#why")).toBeHidden();
   await expect(page.locator("#status")).toHaveText("");
-  // The marks are written out too, in the order sung, each opening its ring on the score.
+  // The marks are written out too under the score, each once, each opening its ring on the
+  // score; folded by phrase, the phrases in the order sung.
   const listed = page.locator("#marked button");
   await expect(listed).toHaveCount(got.verdict.marks.length);
-  const order = got.verdict.marks.map((m: Marked, k: number) => ({ m, k })).sort((a: { m: Marked }, b: { m: Marked }) => a.m.first - b.m.first);
-  for (const [i, { m, k }] of order.entries()) {
+  for (const summary of await page.locator("#marked summary").all()) await summary.click();
+  const opened = await listed.evaluateAll((els) => els.map((el) => Number((el as HTMLElement).dataset.opens)));
+  expect([...opened].sort((a, b) => a - b)).toEqual(got.verdict.marks.map((_: Marked, k: number) => k));
+  const firsts = await page.locator("#marked > li").evaluateAll((items) =>
+    items.map((item) => Math.min(...[...item.querySelectorAll<HTMLElement>("[data-opens]")].map((b) => Number(b.dataset.opens)))),
+  );
+  const sungFirst = firsts.map((k) => got.verdict.marks[k].first);
+  expect(sungFirst).toEqual([...sungFirst].sort((a, b) => a - b));
+  for (const [i, k] of opened.entries()) {
+    const m: Marked = got.verdict.marks[k];
     const at = m.first === m.last ? `Note ${m.first + 1}` : `Notes ${m.first + 1} to ${m.last + 1}`;
     await expect(listed.nth(i)).toHaveText(new RegExp(`^${at}(, “[^”]+”)?: `));
     expect((await listed.nth(i).textContent())!.endsWith(`: ${got.told[k]}`)).toBe(true);
   }
-  const { k: second } = order[1]!;
+  const second = opened[1]!;
   await listed.nth(1).click();
-  await expect(page.locator("#why")).toHaveText(got.told[second]);
+  await expect(words).toHaveText(got.told[second]);
   await expect(page.locator(`[data-mark="${second}"]`)).toHaveAttribute("aria-expanded", "true");
   await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "true");
   await expect(listed.nth(1)).toBeFocused();
-  await expect(page.locator(`[data-mark="${second}"]`)).toBeInViewport();
+  // Its ring and the band that shows why are on the screen, clear of the card.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ([k, first]) => {
+          const card = document.getElementById("why")!.getBoundingClientRect();
+          const boxes = [`[data-mark="${k}"]`, `[data-band="${first}"]`].map((q) => document.querySelector(q)!.getBoundingClientRect());
+          return boxes.every((b) => b.top >= 0 && b.bottom <= card.top + 1);
+        },
+        [second, got.verdict.marks[second].first as number] as const,
+      ),
+    )
+    .toBe(true);
   await listed.nth(1).click();
-  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator("#why")).toBeHidden();
   await expect(listed.nth(1)).toHaveAttribute("aria-expanded", "false");
-  // A new take clears the last one's view, the words of a mark left open with it.
+  // A new take clears the last one's view, the card of a mark left open with it.
   await page.locator('[data-mark="0"]').click();
-  await expect(page.locator("#why")).toHaveText(got.told[0]);
+  await expect(words).toHaveText(got.told[0]);
   await page.evaluate(() => void window.__cantor.listen());
-  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator("#why")).toBeHidden();
   await expect(page.locator(".mark-ring")).toHaveCount(0);
   await expect(page.locator("#result")).toBeHidden();
   await page.evaluate(() => void window.__cantor.listen());
@@ -206,7 +229,7 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   await expect(page.locator("#readout")).toHaveText(/^[A-G]♯?\d$/, { timeout: 5000 });
   await expect(page.locator("#result")).toBeHidden();
   await expect(page.locator(".mark-ring, .band-trace")).toHaveCount(0);
-  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator("#why")).toBeHidden();
   // The take is judged when the chant is over, with nothing pressed.
   await expect(page.locator("#key")).toHaveText(/^You started /, { timeout: (seconds + 30) * 1000 });
   await expect(take).toHaveText("Sing a take");
@@ -216,7 +239,7 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   await expect(page.locator("#status")).toHaveText("");
   await expect(page.locator(".mode")).toBeVisible();
   await expect(page.locator("#find")).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Guide" })).toBeEnabled();
   // The first note was due when the cursor began, a moment after listening did; the take was
   // timed by the singer's first sound, which is where the file's voice begins.
   const timing = (await page.evaluate(() => window.__cantor.take()))!;
@@ -238,9 +261,9 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   else expect(told).toMatch(/endings?( heard clearly)? (was|were|went)|heard clearly, and it (was|went)/);
   // The next take clears this one's view, and Stop ends it.
   await page.locator('[data-mark="0"]').click();
-  await expect(page.locator("#why")).not.toHaveText("");
+  await expect(page.locator("#why")).toBeVisible();
   await take.click();
-  await expect(page.locator("#why")).toHaveText("");
+  await expect(page.locator("#why")).toBeHidden();
   await expect(page.locator(".mark-ring")).toHaveCount(0);
   await expect(page.locator("#result")).toBeHidden();
   await page.getByRole("button", { name: "Stop" }).click();
