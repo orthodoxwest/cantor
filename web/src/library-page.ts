@@ -26,6 +26,7 @@ const els = {
   browse: byId("browse"),
   q: byId<HTMLInputElement>("q"),
   kinds: byId("kinds"),
+  pickKind: byId<HTMLSelectElement>("pick-kind"),
   count: byId("count"),
   results: byId<HTMLOListElement>("results"),
   piece: byId("piece"),
@@ -59,10 +60,26 @@ const plural = (k: string) => (k === MASS ? "Mass settings" : k.endsWith("y") ? 
 function drawKinds(): void {
   const chip = (value: string, label: string, n: number) =>
     `<button type="button" class="kind" data-kind="${escape(value)}" aria-pressed="${kind === value}">${escape(label)}<span class="n">${n}</span></button>`;
-  els.kinds.innerHTML = [
-    chip(ALL, "All", chants.length),
-    ...kinds.map((k) => chip(k, plural(k), chants.filter((c) => kindOf(c) === k).length)),
-  ].join("");
+  const all: [string, string, number][] = [
+    [ALL, "All", chants.length],
+    ...kinds.map((k): [string, string, number] => [k, plural(k), chants.filter((c) => kindOf(c) === k).length]),
+  ];
+  els.kinds.innerHTML = all.map(([value, label, n]) => chip(value, label, n)).join("");
+  // A phone is shown the same kinds as a list to pick from, which takes one row and needs no
+  // sideways scrolling to find.
+  els.pickKind.innerHTML = all
+    .map(([value, label, n]) => `<option value="${escape(value)}"${kind === value ? " selected" : ""}>${escape(label)} (${n})</option>`)
+    .join("");
+}
+
+/** Shows `k`'s pieces, the chips and the list agreeing. */
+function chooseKind(k: string): void {
+  kind = k;
+  for (const b of els.kinds.querySelectorAll<HTMLButtonElement>("[data-kind]"))
+    b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
+  els.pickKind.value = kind;
+  limit = PAGE;
+  drawResults();
 }
 
 // Thumbnails are engraved as they come into view.
@@ -117,13 +134,10 @@ function drawResults(): void {
 els.kinds.addEventListener("click", (e) => {
   const button = (e.target as Element).closest<HTMLButtonElement>("[data-kind]");
   if (!button) return;
-  kind = button.dataset.kind ?? ALL;
   // The chips stay, so the one pressed keeps the focus.
-  for (const b of els.kinds.querySelectorAll<HTMLButtonElement>("[data-kind]"))
-    b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
-  limit = PAGE;
-  drawResults();
+  chooseKind(button.dataset.kind ?? ALL);
 });
+els.pickKind.addEventListener("change", () => chooseKind(els.pickKind.value));
 els.q.addEventListener("input", () => {
   limit = PAGE;
   drawResults();

@@ -10,20 +10,27 @@
   flex-wrap: wrap;
   gap: 0.45rem;
 }
-/* On a phone the kinds are one row that scrolls sideways, so the results start near the top. */
+/* On a phone the kinds are a list to pick from, one row under the search: as chips they wrapped
+ * to five rows, or scrolled sideways where nobody could tell there were more. */
+.pick-kind {
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+}
+.pick-kind select {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  padding-inline: 0.85rem;
+  font-size: 1.0625rem;
+  color: var(--text);
+}
 @media (max-width: 719.98px) {
   .kinds {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    margin-inline: calc(-1 * var(--gutter));
-    padding: 2px var(--gutter);
-  }
-  .kinds::-webkit-scrollbar {
     display: none;
   }
-  .kind {
-    flex: none;
+  .pick-kind {
+    display: flex;
   }
 }
 .kind {
