@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { describe, expect, it } from "vitest";
-import { headphonesIn, noteAt, RECITATION, timed } from "../src/timing";
+import { headphonesIn, noteAt, RECITATION, throughHeard, timed } from "../src/timing";
 
 const note = (start: number, duration: number, recitation = false) => ({ start, duration, recitation }) as TimelineNote;
 
@@ -30,5 +30,31 @@ describe("timing", () => {
     // A headset whose output the system calls its speakers.
     expect(headphonesIn([out("Speakers (Logitech PRO X Gaming Headset)")])).toBe(true);
     expect(headphonesIn([mic])).toBeNull();
+  });
+});
+
+describe("the last note sung whole", () => {
+  // Two phrases of two half-second notes, half a second apart, from 0.2 s into the take: the
+  // cases eval.rs's `through_heard` is held to, so that a take stopped is judged as the eval
+  // judges one.
+  const times = [
+    { start: 0, duration: 0.5 },
+    { start: 0.5, duration: 0.5 },
+    { start: 1.5, duration: 0.5 },
+    { start: 2, duration: 0.5 },
+  ];
+  const end = (i: number) => 0.2 + times[i]!.start + times[i]!.duration;
+  const mid = (i: number) => 0.2 + times[i]!.start + times[i]!.duration / 2;
+
+  it("is the last of the notes, in order, ended when the take was stopped", () => {
+    expect(throughHeard(times, 0.2, 0)).toBeNull();
+    expect(throughHeard(times, 0.2, mid(0))).toBeNull();
+    expect(throughHeard(times, 0.2, end(0))).toBe(0);
+    expect(throughHeard(times, 0.2, mid(3))).toBe(2);
+    // In the pause after a phrase, and halfway through the next phrase's first note.
+    expect(throughHeard(times, 0.2, end(1) + 0.25)).toBe(1);
+    expect(throughHeard(times, 0.2, mid(2))).toBe(1);
+    expect(throughHeard(times, 0.2, 1e4)).toBe(3);
+    expect(throughHeard([], 0, 1e4)).toBeNull();
   });
 });

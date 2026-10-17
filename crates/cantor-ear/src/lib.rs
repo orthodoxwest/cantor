@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge, notes_from_gabc, ribbon, score, summary, told,
+    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge_part, notes_from_gabc, ribbon, score, summary, told,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
@@ -108,27 +108,43 @@ pub struct Judged {
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
 /// judged on its `frames`; given `through`, the last note sung whole in a take stopped short,
-/// only its notes to the end of the last phrase finished there, none if none was: a phrase cut
-/// short would be judged as if it ended there, and its notes not sung would count as not heard.
+/// only to the end of the last phrase finished there (see [`finished`]).
 pub fn judge_gabc(gabc: &str, pulse_s: f32, offset_s: f32, frames: &[Frame], through: Option<usize>) -> Judged {
     let mut notes = notes_from_gabc(gabc, pulse_s);
-    if let Some(i) = through.filter(|&i| i + 1 < notes.len()) {
-        let at = notes[i].phrase;
-        let end = if notes[i + 1].phrase > at {
-            i + 1
-        } else {
-            notes.iter().position(|n| n.phrase == at).unwrap_or(0)
-        };
-        notes.truncate(end);
-    }
     for n in &mut notes {
         n.start_s += offset_s;
     }
-    let report = score(&notes, frames);
-    let verdict = judge(&notes, &report);
+    judge_notes(notes, frames, through)
+}
+
+/// How many of `notes` a take is judged on when `through` is the last note sung whole before
+/// it was stopped: those to the end of the last phrase finished there, none if none was. A
+/// phrase cut short would be judged as if it ended there, and its notes not sung would count
+/// as not heard. A take not stopped, or stopped on or past its last note, is judged whole.
+pub fn finished(notes: &[Note], through: Option<usize>) -> usize {
+    let Some(i) = through.filter(|&i| i + 1 < notes.len()) else {
+        return notes.len();
+    };
+    let at = notes[i].phrase;
+    if notes[i + 1].phrase > at {
+        i + 1
+    } else {
+        notes.iter().position(|n| n.phrase == at).unwrap_or(0)
+    }
+}
+
+/// `notes`, timed on the take's clock, scored and judged on its `frames`, as [`judge_gabc`]
+/// judges a chant's: given `through`, only the [`finished`] ones, with the phrase endings the
+/// whole chant has ([`judge_part`]). `cantor eval` judges takes stopped short with it, so the
+/// gates hold what the page is shown.
+pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize>) -> Judged {
+    let judged = finished(&notes, through);
+    let report = score(&notes[..judged], frames);
+    let verdict = judge_part(&notes, judged, &report);
+    let summary = summary(&notes, &verdict);
+    notes.truncate(judged);
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
-    let summary = summary(&notes, &verdict);
     let endings = endings(&verdict);
     Judged {
         notes,
@@ -283,9 +299,10 @@ pub extern "C" fn ear_entry(due_s: f32) -> i32 {
 }
 
 /// Scores and judges the heard take against the notes of the GABC in the byte buffer's first
-/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take, to the end of
-/// the phrase of note `through` when it is not negative (the take was stopped there): the
-/// length of the JSON left in the output buffer, or -1 with the error there.
+/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take; when `through` is
+/// not negative (the take was stopped with that note the last sung whole), only to the end of the
+/// last phrase finished there ([`finished`]): the length of the JSON left in the output buffer,
+/// or -1 with the error there.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through: i32) -> i32 {
@@ -395,6 +412,62 @@ mod tests {
         assert_eq!(judged(Some(3)), 2, "to the end of the last phrase finished");
         assert_eq!(judged(Some(4)), 5, "the last note is the whole chant");
         assert_eq!(judged(Some(9)), 5, "a note past the end is the whole chant");
+        // The chant's notes as judged are those the truncation finds, each where the offset puts it.
+        let notes = notes_from_gabc(gabc, 0.5);
+        for through in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(9)] {
+            let n = finished(&notes, through);
+            assert_eq!(judged(through), n, "{through:?}");
+            let shown = judge_gabc(gabc, 0.5, 2.0, &[], through);
+            let timed: Vec<Note> = notes
+                .iter()
+                .map(|note| Note {
+                    start_s: note.start_s + 2.0,
+                    ..*note
+                })
+                .collect();
+            assert_eq!(shown.notes, timed[..n]);
+            assert_eq!(
+                serde_json::to_string(&shown).unwrap(),
+                serde_json::to_string(&judge_notes(timed, &[], through)).unwrap()
+            );
+        }
+        assert_eq!(finished(&[], Some(0)), 0);
+    }
+
+    #[test]
+    fn a_take_stopped_short_is_told_of_as_the_whole_chant_is() {
+        // A psalm whose first verse alone is too little recited to be read as recited: stopped
+        // in the second verse and judged on the first, its summary still speaks of the reciting
+        // tone, as of the take sung whole.
+        let gabc = "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then:(j.) *(:) praise(j) him(j) all(i) ye(j) na(h)tions.(g.) (::) \
+            Glo(j)ry(j) be(j) to(j) the(j) Fa(j)ther,(j) and(j) to(k) the(j) Son:(j.) *(:) world(j) with(j) end(j) a(j)men.(j) (::)";
+        let notes = notes_from_gabc(gabc, 0.5);
+        let end = notes.last().map_or(0.0, |n| n.start_s + n.dur_s);
+        let frames: Vec<Frame> = (0..(end / 0.01) as usize)
+            .map(|k| {
+                let t = k as f32 * 0.01;
+                let sung = notes.iter().find(|n| t >= n.start_s && t < n.start_s + n.dur_s);
+                Frame {
+                    t,
+                    midi: sung.map(|n| n.midi),
+                    clarity: if sung.is_some() { 0.95 } else { 0.0 },
+                    rms: if sung.is_some() { 0.1 } else { 0.0 },
+                    masked: false,
+                    quiet: sung.is_none(),
+                    other: None,
+                }
+            })
+            .collect();
+        let stopped = judge_notes(notes.clone(), &frames, Some(20));
+        assert_eq!(stopped.notes.len(), 14);
+        assert_eq!(stopped.summary, summary(&notes, &stopped.verdict));
+        assert!(stopped.summary[0].starts_with("Your reciting tone"), "{:?}", stopped.summary);
+        assert_ne!(
+            stopped.summary[0],
+            summary(&notes[..14], &stopped.verdict)[0],
+            "read from the notes judged alone"
+        );
+        assert_eq!(judge_notes(notes, &frames, None).summary[0], stopped.summary[0]);
     }
 
     #[test]

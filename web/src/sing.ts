@@ -17,7 +17,7 @@ import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
 import { Replay } from "./replay";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
-import { headphonesIn, ONSET_WINDOW, timed, type Timed } from "./timing";
+import { headphonesIn, ONSET_WINDOW, throughHeard, timed, type Timed } from "./timing";
 
 void offerSignIn();
 
@@ -1505,10 +1505,8 @@ async function takeScored(): Promise<void> {
     // there (the ear's `judge_gabc`).
     let through: number | null = null;
     if (cut !== null) {
-      const times = timed(score.timeline.notes, guide.pulse);
-      through = -1;
-      while (through + 1 < times.length && offset + times[through + 1]!.start + times[through + 1]!.duration <= heard.seconds) through++;
-      if (through < 0) {
+      through = throughHeard(timed(score.timeline.notes, guide.pulse), offset, heard.seconds);
+      if (through === null) {
         setStatus("The take was stopped before its first note was sung through, so there is nothing to judge.", true);
         return;
       }

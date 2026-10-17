@@ -144,6 +144,16 @@ impl Verdict {
 
 /// Judges a scored take of `notes`. A report that does not match the notes is not heard.
 pub fn judge(notes: &[Note], report: &Report) -> Verdict {
+    judge_part(notes, notes.len(), report)
+}
+
+/// Judges a scored take of the first `judged` of `chant`'s notes, as of a take stopped short
+/// at the end of a phrase: on those notes alone, but with the cadences the whole chant has
+/// (whether it is recited, and its reciting tone, are the whole chant's), so that a phrase
+/// finished is judged as when the chant is sung whole. A report that does not match those
+/// notes is not heard.
+pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
+    let notes = &chant[..judged.min(chant.len())];
     let silent = |outcome| Verdict {
         outcome,
         key_cents: None,
@@ -206,8 +216,9 @@ pub fn judge(notes: &[Note], report: &Report) -> Verdict {
         .enumerate()
         .filter(|(i, r)| r.is_some_and(|c| c.abs() < IN_TUNE_CENTS) && !marks.iter().any(|m| m.covers(*i)))
         .count();
-    let cadences = cadences(notes)
+    let cadences = cadences(chant)
         .into_iter()
+        .filter(|&(_, last)| last < notes.len())
         .map(|(first, last)| {
             let worst = cadence_cents(
                 (first..=last)
@@ -678,6 +689,22 @@ mod tests {
         // "hea-then"; "all ye na-tions"; "to the Son" (its last two notes on the tone); and
         // nothing for a phrase that never leaves the tone.
         assert_eq!(cadences(&notes), [(6, 7), (10, 13), (22, 24)]);
+    }
+
+    #[test]
+    fn a_take_stopped_short_keeps_the_whole_chants_cadences() {
+        // The psalm's first verse alone is too little recited to be read as a recited chant, so
+        // judged on its own its second cadence would be its last two notes, "na-tions". Stopped
+        // there, it is still the tone's termination, "all ye na-tions", as sung whole.
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        assert!(!recited(&notes[..14]));
+        assert_eq!(cadences(&notes[..14]), [(6, 7), (12, 13)]);
+        let v = judge_part(&notes, 14, &report(&[Some(0.0); 14]));
+        assert_eq!(v.cadences.iter().map(|c| (c.first, c.last)).collect::<Vec<_>>(), [(6, 7), (10, 13)]);
+        assert_eq!(v.relative.len(), 14);
+        // Judged whole, a take is judged as by `judge`.
+        let cents = vec![Some(0.0); notes.len()];
+        assert_eq!(judge_part(&notes, notes.len(), &report(&cents)), judge(&notes, &report(&cents)));
     }
 
     #[test]

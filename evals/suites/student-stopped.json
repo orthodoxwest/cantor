@@ -1,0 +1,63 @@
+{
+  "name": "student-stopped",
+  "gate": "student",
+  "gabc": "evals/chants/psalm-117.gabc",
+  "pulse_s": 0.45,
+  "voice": "vowel",
+  "scoop_cents": 120,
+  "scoop_s": 0.08,
+  "vibrato_cents": 30,
+  "vibrato_hz": 5.5,
+  "wander_cents": 8,
+  "takes": [
+    {
+      "seed": 221,
+      "key_cents": -1500,
+      "through": 54,
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, -180, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -250, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -170]
+    },
+    {
+      "seed": 222,
+      "key_cents": -1100,
+      "reverb_rt60_s": 1.2,
+      "reverb_wet": 0.4,
+      "phone": true,
+      "through": 58,
+      "ranges": [
+        {"first": 45, "last": 61, "cents": 200}
+      ],
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -200]
+    },
+    {
+      "seed": 223,
+      "key_cents": -800,
+      "reverb_rt60_s": 1.0,
+      "reverb_wet": 0.4,
+      "through": 60,
+      "silent": [
+        {"first": 45, "last": 61}
+      ]
+    },
+    {
+      "seed": 224,
+      "key_cents": -1200,
+      "through": 4,
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -200]
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 225,
+      "key_cents": -1210,
+      "pulse_s": 0.5,
+      "through": 30,
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, -200, 0, 0, 0, 0, 170, 0, 0, 0, -160, 0, 0, 0, 0, 0, 180, 0, 200, 0, 0, 0, 220, 0, 0, -190]
+    },
+    {
+      "seed": 226,
+      "key_cents": -1100,
+      "lead_in_s": 2.0,
+      "through": 29,
+      "cents_offset_per_note": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -180, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200]
+    }
+  ]
+}

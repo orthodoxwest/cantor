@@ -89,7 +89,8 @@ pub fn endings(verdict: &Verdict) -> Vec<Ending> {
 /// tells of endings off pitch after a take that held steady, which a beginner could otherwise
 /// read as contradicting it: the first is of the take as a whole, the second of its endings.
 /// Nothing of timing or breath. None for a take not heard; one sentence when no ending was
-/// clearly heard.
+/// clearly heard. `notes` are the chant's, all of them for a take stopped short, as the judge
+/// reads whether it is recited from the whole chant.
 pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
