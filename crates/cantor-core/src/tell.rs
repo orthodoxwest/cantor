@@ -31,47 +31,59 @@ pub fn told(verdict: &Verdict) -> Vec<String> {
 }
 
 /// What the singer is told of the take as a whole, in two sentences: whether the reciting
-/// tone (the pitch, in a chant not recited) held steady, from the judge's drift, and whether
-/// the cadences were on pitch, from the judge's cadences. Nothing of timing or breath. None for
-/// a take not heard; one sentence when no cadence was clearly heard.
+/// tone (the key, in a chant not recited) held steady, from the judge's drift, and whether the
+/// phrase endings (the judge's cadences) were on pitch. The second begins "But" when it
+/// tells of endings off pitch after a take that held steady, which a beginner could otherwise
+/// read as contradicting it: the first is of the take as a whole, the second of its endings.
+/// Nothing of timing or breath. None for a take not heard; one sentence when no ending was
+/// clearly heard.
 pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
     }
-    let tone = if recited(notes) { "Your reciting tone" } else { "Your pitch" };
+    let recited = recited(notes);
     let drift = verdict.drift_cents;
-    let mut out = vec![if verdict.steady {
-        format!("{tone} held steady.")
-    } else {
-        format!(
-            "{tone} {} {} over the take ({drift:+.0} cents).",
+    let mut out = vec![match (verdict.steady, recited) {
+        (true, true) => "Your reciting tone held steady from start to finish.".to_string(),
+        (true, false) => "You stayed in your key from start to finish.".to_string(),
+        (false, _) => format!(
+            "{} {} {} over the take ({drift:+.0} cents).",
+            if recited { "Your reciting tone" } else { "Your pitch" },
             if drift < 0.0 { "sank" } else { "rose" },
             steps(drift.abs()).unwrap_or("a little")
-        )
+        ),
     }];
     let heard: Vec<bool> = verdict.cadences.iter().filter_map(|c| c.on_pitch()).collect();
     let off = heard.iter().filter(|on| !**on).count();
     let n = heard.len();
-    // Cadences not clearly heard are neither on pitch nor off.
-    let which = if n == verdict.cadences.len() { "" } else { " clearly heard" };
+    // Endings not clearly heard are neither on pitch nor off.
+    let which = if n == verdict.cadences.len() { "" } else { " heard clearly" };
     let sentence = match (n, off) {
         (0, _) => None,
-        (1, 0) if which.is_empty() => Some("The cadence was on pitch.".to_string()),
-        (1, _) if which.is_empty() => Some("The cadence went off pitch.".to_string()),
-        (1, 0) => Some("The one cadence clearly heard was on pitch.".to_string()),
-        (1, _) => Some("The one cadence clearly heard went off pitch.".to_string()),
-        (2, 0) => Some(format!("Both cadences{which} were on pitch.")),
-        (2, 2) => Some(format!("Both cadences{which} went off pitch.")),
-        (_, 0) => Some(format!("Every cadence{which} was on pitch.")),
-        _ if off == n => Some(format!("Every cadence{which} went off pitch.")),
+        (1, 0) if which.is_empty() => Some("The ending was on pitch.".to_string()),
+        (1, _) if which.is_empty() => Some("The ending went off pitch.".to_string()),
+        (1, 0) => Some("Only one phrase ending was heard clearly, and it was on pitch.".to_string()),
+        (1, _) => Some("Only one phrase ending was heard clearly, and it went off pitch.".to_string()),
+        (2, 0) => Some(format!("Both phrase endings{which} were on pitch.")),
+        (2, 2) => Some(format!("Both phrase endings{which} went off pitch.")),
+        (_, 0) => Some(format!("Every phrase ending{which} was on pitch.")),
+        _ if off == n => Some(format!("Every phrase ending{which} went off pitch.")),
         _ => Some(format!(
-            "{} of the {} cadences{which} went off pitch.",
+            "{} of the {} phrase endings{which} went off pitch.",
             capitalise(&number(off)),
             number(n)
         )),
     };
-    out.extend(sentence);
+    out.extend(sentence.map(|s| if verdict.steady && off > 0 { but(&s) } else { s }));
     out
+}
+
+/// `sentence` begun with "But", as a contrast with the one before it.
+fn but(sentence: &str) -> String {
+    let mut chars = sentence.chars();
+    chars
+        .next()
+        .map_or_else(String::new, |c| format!("But {}{}", c.to_lowercase(), chars.as_str()))
 }
 
 /// "about a whole tone above", "a semitone below": how far `cents` (folded to the nearest
@@ -212,11 +224,21 @@ mod tests {
     fn a_clean_take_is_told_it_held() {
         assert_eq!(
             summary(&psalm(), &heard(20.0, &[Some(30.0), Some(-60.0), Some(5.0)])),
-            ["Your reciting tone held steady.", "Every cadence was on pitch."]
+            [
+                "Your reciting tone held steady from start to finish.",
+                "Every phrase ending was on pitch."
+            ]
         );
-        // A chant not recited holds its pitch.
-        let hymn = crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5);
-        assert_eq!(summary(&hymn, &heard(-10.0, &[None]))[0], "Your pitch held steady.");
+        // A chant not recited is told of its key.
+        assert_eq!(
+            summary(&hymn(), &heard(-10.0, &[None]))[0],
+            "You stayed in your key from start to finish."
+        );
+    }
+
+    /// A hymn's line, no note of it recited.
+    fn hymn() -> Vec<Note> {
+        crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5)
     }
 
     #[test]
@@ -229,42 +251,67 @@ mod tests {
             summary(&psalm(), &heard(200.0, &[]))[0],
             "Your reciting tone rose a whole tone over the take (+200 cents)."
         );
+        assert_eq!(
+            summary(&hymn(), &heard(-90.0, &[]))[0],
+            "Your pitch sank a semitone over the take (-90 cents)."
+        );
     }
 
     #[test]
-    fn cadences_off_pitch_are_counted() {
+    fn endings_off_pitch_are_counted() {
         let notes = psalm();
         let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences))[1].clone();
         assert_eq!(
             told(&[Some(20.0), Some(-120.0), Some(10.0)]),
-            "One of the three cadences went off pitch."
+            "But one of the three phrase endings went off pitch."
         );
-        assert_eq!(told(&[Some(120.0), Some(-300.0)]), "Both cadences went off pitch.");
-        assert_eq!(told(&[Some(120.0), Some(-300.0), Some(400.0)]), "Every cadence went off pitch.");
-        assert_eq!(told(&[Some(20.0)]), "The cadence was on pitch.");
-        assert_eq!(told(&[Some(-101.0)]), "The cadence went off pitch.");
+        assert_eq!(told(&[Some(120.0), Some(-300.0)]), "But both phrase endings went off pitch.");
+        assert_eq!(
+            told(&[Some(120.0), Some(-300.0), Some(400.0)]),
+            "But every phrase ending went off pitch."
+        );
+        assert_eq!(told(&[Some(20.0)]), "The ending was on pitch.");
+        assert_eq!(told(&[Some(-101.0)]), "But the ending went off pitch.");
         let many: Vec<Option<f32>> = (0..14).map(|i| Some(if i < 2 { 150.0 } else { 0.0 })).collect();
-        assert_eq!(told(&many), "Two of the 14 cadences went off pitch.");
-        assert_eq!(told(&[Some(0.0), Some(20.0)]), "Both cadences were on pitch.");
+        assert_eq!(told(&many), "But two of the 14 phrase endings went off pitch.");
+        assert_eq!(told(&[Some(0.0), Some(20.0)]), "Both phrase endings were on pitch.");
     }
 
     #[test]
-    fn cadences_not_heard_are_left_out() {
+    fn endings_off_after_a_steady_take_are_told_as_a_contrast() {
+        // A steady take with its one clear ending off: the two sentences are of different
+        // things, and say so.
+        assert_eq!(
+            summary(&hymn(), &heard(5.0, &[None, Some(-140.0)])),
+            [
+                "You stayed in your key from start to finish.",
+                "But only one phrase ending was heard clearly, and it went off pitch."
+            ]
+        );
+        // After a drifting take there is nothing to contrast.
+        assert_eq!(summary(&hymn(), &heard(-90.0, &[Some(-140.0)]))[1], "The ending went off pitch.");
+    }
+
+    #[test]
+    fn endings_not_heard_are_left_out() {
         let notes = psalm();
         let told = |cadences: &[Option<f32>]| summary(&notes, &heard(0.0, cadences)).get(1).cloned();
         assert_eq!(
             told(&[Some(20.0), None, Some(10.0), Some(0.0)]).unwrap(),
-            "Every cadence clearly heard was on pitch."
+            "Every phrase ending heard clearly was on pitch."
         );
         assert_eq!(
             told(&[Some(200.0), None, Some(-150.0)]).unwrap(),
-            "Both cadences clearly heard went off pitch."
+            "But both phrase endings heard clearly went off pitch."
         );
         assert_eq!(
             told(&[Some(200.0), None, Some(15.0)]).unwrap(),
-            "One of the two cadences clearly heard went off pitch."
+            "But one of the two phrase endings heard clearly went off pitch."
         );
-        assert_eq!(told(&[None, Some(15.0)]).unwrap(), "The one cadence clearly heard was on pitch.");
+        assert_eq!(
+            told(&[None, Some(15.0)]).unwrap(),
+            "Only one phrase ending was heard clearly, and it was on pitch."
+        );
         assert_eq!(told(&[None, None]), None);
         assert_eq!(told(&[]), None);
     }

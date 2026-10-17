@@ -30,7 +30,7 @@ const record = () => ({
     verdict: { key_cents: -310, marks: [{ kind: "note", first: 0, last: 0, cents: 180 }] },
     ribbon: [{ index: 0, from_s: 1.2, to_s: 1.7, cents: 180, trace: [[1.3, 170]] }],
     told: ["This note was sung sharp."],
-    summary: ["Your reciting tone held steady.", "The cadence was on pitch."],
+    summary: ["Your reciting tone held steady from start to finish.", "The ending was on pitch."],
     report: { extra: true },
   },
 });

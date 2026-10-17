@@ -19,7 +19,7 @@ async function judgedTake(page: Page, chant: string): Promise<void> {
   await page.waitForTimeout(2000);
   await page.evaluate(() => void window.__cantor.listen());
   await page.evaluate(([gabc]) => window.__cantor.show(gabc, 0.5, 0.2), [GABC] as const);
-  await expect(page.locator("#key")).toHaveText(/^Your key: /);
+  await expect(page.locator("#key")).toHaveText(/^You started /);
 }
 
 test("a chant's recording is drawn under the singer's trace", async ({ page }) => {
