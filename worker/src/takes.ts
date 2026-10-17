@@ -83,11 +83,14 @@ export interface TakeRecord {
   judged: { verdict: { key_cents: number | null; marks: Mark[] }; ribbon: Band[]; told: string[]; summary: string[] };
 }
 
-/** One note of the ribbon (web ribbon.ts `Band`); its times are in seconds of the take. */
+/** One note of the ribbon (web ribbon.ts `Band`); its times are in seconds of the take. A take
+ * sent before the trace was drawn over the whole note has no `start_s` and `end_s`. */
 interface Band {
   index: number;
   from_s: number;
   to_s: number;
+  start_s?: number;
+  end_s?: number;
   cents: number | null;
   trace: Array<[number, number]>;
 }
@@ -113,14 +116,17 @@ function ribbonOf(bands: unknown): Band[] | null {
   const out: Band[] = [];
   for (const [i, b] of (bands as Array<Record<string, unknown> | null>).entries()) {
     if (typeof b !== "object" || b === null || b.index !== i) return null;
-    const { from_s, to_s, cents, trace } = b;
+    const { from_s, to_s, start_s, end_s, cents, trace } = b;
     if (!finite(from_s, -1e4, 1e4) || !finite(to_s, -1e4, 1e4) || !centsOrNull(cents) || !Array.isArray(trace)) return null;
+    // The whole note, both ends or neither.
+    const whole = start_s !== undefined || end_s !== undefined;
+    if (whole && (!finite(start_s, -1e4, 1e4) || !finite(end_s, -1e4, 1e4))) return null;
     const points: Array<[number, number]> = [];
     for (const p of trace as unknown[]) {
       if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], -1e4, 1e4) || !finite(p[1], -1e5, 1e5)) return null;
       points.push([p[0], p[1]]);
     }
-    out.push({ index: i, from_s, to_s, cents: cents as number | null, trace: points });
+    out.push({ index: i, from_s, to_s, ...(whole ? { start_s: start_s as number, end_s: end_s as number } : {}), cents: cents as number | null, trace: points });
   }
   return out;
 }

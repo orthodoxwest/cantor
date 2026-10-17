@@ -1,8 +1,9 @@
 //! What the singer sees of a judged take, note by note: each note's own band, its target at
 //! the centre, measured in cents from where the judge put that note (the singer's key and
 //! the drift line through it), so a half step and a whole step are drawn alike. Each band
-//! carries the note's value as the judge read it and the pitch heard over its sustained
-//! part, smoothed; the page draws them and adds nothing.
+//! carries the note's value as the judge read it over its sustained part, and the pitch heard
+//! over the whole note, smoothed, so that a slide into the note or away from it shows beside
+//! the value; the page draws them and adds nothing.
 
 use serde::Serialize;
 
@@ -19,14 +20,18 @@ pub const SMOOTH_FRAMES: usize = 3;
 pub struct Band {
     /// The note's index in the expected notes.
     pub index: usize,
-    /// The note's sustained part, in seconds of the take: where its trace lies.
+    /// The note's sustained part, in seconds of the take: where its value was read.
     pub from_s: f32,
     pub to_s: f32,
+    /// The whole note, in seconds of the take, from when it was due to when it was due to
+    /// end: where its trace lies.
+    pub start_s: f32,
+    pub end_s: f32,
     /// The note's error from the key and the drift line, in cents, as the judge read it
     /// ([`Verdict::relative`]); `None` when it was not heard.
     pub cents: Option<f32>,
-    /// The pitch heard over the sustained part, as (seconds, cents) on the same reference,
-    /// each point the median of [`SMOOTH_FRAMES`] voiced frames; empty when not heard.
+    /// The pitch heard over the whole note, as (seconds, cents) on the same reference, each
+    /// point the median of [`SMOOTH_FRAMES`] voiced frames; empty when not heard.
     pub trace: Vec<(f32, f32)>,
 }
 
@@ -38,6 +43,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
         .enumerate()
         .map(|(index, note)| {
             let (from_s, to_s) = sustained(note);
+            let (start_s, end_s) = (note.start_s, note.start_s + note.dur_s);
             let cents = verdict.relative.get(index).copied().flatten();
             // The judge's reference for this note: its pitch, the key and the drift line there.
             let reference = match (cents, verdict.key_cents, report.notes.get(index).and_then(|r| r.cents)) {
@@ -47,7 +53,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
             let trace = reference.map_or_else(Vec::new, |reference| {
                 let voiced: Vec<(f32, f32)> = frames
                     .iter()
-                    .filter(|f| f.t >= from_s && f.t < to_s)
+                    .filter(|f| f.t >= start_s && f.t < end_s)
                     .filter_map(|f| f.midi.map(|m| (f.t, fold(m * 100.0 - reference))))
                     .collect();
                 smooth(&voiced)
@@ -56,6 +62,8 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
                 index,
                 from_s,
                 to_s,
+                start_s,
+                end_s,
                 cents,
                 trace,
             }
@@ -129,10 +137,41 @@ mod tests {
             assert!(
                 band.trace
                     .iter()
-                    .all(|&(t, c)| t >= band.from_s && t < band.to_s && (c - want).abs() < 1.0),
+                    .all(|&(t, c)| t >= band.start_s && t < band.end_s && (c - want).abs() < 1.0),
+                "{band:?}"
+            );
+            // Over the whole note, its value read over the part between.
+            assert!(
+                band.start_s < band.from_s && band.from_s < band.to_s && band.to_s < band.end_s,
+                "{band:?}"
+            );
+            assert!(
+                band.trace.first().unwrap().0 < band.from_s && band.trace.last().unwrap().0 >= band.to_s,
                 "{band:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_band_shows_a_slide_into_its_note_beside_the_value_held() {
+        // The second note scooped: begun 150 cents low and slid up to it over its first tenth,
+        // then held on pitch.
+        let notes = [Note::new(60.0, 0.0, 1.0), Note::new(62.0, 1.0, 1.0), Note::new(64.0, 2.0, 1.0)];
+        let mut fr = frames(&notes, &[0.0, 0.0, 0.0]);
+        for f in fr.iter_mut().filter(|f| f.t >= 1.0 && f.t < 1.1) {
+            let into = (f.t - 1.0) / 0.1;
+            f.midi = Some(62.0 - 1.5 * (1.0 - into));
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let band = &ribbon(&notes, &fr, &report, &verdict)[1];
+        assert!(band.cents.unwrap().abs() < 1.0, "{band:?}");
+        let head = band.trace.iter().filter(|&&(t, _)| t < 1.05).map(|&(_, c)| c);
+        assert!(head.clone().count() > 0 && head.clone().all(|c| c < -60.0), "{band:?}");
+        assert!(
+            band.trace.iter().filter(|&&(t, _)| t >= band.from_s).all(|&(_, c)| c.abs() < 1.0),
+            "{band:?}"
+        );
     }
 
     #[test]

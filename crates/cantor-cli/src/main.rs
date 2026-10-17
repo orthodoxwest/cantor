@@ -296,6 +296,8 @@ fn recording_cmd(args: &[String]) -> Result<(), String> {
     for band in &mut bands {
         band.from_s = round(band.from_s, 100.0);
         band.to_s = round(band.to_s, 100.0);
+        band.start_s = round(band.start_s, 100.0);
+        band.end_s = round(band.end_s, 100.0);
         band.cents = band.cents.map(|c| round(c, 10.0));
         band.trace.iter_mut().for_each(|p| *p = (round(p.0, 100.0), round(p.1, 10.0)));
     }

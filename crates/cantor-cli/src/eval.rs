@@ -1373,6 +1373,7 @@ mod tests {
                 (w.index, w.cents.is_some(), w.trace.len())
             );
             assert!((g.from_s - w.from_s).abs() < 1e-4 && (g.to_s - w.to_s).abs() < 1e-4);
+            assert!((g.start_s - w.start_s).abs() < 1e-4 && (g.end_s - w.end_s).abs() < 1e-4);
             assert!(g.cents.zip(w.cents).is_none_or(|(g, w)| (g - w).abs() < 0.5), "{g:?} {w:?}");
         }
     }

@@ -1,11 +1,12 @@
 // The take as the singer sees it after singing: under each staff line, a band for each note,
-// its target at the centre, and the pitch heard over the note's sustained part. Each band is
-// measured in cents from the note itself, as the core's judge placed it in the singer's key,
-// so a half step is drawn no smaller than a whole one. The values are the core's (cantor-core
-// ribbon.rs); the page only draws them, re-based on a note only where a caller asks. Each heard
-// note's value, the pitch it was held at, is drawn as a short bar across its band, over the
-// faint trace it was taken from, so the take reads at a glance as steps against the targets,
-// which reach past the bars' ends. Where the chant has an aligned recording, its trace is drawn
+// its target at the centre, and the pitch heard over the whole note. Each band is measured in
+// cents from the note itself, as the core's judge placed it in the singer's key, so a half step
+// is drawn no smaller than a whole one. The values are the core's (cantor-core ribbon.rs); the
+// page only draws them, re-based on a note only where a caller asks. Each heard note's value,
+// the pitch it was held at, is drawn as a short bar over the part of its band it was read from,
+// the note's sustained part, over the faint trace, so the take reads at a glance as steps
+// against the targets, which reach past the bars' ends, and a slide into a note or away from it
+// shows beside the bar. Where the chant has an aligned recording, its trace is drawn
 // under the singer's, each measured from its own key, so the two compare as sung, wherever each
 // was pitched. The ribbon itself draws no
 // verdict: no zone of what counts as in tune, no colours; the core's marks are drawn by
@@ -13,13 +14,23 @@
 import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
-/** One note's band, as cantor-core's `Band` serializes. */
+/** One note's band, as cantor-core's `Band` serializes: its sustained part, where its value was
+ * read, and the whole note, where its trace lies; a take sent before the trace was drawn over
+ * the whole note has only the sustained part, which its trace lies over. */
 export interface Band {
   index: number;
   from_s: number;
   to_s: number;
+  start_s?: number;
+  end_s?: number;
   cents: number | null;
   trace: Array<[number, number]>;
+}
+
+/** The seconds a band's trace is drawn across: the whole note, or for a band without it the
+ * sustained part. */
+export function span(band: Band): [number, number] {
+  return band.start_s !== undefined && band.end_s !== undefined ? [band.start_s, band.end_s] : [band.from_s, band.to_s];
 }
 
 /** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
@@ -52,6 +63,8 @@ const PAD = 8;
 const LONE = 14;
 /** The narrowest a band is drawn, centred on its note (notes stacked in a neume overlap). */
 export const MIN_WIDTH = 8;
+/** The shortest a held bar is drawn, where the band leaves room for it. */
+const HELD = 4;
 
 /** How a band sits on the page: its line, and its left and right edges. */
 interface Place {
@@ -130,10 +143,15 @@ export function drawRibbon(
     out.push(`<g class="band${heard ? "" : " unheard"}" ${attrs}>`);
     out.push(`<rect class="band-hit" x="${f(p.left)}" y="${f(top)}" width="${f(w)}" height="${STRIP}"/>`);
     out.push(`<line class="band-target" x1="${f(p.left + 1)}" x2="${f(p.right - 1)}" y1="${f(centre)}" y2="${f(centre)}"/>`);
+    // Each band's seconds across its width, but for a margin either side.
+    const inner = Math.max(w - 4, 0);
+    const xOf = (b: Band) => {
+      const [from, to] = span(b);
+      return to > from ? (t: number) => p.left + (w - inner) / 2 + ((t - from) / (to - from)) * inner : null;
+    };
     const trace = (b: Band | undefined, by: number, cls: string) => {
-      if (!b || b.trace.length === 0 || b.to_s <= b.from_s) return;
-      const inner = Math.max(w - 4, 0);
-      const x = (t: number) => p.left + (w - inner) / 2 + ((t - b.from_s) / (b.to_s - b.from_s)) * inner;
+      const x = b && b.trace.length > 0 ? xOf(b) : null;
+      if (!b || !x) return;
       const points = b.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - by, top))}`).join(" ");
       out.push(`<polyline class="${cls}" points="${points}"/>`);
     };
@@ -141,10 +159,20 @@ export function drawRibbon(
     trace(band, base, "band-trace");
     if (heard) {
       const y = f(yOf(band.cents! - base, top));
-      // Inset within the target, so that it shows either side even under a note on pitch, and
-      // neighbours' bars do not meet, save where a neume's narrow bands overlap.
+      // Over the part it was read from, inset within the target, so that the target shows either
+      // side even under a note on pitch, and neighbours' bars do not meet, save where a neume's
+      // narrow bands overlap.
       const inset = Math.min(4, w / 4);
-      out.push(`<line class="band-held" x1="${f(p.left + inset)}" x2="${f(p.right - inset)}" y1="${y}" y2="${y}"/>`);
+      const [lo, hi] = [p.left + inset, p.right - inset];
+      const x = xOf(band);
+      let [x1, x2] = x ? [Math.max(lo, x(band.from_s)), Math.min(hi, x(band.to_s))] : [lo, hi];
+      // No shorter than a dot in a neume's narrow band.
+      const least = Math.min(HELD, hi - lo);
+      if (x2 - x1 < least) {
+        const mid = Math.min(Math.max((x1 + x2) / 2, lo + least / 2), hi - least / 2);
+        [x1, x2] = [mid - least / 2, mid + least / 2];
+      }
+      out.push(`<line class="band-held" x1="${f(x1)}" x2="${f(x2)}" y1="${y}" y2="${y}"/>`);
     }
     out.push("</g>");
   }

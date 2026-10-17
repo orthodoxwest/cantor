@@ -28,7 +28,7 @@ const record = () => ({
   seconds: 9.5,
   judged: {
     verdict: { key_cents: -310, marks: [{ kind: "note", first: 0, last: 0, cents: 180 }] },
-    ribbon: [{ index: 0, from_s: 1.2, to_s: 1.7, cents: 180, trace: [[1.3, 170]] }],
+    ribbon: [{ index: 0, from_s: 1.3, to_s: 1.65, start_s: 1.2, end_s: 1.7, cents: 180, trace: [[1.22, 120], [1.3, 170]] }],
     told: ["This note was sung sharp."],
     summary: ["Your reciting tone held steady from start to finish.", "The ending was on pitch."],
     report: { extra: true },
@@ -177,6 +177,8 @@ describe("takes", () => {
       { verdict: { ...judged.verdict, marks: [{ ...judged.verdict.marks[0]!, last: 1 }] } },
       { verdict: { marks: judged.verdict.marks } },
       { ribbon: [{ ...judged.ribbon[0]!, index: 9000 }] },
+      { ribbon: [{ ...judged.ribbon[0]!, start_s: "soon" }] },
+      { ribbon: [{ ...judged.ribbon[0]!, end_s: undefined }] },
     ])
       expect((await send({ take: { ...record(), judged: { ...judged, ...over } } })).status).toBe(400);
     expect((await send({ audio: new Uint8Array(MAX_AUDIO + 1) })).status).toBe(413);
@@ -195,6 +197,16 @@ describe("takes", () => {
     expect(body.judged).toEqual(kept);
     expect(body).not.toHaveProperty("owner");
     expect(body.mine).toBe(false);
+  });
+
+  it("keeps a take sent before the trace was drawn over the whole note", async () => {
+    const judged = record().judged;
+    const { start_s: _, end_s: __, ...band } = judged.ribbon[0]!;
+    const res = await send({ take: { ...record(), judged: { ...judged, ribbon: [band] } } });
+    expect(res.status).toBe(201);
+    const { id } = await res.json<{ id: string }>();
+    const body = await (await get(`/api/takes/${id}`)).json<{ judged: { ribbon: unknown[] } }>();
+    expect(body.judged.ribbon).toEqual([band]);
   });
 
   it("finds nothing for an id it did not give", async () => {

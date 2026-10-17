@@ -76,6 +76,23 @@ describe("ribbon", () => {
     expect(bar![1]).toBeLessThan(157.8 + MIN_WIDTH / 2 - 1);
   });
 
+  it("draws the trace over the whole note, and the value over the part it was read from", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    // Slid up into the note over its first tenth, then held 10 cents sharp.
+    const bands = [{ index: 0, from_s: 0.2, to_s: 0.9, start_s: 0, end_s: 1, cents: 10, trace: [[0.05, -120], [0.5, 10]] as Array<[number, number]> }];
+    const svg = drawRibbon(notes, bands, () => 0);
+    // Its band is 86 to 115; the whole note across it, less 2 each side.
+    const points = svg.match(/<polyline class="band-trace" points="([^"]*)"/)![1]!.split(" ").map((p) => p.split(",").map(Number));
+    expect(points.map((p) => p[0])).toEqual([89.3, 100.5]);
+    expect(points[0]![1]).toBe(Number(yOf(-120, 0).toFixed(1)));
+    const held = svg.match(/<line class="band-held" x1="([^"]*)" x2="([^"]*)"/)!.slice(1).map(Number);
+    expect(held).toEqual([93, 110.5]);
+    // Never shorter than a dot, in a neume's narrow band.
+    const stacked = [note(157.5, 0), note(157.8, 0), note(163.5, 0)];
+    const narrow = drawRibbon(stacked, [{ ...bands[0]!, index: 1 }], () => 0).match(/<line class="band-held" x1="([^"]*)" x2="([^"]*)"/)!.slice(1).map(Number);
+    expect(narrow[1]! - narrow[0]!).toBeCloseTo(4);
+  });
+
   it("re-bases the traces on a note, keeping every target where it was", () => {
     const notes = [note(100, 0), note(130, 0)];
     const bands = [

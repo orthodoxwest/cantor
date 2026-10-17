@@ -6,7 +6,7 @@ import { Chant, init, type TimelineNote } from "neuma";
 import { offerSignIn } from "./beam";
 import { Cursor } from "./cursor";
 import { drawMarks } from "./marks";
-import { describeKey, drawRibbon, type Judged } from "./ribbon";
+import { describeKey, drawRibbon, type Judged, span } from "./ribbon";
 import { SCALE, Score } from "./score";
 import { noteAt, timed, type Timed } from "./timing";
 
@@ -115,9 +115,13 @@ function show(take: Take, me: Me | null): void {
     byId("key").append(` The take was stopped, and judged through note ${judged.ribbon.length}.`);
   let times: Timed[] = score ? timed(notes(), take.pulse) : [];
   /** Where note `i` was due, in seconds of the take: by the score when shown, else where its
-   * judged band begins (already in seconds of the take). */
-  const startOf = (i: number): number | undefined =>
-    score ? (times[i] ? take.offset + times[i].start : undefined) : judged.ribbon.find((b) => b.index === i)?.from_s;
+   * judged band begins (already in seconds of the take), the whole note or, sent before the
+   * band had it, its sustained part. */
+  const startOf = (i: number): number | undefined => {
+    if (score) return times[i] ? take.offset + times[i].start : undefined;
+    const band = judged.ribbon.find((b) => b.index === i);
+    return band && span(band)[0];
+  };
   /** The note chosen to comment on, and the mark whose words are shown. */
   let chosen: number | null = null;
   let open: number | null = null;
