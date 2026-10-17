@@ -161,38 +161,72 @@ pub struct Sung {
 }
 
 /// The notes of a part with their diction: each word's syllables read together, so English
-/// rules see the whole word.
+/// rules see the whole word. A syllable with no letters continues the melisma of the last
+/// syllable sung before it in its verse, as after a breath mid-melisma: it keeps that vowel, and
+/// the vowel's glide and closing consonants move to the end of the melisma.
 pub fn part(language: Language, lyrics: &[Lyric]) -> Vec<Sung> {
-    let mut out = Vec::with_capacity(lyrics.len());
-    let mut i = 0;
-    while i < lyrics.len() {
-        let word = lyrics[i].word;
-        let mut j = i;
-        while j < lyrics.len() && lyrics[j].word == word {
-            j += 1;
-        }
-        let notes = &lyrics[i..j];
-        let mut texts: Vec<&str> = Vec::new();
-        let mut index_of = Vec::with_capacity(notes.len());
-        let mut last = None;
-        for n in notes {
-            if last != Some(n.syllable) {
-                texts.push(&n.text);
-                last = Some(n.syllable);
+    // Each syllable's first note.
+    let firsts: Vec<usize> = (0..lyrics.len())
+        .filter(|&k| k == 0 || (lyrics[k].word, lyrics[k].syllable) != (lyrics[k - 1].word, lyrics[k - 1].syllable))
+        .collect();
+    let text = |s: usize| lyrics[firsts[s]].text.as_str();
+    let sung = |s: usize| text(s).chars().any(char::is_alphabetic);
+    let verse = |s: usize| lyrics[firsts[s]].note.verse;
+    let mut dictions = vec![neutral(); firsts.len()];
+    let mut s = 0;
+    while s < firsts.len() {
+        // A word, with any words after it that begin by continuing its melisma, as where a breath
+        // splits "peo- (,) -ple".
+        let mut end = s;
+        loop {
+            let word = lyrics[firsts[end]].word;
+            while end < firsts.len() && lyrics[firsts[end]].word == word {
+                end += 1;
             }
-            index_of.push(texts.len() - 1);
+            if end == firsts.len() || sung(end) || verse(end) != verse(end - 1) {
+                break;
+            }
         }
-        let dictions: Vec<Diction> = (0..texts.len()).map(|k| diction(language, &texts, k)).collect();
-        for (k, n) in notes.iter().enumerate() {
-            out.push(Sung {
-                note: n.note,
-                diction: dictions[index_of[k]],
-                new_syllable: k == 0 || index_of[k] != index_of[k - 1],
-            });
+        // The word as read: its syllables with letters.
+        let read: Vec<usize> = (s..end).filter(|&k| sung(k)).collect();
+        let texts: Vec<&str> = read.iter().map(|&k| text(k)).collect();
+        for (index, &k) in read.iter().enumerate() {
+            dictions[k] = diction(language, &texts, index);
         }
-        i = j;
+        s = end;
     }
-    out
+    let mut s = 0;
+    while s < firsts.len() {
+        let mut end = s + 1;
+        while sung(s) && end < firsts.len() && !sung(end) && verse(end) == verse(s) {
+            end += 1;
+        }
+        let d = dictions[s];
+        for (k, c) in dictions[s..end].iter_mut().enumerate() {
+            *c = Diction {
+                onset: if k == 0 { d.onset } else { Consonants::None },
+                glide: None,
+                coda: Consonants::None,
+                ..d
+            };
+        }
+        dictions[end - 1].glide = d.glide;
+        dictions[end - 1].coda = d.coda;
+        s = end;
+    }
+    let mut s = 0;
+    (0..lyrics.len())
+        .map(|k| {
+            if s + 1 < firsts.len() && firsts[s + 1] == k {
+                s += 1;
+            }
+            Sung {
+                note: lyrics[k].note,
+                diction: dictions[s],
+                new_syllable: firsts[s] == k,
+            }
+        })
+        .collect()
 }
 
 /// The language whose rules read the syllables.
@@ -408,6 +442,7 @@ const ENGLISH_WORDS: &[(&str, &[Vowel])] = {
         ("agatha", &[Ae, Ah, Ah]),
         ("ages", &[Ey, Ah]),
         ("alleluia", &[Ae, Eh, Uw, Aa]),
+        ("alleluya", &[Ae, Eh, Uw, Aa]),
         ("almighty", &[Ao, Ay, Iy]),
         ("altar", &[Ao, Er]),
         ("amen", &[Aa, Eh]),
@@ -1028,6 +1063,76 @@ mod tests {
         assert_eq!(vowels, [Vowel::Ow, Vowel::Iy, Vowel::Iy, Vowel::Aa]);
         let starts: Vec<bool> = sung.iter().map(|s| s.new_syllable).collect();
         assert_eq!(starts, [true, true, false, true]);
+    }
+
+    #[test]
+    fn a_melisma_past_a_breath_keeps_its_vowel_and_closes_at_its_end() {
+        let lyric = |text: &str, word, syllable, verse| Lyric {
+            note: Note {
+                verse,
+                ..Note::new(60.0, 0.5 * syllable as f32, 0.5)
+            },
+            text: text.into(),
+            word,
+            syllable,
+        };
+        let alone = part(Language::English, &[lyric("laid", 0, 0, 0)])[0].diction;
+        assert!(alone.glide.is_some() && alone.coda != Consonants::None, "{alone:?}");
+        let sung = part(
+            Language::English,
+            &[lyric("laid", 0, 0, 0), lyric("", 1, 1, 0), lyric("*", 2, 2, 0), lyric("", 3, 3, 1)],
+        );
+        let open = Diction {
+            glide: None,
+            coda: Consonants::None,
+            ..alone
+        };
+        assert_eq!(sung[0].diction, open);
+        assert_eq!(
+            sung[1].diction,
+            Diction {
+                onset: Consonants::None,
+                ..open
+            }
+        );
+        assert_eq!(
+            sung[2].diction,
+            Diction {
+                onset: Consonants::None,
+                ..alone
+            }
+        );
+        // A new verse does not continue the last one's melisma.
+        assert_eq!(sung[3].diction, neutral());
+    }
+
+    #[test]
+    fn a_syllable_without_letters_is_not_read_as_part_of_its_word() {
+        let lyric = |text: &str, syllable| Lyric {
+            note: Note::new(60.0, 0.0, 0.5),
+            text: text.into(),
+            word: 0,
+            syllable,
+        };
+        let alone = part(Language::English, &[lyric("bread", 0)])[0].diction;
+        let sung = part(Language::English, &[lyric("bread", 0), lyric("", 1)]);
+        assert_eq!(sung[0].diction.vowel, alone.vowel);
+        assert_eq!(sung[1].diction.vowel, alone.vowel);
+        assert_eq!(sung[1].diction.coda, alone.coda);
+    }
+
+    #[test]
+    fn a_word_split_by_a_breath_is_read_whole() {
+        let lyric = |text: &str, word, syllable| Lyric {
+            note: Note::new(60.0, 0.5 * syllable as f32, 0.5),
+            text: text.into(),
+            word,
+            syllable,
+        };
+        let whole = part(Language::English, &[lyric("peo", 0, 0), lyric("ple.", 0, 1)]);
+        let split = part(Language::English, &[lyric("peo", 0, 0), lyric("", 1, 1), lyric("ple.", 1, 2)]);
+        assert_eq!(split[0].diction.vowel, whole[0].diction.vowel);
+        assert_eq!(split[2].diction, whole[1].diction);
     }
 
     #[test]

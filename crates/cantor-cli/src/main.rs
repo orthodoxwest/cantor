@@ -28,6 +28,7 @@ const USAGE: &str = "usage: cantor pitch FILE.wav [--nsdf-only]
        cantor synth CHANT.gabc --tempo PULSE_SECONDS --seed N [--cents a,b,c...] -o OUT.wav
        cantor sing CHANT.gabc [--voice VOICE.cvox] --tempo PULSE_SECONDS [--transpose SEMITONES] [--rate HZ] -o OUT.wav
        cantor diction CHANT.gabc
+       cantor notes CHANT.gabc --tempo PULSE_SECONDS [--transpose SEMITONES]
        cantor eval [--takes DIR] [--write-baseline] [--nsdf-only] [--oracle MODEL.onnx]
        cantor explain SUITE [--takes DIR] [--nsdf-only] [--oracle MODEL.onnx]
        cantor take SUITE INDEX [--rate HZ] [--pad SECONDS] [--nsdf-only] -o OUT.wav
@@ -57,6 +58,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("synth") => synth_cmd(rest)?,
         Some("sing") => sing_cmd(rest)?,
         Some("diction") => diction_cmd(rest)?,
+        Some("notes") => notes_cmd(rest)?,
         Some("eval") => return eval_cmd(rest),
         Some("explain") => return explain_cmd(rest),
         Some("take") => take_cmd(rest)?,
@@ -194,6 +196,67 @@ fn diction_cmd(args: &[String]) -> Result<(), String> {
     }
     print!("{out}");
     Ok(())
+}
+
+/// Prints each note of a chant as `sing` times it, one per line, with its syllable and vowel
+/// (see [`notes_tsv`]). Tools outside cantor read it to sing the same timeline another way.
+fn notes_cmd(args: &[String]) -> Result<(), String> {
+    let mut chant = None;
+    let mut pulse_s = None;
+    let mut transpose = 0.0f32;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value"));
+        let number = |v: &String| v.parse::<f32>().map_err(|e| format!("{arg}: {e}"));
+        match arg.as_str() {
+            "--tempo" => pulse_s = Some(number(value()?)?),
+            "--transpose" => transpose = number(value()?)?,
+            _ if chant.is_none() && !arg.starts_with('-') => chant = Some(PathBuf::from(arg)),
+            _ => return Err(format!("unexpected argument: {arg}\n{USAGE}")),
+        }
+    }
+    let (Some(chant), Some(pulse_s)) = (chant, pulse_s) else {
+        return Err(USAGE.into());
+    };
+    if !pulse_s.is_finite() || pulse_s <= 0.0 {
+        return Err("--tempo must be a positive number of seconds".into());
+    }
+    if !transpose.is_finite() {
+        return Err("--transpose must be a number of semitones".into());
+    }
+    let gabc = std::fs::read_to_string(&chant).map_err(|e| format!("{}: {e}", chant.display()))?;
+    print!("{}", notes_tsv(&gabc, pulse_s, transpose));
+    Ok(())
+}
+
+/// A chant's notes as a table: a `# language:` line, a header, then per note its start and
+/// length in seconds, MIDI pitch, phrase, word and syllable indices, syllable text (trimmed, each
+/// run of whitespace one space), vowel and glide, tab-separated.
+fn notes_tsv(gabc: &str, pulse_s: f32, transpose: f32) -> String {
+    let lyrics = cantor_core::timeline::lyrics_from_gabc(gabc, pulse_s);
+    let language = cantor_core::Language::of_gabc(gabc);
+    let part = cantor_core::diction::part(language, &lyrics);
+    let language = match language {
+        cantor_core::Language::Latin => "Latin",
+        cantor_core::Language::English => "English",
+    };
+    let mut out = format!("# language: {language}\nstart_s\tdur_s\tmidi\tphrase\tword\tsyllable\ttext\tvowel\tglide\n");
+    for (s, l) in part.iter().zip(&lyrics) {
+        let d = s.diction;
+        let text = l.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.push_str(&format!(
+            "{:.4}\t{:.4}\t{:.3}\t{}\t{}\t{}\t{text}\t{}\t{}\n",
+            s.note.start_s,
+            s.note.dur_s,
+            s.note.midi + transpose,
+            s.note.phrase,
+            l.word,
+            l.syllable,
+            d.vowel.symbol(),
+            d.glide.map_or("", |g| g.symbol()),
+        ));
+    }
+    out
 }
 
 fn eval_cmd(args: &[String]) -> Result<ExitCode, String> {
@@ -382,5 +445,26 @@ fn repo_root() -> PathBuf {
         cwd
     } else {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notes_tsv;
+
+    #[test]
+    fn notes_lists_each_note_with_its_syllable() {
+        let gabc = "name:Test;\n%%\n(c4) A(fgh)men.(g) (,) (hg) (::)\n";
+        assert_eq!(
+            notes_tsv(gabc, 0.5, -2.0),
+            "# language: Latin\n\
+             start_s\tdur_s\tmidi\tphrase\tword\tsyllable\ttext\tvowel\tglide\n\
+             0.0000\t0.5000\t51.000\t0\t1\t1\tA\tAA\t\n\
+             0.5000\t0.5000\t53.000\t0\t1\t1\tA\tAA\t\n\
+             1.0000\t0.5000\t55.000\t0\t1\t1\tA\tAA\t\n\
+             1.5000\t0.5000\t53.000\t0\t1\t2\tmen.\tEH\t\n\
+             2.2500\t0.5000\t55.000\t1\t3\t4\t\tEH\t\n\
+             2.7500\t0.5000\t53.000\t1\t3\t4\t\tEH\t\n"
+        );
     }
 }
