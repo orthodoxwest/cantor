@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge, notes_from_gabc, ribbon, score, summary, told,
+    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge_part, notes_from_gabc, ribbon, score, summary, told,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::Serialize;
@@ -134,15 +134,17 @@ pub fn finished(notes: &[Note], through: Option<usize>) -> usize {
 }
 
 /// `notes`, timed on the take's clock, scored and judged on its `frames`, as [`judge_gabc`]
-/// judges a chant's: given `through`, only the [`finished`] ones. `cantor eval` judges takes
-/// stopped short with it, so the gates hold what the page is shown.
+/// judges a chant's: given `through`, only the [`finished`] ones, with the phrase endings the
+/// whole chant has ([`judge_part`]). `cantor eval` judges takes stopped short with it, so the
+/// gates hold what the page is shown.
 pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize>) -> Judged {
-    notes.truncate(finished(&notes, through));
-    let report = score(&notes, frames);
-    let verdict = judge(&notes, &report);
+    let judged = finished(&notes, through);
+    let report = score(&notes[..judged], frames);
+    let verdict = judge_part(&notes, judged, &report);
+    let summary = summary(&notes, &verdict);
+    notes.truncate(judged);
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
-    let summary = summary(&notes, &verdict);
     let endings = endings(&verdict);
     Judged {
         notes,

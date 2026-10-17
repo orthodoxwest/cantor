@@ -19,7 +19,8 @@
 //! The gates. Every suite, gated or not, must have no false marks, and be told the same when
 //! timed as the page times it (below).
 //! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
-//!   0.3 s or more heard over the suite and 90% in every take; 90% of all notes heard; a
+//!   0.3 s or more heard over the suite and 90% in every take (all but one in a take of fewer
+//!   than ten, as a take stopped short in its first phrase can be); 90% of all notes heard; a
 //!   steady reciting tone; no cadence called off pitch, and 80% of them judged; every take
 //!   judged.
 //! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
@@ -63,14 +64,12 @@
 //! Every take stopped is compared with the take sung whole, judged on all of the chant: on the
 //! notes judged it must be judged alike, with the same outcome and marks there (a mark running
 //! past them compared as far as they go), the cadences of the phrases finished placed and
-//! called alike (as when a take is retimed), and the key within [`KEY_TOLERANCE`]. Real takes,
-//! with no truth to be held to, are gated on it. Synthetic takes are held to what was planted,
-//! and their agreement is held to the baseline. It is not perfect: the judge reads whether a
-//! chant is recited (where its cadences lie, and whether its summary speaks of a reciting
-//! tone) from the notes it judges, and the psalm's first verse alone, with four of its
-//! fourteen notes recited, is not; stopped there (`expert-stopped` 0), its second phrase's
-//! cadence is its last two notes, "na-tions", where sung whole it is the tone's termination,
-//! "all ye na-tions".
+//! called alike (as when a take is retimed), and the key within [`KEY_TOLERANCE`]. Every suite
+//! with takes stopped is gated on it. The judge reads whether a chant is recited, and so where
+//! its cadences lie and whether its summary speaks of a reciting tone, from the whole chant
+//! ([`cantor_core::judge_part`]): the psalm's first verse alone, with four of its fourteen
+//! notes recited, would not be, and stopped there (`expert-stopped` 0) its second cadence
+//! would be "na-tions", not the tone's termination "all ye na-tions".
 //!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
@@ -88,8 +87,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{
-    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Take, Verdict, judge, notes_from_gabc, render_take,
-    score,
+    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Take, Verdict, judge, judge_part, notes_from_gabc,
+    render_take, score,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -127,6 +126,13 @@ const GROSS_CENTS: f32 = 50.0;
 /// The floors the gates hold.
 const HEARD_FLOOR: f32 = 0.95;
 const TAKE_HEARD_FLOOR: f32 = 0.9;
+
+/// How many of a take's `counted` notes (0.3 s or more) must be heard: [`TAKE_HEARD_FLOOR`] of
+/// them, or all but one of fewer than ten, as the one phrase judged of a take stopped short
+/// can be: a note the tracker misses sung whole too is a sixth of a first half-verse of six.
+fn take_floor(counted: usize) -> usize {
+    ((TAKE_HEARD_FLOOR * counted as f32).ceil() as usize).min(counted.saturating_sub(1))
+}
 const ALL_HEARD_FLOOR: f32 = 0.9;
 const RECALL_FLOOR: f32 = 0.95;
 const KEY_TOLERANCE: f32 = 50.0;
@@ -384,8 +390,8 @@ impl Timing {
             } else {
                 moved.len()
             };
-            let moved = &moved[..judged];
-            let again = judge(moved, &score(moved, frames));
+            // Its phrase endings the whole chant's, as the ear's.
+            let again = judge_part(&moved, judged, &score(&moved[..judged], frames));
             Retimed {
                 entry,
                 kept: told(&again) == told(verdict) && !contradicts(&again.cadences, &verdict.cadences),
@@ -507,6 +513,8 @@ struct Metrics {
     heard_fraction: f32,
     /// The lowest heard fraction of any one take.
     worst_take_heard: f32,
+    /// Takes with fewer of their notes of 0.3 s or more heard than [`take_floor`].
+    takes_under_floor: u32,
     /// Of all the notes sung, the fraction heard.
     heard_all: f32,
     /// Of the notes of 0.3 s or more, the fraction masked by the guide's bleed.
@@ -670,6 +678,7 @@ impl Metrics {
             counted += take_counted;
             heard += take_heard;
             m.worst_take_heard = m.worst_take_heard.min(ratio(take_heard, take_counted));
+            m.takes_under_floor += u32::from(take_heard < take_floor(take_counted));
             m.marks += v.marks.len() as u32;
             m.false_marks += v.marks.iter().filter(|mark| !deserved(mark, &take.planted)).count() as u32;
             for i in faults(&take.notes, &take.planted) {
@@ -762,8 +771,11 @@ impl Metrics {
                     format!("heard {:.3} < {HEARD_FLOOR}", self.heard_fraction),
                 );
                 need(
-                    self.worst_take_heard >= TAKE_HEARD_FLOOR,
-                    format!("a take heard {:.3} < {TAKE_HEARD_FLOOR}", self.worst_take_heard),
+                    self.takes_under_floor == 0,
+                    format!(
+                        "{} takes heard under {TAKE_HEARD_FLOOR} (worst {:.3})",
+                        self.takes_under_floor, self.worst_take_heard
+                    ),
                 );
                 need(
                     self.heard_all >= ALL_HEARD_FLOOR,
@@ -809,9 +821,8 @@ impl Metrics {
         out
     }
 
-    /// Why takes stopped short fail to agree with the takes sung whole, if they do: the gate
-    /// of real takes stopped, which have no truth to be held to. Synthetic takes are held to
-    /// what was planted, and their agreement is held to the baseline (see `regressions`).
+    /// Why takes stopped short fail to agree with the takes sung whole, if they do: a gate of
+    /// every suite with takes stopped.
     fn agreement_failures(&self) -> Vec<String> {
         let Some(s) = self.stopped else { return Vec::new() };
         let mut out = Vec::new();
@@ -1144,9 +1155,7 @@ pub fn run(
         let metrics = Metrics::of(judged);
         let oracle = OracleStats::of(judged);
         let mut gated = metrics.gate_failures(*gate);
-        if is_real(name) {
-            gated.extend(metrics.agreement_failures());
-        }
+        gated.extend(metrics.agreement_failures());
         let mut moved = Vec::new();
         // Real takes are held to their gate only: the set and its audio live elsewhere.
         if !is_real(name) {
@@ -2062,6 +2071,15 @@ mod tests {
         assert_eq!(s.otherwise, 1);
         assert!((s.key_apart_cents - 80.0).abs() < 1e-3, "{}", s.key_apart_cents);
         assert_eq!(m.agreement_failures().len(), 2);
+    }
+
+    #[test]
+    fn a_take_is_held_to_its_share_of_notes_heard_or_all_but_one_of_a_few() {
+        assert_eq!(take_floor(62), 56);
+        assert_eq!(take_floor(10), 9);
+        assert_eq!(take_floor(6), 5);
+        assert_eq!(take_floor(1), 0);
+        assert_eq!(take_floor(0), 0);
     }
 
     #[test]
