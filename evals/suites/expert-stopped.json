@@ -1,0 +1,80 @@
+{
+  "name": "expert-stopped",
+  "gate": "expert",
+  "pulse_s": 0.45,
+  "voice": "vowel",
+  "scoop_cents": 120,
+  "scoop_s": 0.08,
+  "vibrato_cents": 30,
+  "vibrato_hz": 5.5,
+  "wander_cents": 8,
+  "takes": [
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 211,
+      "key_cents": -1500,
+      "through": 20
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 212,
+      "key_cents": -1130,
+      "drift_cents_per_second": 0.4,
+      "through": 29
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 213,
+      "key_cents": -760,
+      "through": 5
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 214,
+      "key_cents": -1050,
+      "lead_in_s": 2.0,
+      "reverb_rt60_s": 2.0,
+      "reverb_wet": 0.5,
+      "phone": true,
+      "noise_rms": 0.005,
+      "through": 79
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 215,
+      "key_cents": -1100,
+      "lead_in_s": 2.0,
+      "guide": "full",
+      "bleed_db": -20,
+      "bleed_delay_s": 0.08,
+      "through": 50
+    },
+    {
+      "gabc": "evals/chants/psalm-117.gabc",
+      "seed": 216,
+      "key_cents": -800,
+      "lead_in_s": 2.0,
+      "through": 7
+    },
+    {
+      "gabc": "evals/chants/scale.gabc",
+      "seed": 217,
+      "key_cents": -1210,
+      "pulse_s": 0.5,
+      "through": 20
+    },
+    {
+      "gabc": "content/chants/nunc-dimittis.gabc",
+      "seed": 218,
+      "key_cents": -900,
+      "through": 13
+    },
+    {
+      "gabc": "content/chants/ubi-caritas.gabc",
+      "seed": 219,
+      "key_cents": -470,
+      "pulse_s": 0.4,
+      "through": 47
+    }
+  ]
+}

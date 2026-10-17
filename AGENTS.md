@@ -17,7 +17,7 @@ Experimental. Keep documentation to this file and doc comments; no other READMEs
 
 ## Commands
 - `make setup` once per clone; `make check` before every push; CI runs the same.
-- `make eval` runs the listening gates (expert, student and guide-bleed controls; see `crates/cantor-cli/src/eval.rs`) and the scorecard against `evals/baseline.json`, then again with the NSDF tracker alone (`--nsdf-only`) against `evals/baseline-nsdf.json`, then `cantor swift-parity`; `cantor eval --write-baseline` (with `--nsdf-only` for the second) updates them in a deliberate commit. `make eval TAKES=../cantor-content/evals/takes` adds the real takes, which never enter this repository; `ORACLE=1` adds the oracle's ungated comparison.
+- `make eval` runs the listening gates (expert, student and guide-bleed controls, and takes stopped short as the page judges them; see `crates/cantor-cli/src/eval.rs`) and the scorecard against `evals/baseline.json`, then again with the NSDF tracker alone (`--nsdf-only`) against `evals/baseline-nsdf.json`, then `cantor swift-parity`; `cantor eval --write-baseline` (with `--nsdf-only` for the second) updates them in a deliberate commit. `make eval TAKES=../cantor-content/evals/takes` adds the real takes, which never enter this repository; `ORACLE=1` adds the oracle's ungated comparison.
 - The app shows verdicts (the core's marks and their words, never its own) only while the gates pass on the real takes: run `make eval TAKES=…` before changing the judge, the scorer or the ear, and if a real take fails them, take the verdicts out of the app until they pass again.
 - Outputs land in `out/`.
 

@@ -44,6 +44,34 @@
 //! the cursor: the page then times the take as due, as the singer holds the first note until
 //! the cursor moves, which a recording sung at its own pace does not.
 //!
+//! A take may be stopped short: its spec's `through` names the last note sung whole, and the
+//! take ends halfway through the next. It is judged as the page judges it: `through` read
+//! from the take's length as `sing.ts` reads it, then only the phrases finished there, by the
+//! ear's own [`cantor_ear::judge_gabc`]. It is held to its suite's gate over the notes judged
+//! (a take with none is left out of those numbers), and under every gate to the gates of
+//! stopping: the notes judged, and the bands the page draws, end exactly where the last
+//! phrase finished at `through` ends, as read here from the chant's phrases; no mark or
+//! cadence ends past them; a take stopped before a phrase finished is judged to nothing and
+//! told nothing (no key, mark, cadence, band or words: the page says there is nothing to judge
+//! yet, not that the singer was not heard); and no fault planted past the notes judged (sung in
+//! the phrase cut short, or never sung) is caught. When it is timed again as the page times it,
+//! it is judged each time through the note the page would read from its length on that timing.
+//! Real takes are stopped too (`real-takes-stopped`), halfway through the middle note of their
+//! first, second, middle and last phrases, and held to the expert gate and the same gates of
+//! stopping.
+//!
+//! Every take stopped is compared with the take sung whole, judged on all of the chant: on the
+//! notes judged it must be judged alike, with the same outcome and marks there (a mark running
+//! past them compared as far as they go), the cadences of the phrases finished placed and
+//! called alike (as when a take is retimed), and the key within [`KEY_TOLERANCE`]. Real takes,
+//! with no truth to be held to, are gated on it. Synthetic takes are held to what was planted,
+//! and their agreement is held to the baseline. It is not perfect: the judge reads whether a
+//! chant is recited (where its cadences lie, and whether its summary speaks of a reciting
+//! tone) from the notes it judges, and the psalm's first verse alone, with four of its
+//! fourteen notes recited, is not; stopped there (`expert-stopped` 0), its second phrase's
+//! cadence is its last two notes, "na-tions", where sung whole it is the tone's termination,
+//! "all ye na-tions".
+//!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
 //! mark nothing, but the NSDF tracker alone loses notes, and by -6 dB whole takes go
@@ -60,7 +88,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cantor_core::score::fold;
 use cantor_core::synth::{GuideMode, cue_span};
 use cantor_core::{
-    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Verdict, judge, notes_from_gabc, render_take, score,
+    Cadence, Entry, Frame, Guide, Mark, MarkKind, Note, Outcome, Planted, Profile, Take, Verdict, judge, notes_from_gabc, render_take,
+    score,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,8 +133,15 @@ const KEY_TOLERANCE: f32 = 50.0;
 const SILENT_CEILING: f32 = 0.01;
 /// Two trackers agree on a frame within this many cents, octaves aside.
 const AGREEMENT_CENTS: f32 = 50.0;
-/// The name real takes are reported under.
+/// The name real takes are reported under, and the name they are reported under stopped short.
 const REAL: &str = "real-takes";
+const REAL_STOPPED: &str = "real-takes-stopped";
+
+/// Whether a suite is of real takes, which have no baseline: the set and its audio live
+/// elsewhere.
+fn is_real(name: &str) -> bool {
+    name == REAL || name == REAL_STOPPED
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -141,6 +177,10 @@ struct TakeSpec {
     /// Seconds before the first note, when only the guide's cue sounds.
     #[serde(default)]
     lead_in_s: f32,
+    /// The last note sung whole when the singer stopped the take short, if they did: the take
+    /// ends halfway through the next note.
+    #[serde(default)]
+    through: Option<usize>,
     #[serde(flatten)]
     profile: Profile,
 }
@@ -180,6 +220,98 @@ struct Judged {
     /// oracle listened.
     oracle: Option<OracleTake>,
     timing: Timing,
+    /// When the take was stopped short: where, and what it was judged on and told.
+    stop: Option<Stop>,
+}
+
+/// A take stopped short: where the page reads it stopped, what it was judged on and told
+/// there, and the take sung whole.
+#[derive(Serialize)]
+struct Stop {
+    /// The last note sung whole, as the page reads it from the take's length; none when the
+    /// first note was not.
+    through: Option<usize>,
+    /// Where the notes judged must end: after the last phrase finished at `through`, as
+    /// [`phrase_end`] reads the chant.
+    finished: usize,
+    /// The bands the page draws (it says the take was judged through the last of them), and
+    /// the sentences it shows: the marks' words and the summary.
+    ribbon: usize,
+    words: usize,
+    /// Faults planted on notes past `finished` (see [`faults`]), sung in the phrase cut short
+    /// or never sung, and of them those a mark caught.
+    cut_faults: u32,
+    cut_caught: u32,
+    /// The take sung whole, judged on all of the chant.
+    whole: Verdict,
+}
+
+impl Stop {
+    /// `shown`, the take of `chant` (planted with `planted`) stopped after note `through`, as
+    /// the page was given it, beside `whole`.
+    fn of(chant: &[Note], planted: &[Planted], through: Option<usize>, shown: &cantor_ear::Judged, whole: Verdict) -> Stop {
+        let finished = through.map_or(0, |t| phrase_end(chant, t));
+        let (mut cut_faults, mut cut_caught) = (0, 0);
+        for i in faults(chant, planted).filter(|&i| i >= finished) {
+            cut_faults += 1;
+            cut_caught += u32::from(shown.verdict.marks.iter().any(|m| catches(m, i, &planted[i])));
+        }
+        Stop {
+            through,
+            finished,
+            ribbon: shown.ribbon.len(),
+            words: shown.told.len() + shown.summary.len(),
+            cut_faults,
+            cut_caught,
+            whole,
+        }
+    }
+}
+
+/// The last note sung whole in a take `heard_s` seconds long, as the page reads it when the
+/// take is stopped (`sing.ts`): the last of the notes, in order, ended by then; none when the
+/// first had not ended.
+fn through_heard(notes: &[Note], heard_s: f32) -> Option<usize> {
+    notes.iter().take_while(|n| n.end_s() <= heard_s).count().checked_sub(1)
+}
+
+/// Where a take stopped with note `through` the last sung whole must be judged to: just after
+/// the last note up to `through` that ends its phrase (as the chant's last note does), or at
+/// the start when none does. Read from the chant's phrases, not from the ear.
+fn phrase_end(notes: &[Note], through: usize) -> usize {
+    if notes.is_empty() {
+        return 0;
+    }
+    (0..=through.min(notes.len() - 1))
+        .rev()
+        .find(|&i| notes.get(i + 1).is_none_or(|next| next.phrase != notes[i].phrase))
+        .map_or(0, |i| i + 1)
+}
+
+/// Whether a take stopped short was judged otherwise than when sung whole, on the `judged`
+/// notes it was judged on: another outcome, other marks there (one of the whole take's running
+/// past them is compared as far as they go), or the cadences of the phrases finished placed or
+/// called otherwise (see [`contradicts`]). Their keys are held apart to [`KEY_TOLERANCE`].
+fn judged_otherwise(stopped: &Verdict, whole: &Verdict, judged: usize) -> bool {
+    let marks = |v: &Verdict| -> Vec<(MarkKind, usize, usize)> {
+        v.marks
+            .iter()
+            .filter(|m| m.first < judged)
+            .map(|m| (m.kind, m.first, m.last.min(judged.saturating_sub(1))))
+            .collect()
+    };
+    let finished: Vec<Cadence> = whole.cadences.iter().filter(|c| c.last < judged).copied().collect();
+    stopped.outcome != whole.outcome || marks(stopped) != marks(whole) || contradicts(&stopped.cadences, &finished)
+}
+
+/// Whether two verdicts' cadences are told otherwise: placed otherwise, or one called off
+/// pitch where the other is not. One on pitch one way and not clearly heard the other is not
+/// told otherwise, only not counted.
+fn contradicts(a: &[Cadence], b: &[Cadence]) -> bool {
+    a.len() != b.len()
+        || a.iter()
+            .zip(b)
+            .any(|(x, y)| (x.first, x.last) != (y.first, y.last) || (x.on_pitch() == Some(false)) != (y.on_pitch() == Some(false)))
 }
 
 /// How far behind the cursor a singer is taken to be, in seconds, each time a take is timed as
@@ -225,23 +357,18 @@ struct Retimed {
 }
 
 impl Timing {
-    /// `guided`: the guide is heard in the take.
-    fn of(notes: &[Note], samples: &[f32], rate: f32, frames: &[Frame], verdict: &Verdict, guided: bool) -> Timing {
+    /// `notes`: the chant's, as timed in the take. `stopped`: the take was stopped short, so
+    /// each way it is timed it is judged as the page judges it then, through the note it reads
+    /// as the last sung whole from the take's length on that timing (see [`through_heard`]),
+    /// to the end of the last phrase finished there. `guided`: the guide is heard in the take.
+    fn of(notes: &[Note], stopped: bool, samples: &[f32], rate: f32, frames: &[Frame], verdict: &Verdict, guided: bool) -> Timing {
         let start = notes.first().map_or(0.0, |n| n.start_s);
+        let heard_s = samples.len() as f32 / rate;
         let live = cantor_core::live(samples, rate);
         let loud = cantor_ear::onset(samples, rate);
         let told = |v: &Verdict| {
             let marks: Vec<_> = v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect();
-            (v.outcome, v.steady, marks)
-        };
-        // A cadence on pitch one way and not clearly heard the other is not told otherwise,
-        // only not counted; one called off pitch must be called off both ways.
-        let contradicts = |a: &Verdict, b: &Verdict| {
-            a.cadences.len() != b.cadences.len()
-                || a.cadences
-                    .iter()
-                    .zip(&b.cadences)
-                    .any(|(x, y)| (x.first, x.last) != (y.first, y.last) || (x.on_pitch() == Some(false)) != (y.on_pitch() == Some(false)))
+            (v.outcome, v.steady, marks, v.relative.len())
         };
         let retime = |due: f32| {
             let entry = cantor_core::entry(&live, loud, due);
@@ -252,10 +379,16 @@ impl Timing {
                     ..*n
                 })
                 .collect();
-            let again = judge(&moved, &score(&moved, frames));
+            let judged = if stopped {
+                through_heard(&moved, heard_s).map_or(0, |t| cantor_ear::finished(&moved, Some(t)))
+            } else {
+                moved.len()
+            };
+            let moved = &moved[..judged];
+            let again = judge(moved, &score(moved, frames));
             Retimed {
                 entry,
-                kept: told(&again) == told(verdict) && !contradicts(&again, verdict),
+                kept: told(&again) == told(verdict) && !contradicts(&again.cadences, &verdict.cadences),
             }
         };
         let late = if !guided && start >= PAGE_LEAD_S {
@@ -417,6 +550,59 @@ struct Metrics {
     /// Of the frames the NSDF tracker found clear and SwiftF0 also voiced, the fraction
     /// within [`AGREEMENT_CENTS`] of each other, octaves aside; none when SwiftF0 did not listen.
     agreement: Option<f32>,
+    /// What the takes stopped short are judged by; none when no take was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stopped: Option<StopMetrics>,
+}
+
+/// The numbers a suite's takes stopped short are judged by, besides its gate's over the notes
+/// judged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct StopMetrics {
+    /// Takes stopped short, and those of them stopped before a phrase finished.
+    takes: u32,
+    unfinished: u32,
+    /// Takes judged other than to the end of the last phrase finished: their notes, scores,
+    /// errors or bands ending elsewhere, or a mark or cadence ending past it.
+    misjudged: u32,
+    /// Of the takes stopped before a phrase finished, those told anything: a key, a mark, a
+    /// cadence, a band or a sentence.
+    told_unfinished: u32,
+    /// Faults planted past the notes judged (sung in the phrase cut short, or never sung),
+    /// and those of them a mark caught.
+    cut_faults: u32,
+    cut_caught: u32,
+    /// Takes with a phrase finished, each compared with the take sung whole on the notes
+    /// judged; those judged otherwise there (see [`judged_otherwise`]); and the largest
+    /// distance between the two keys, in cents.
+    compared: u32,
+    otherwise: u32,
+    key_apart_cents: f32,
+}
+
+impl StopMetrics {
+    fn add(&mut self, take: &Judged, s: &Stop) {
+        let v = &take.verdict;
+        let n = s.finished;
+        self.takes += 1;
+        self.cut_faults += s.cut_faults;
+        self.cut_caught += s.cut_caught;
+        let ends = [take.notes.len(), take.report.notes.len(), v.relative.len(), s.ribbon];
+        self.misjudged +=
+            u32::from(ends.iter().any(|&e| e != n) || v.marks.iter().any(|m| m.last >= n) || v.cadences.iter().any(|c| c.last >= n));
+        if n == 0 {
+            self.unfinished += 1;
+            let told = s.ribbon > 0 || s.words > 0 || v.key_cents.is_some() || !v.marks.is_empty() || !v.cadences.is_empty();
+            self.told_unfinished += u32::from(told);
+        } else {
+            self.compared += 1;
+            self.otherwise += u32::from(judged_otherwise(v, &s.whole, n));
+            if let (Some(a), Some(b)) = (v.key_cents, s.whole.key_cents) {
+                self.key_apart_cents = self.key_apart_cents.max(fold(a - b).abs());
+            }
+        }
+    }
 }
 
 impl Metrics {
@@ -431,6 +617,7 @@ impl Metrics {
         let (mut errors, mut gross, mut tracked) = (0.0f32, 0usize, 0usize);
         let (mut caught, mut cadences_caught) = (0u32, 0u32);
         let (mut both, mut agreed) = (0usize, 0usize);
+        let mut stopped: Option<StopMetrics> = None;
         for take in takes {
             for f in &take.frames {
                 if let (Some(m), Some(o)) = (f.midi, f.other)
@@ -438,6 +625,16 @@ impl Metrics {
                 {
                     both += 1;
                     agreed += usize::from(fold((m - o) * 100.0).abs() <= AGREEMENT_CENTS);
+                }
+            }
+            m.timed_late += u32::from(!take.timing.late.is_empty());
+            m.timed_by_sound += u32::from(take.timing.by_sound());
+            m.timing_moved_marks += u32::from(!take.timing.kept());
+            if let Some(s) = &take.stop {
+                stopped.get_or_insert_default().add(take, s);
+                // Stopped before a phrase finished: nothing was judged to measure.
+                if take.notes.is_empty() {
+                    continue;
                 }
             }
             let v = &take.verdict;
@@ -500,10 +697,8 @@ impl Metrics {
                 m.unjudged += 1;
             }
             m.in_tune += v.in_tune as u32;
-            m.timed_late += u32::from(!take.timing.late.is_empty());
-            m.timed_by_sound += u32::from(take.timing.by_sound());
-            m.timing_moved_marks += u32::from(!take.timing.kept());
         }
+        m.stopped = stopped;
         m.heard_fraction = ratio(heard, counted);
         m.heard_all = ratio(all_heard, all);
         m.masked_fraction = ratio(masked, counted);
@@ -532,6 +727,25 @@ impl Metrics {
             self.timing_moved_marks == 0,
             format!("{} takes told otherwise as the page times them", self.timing_moved_marks),
         );
+        // A take stopped short is judged to the end of the last phrase finished, and on nothing
+        // past it.
+        if let Some(s) = self.stopped {
+            need(
+                s.misjudged == 0,
+                format!("{} stopped takes not judged to the end of the last phrase finished", s.misjudged),
+            );
+            need(
+                s.told_unfinished == 0,
+                format!(
+                    "{} of {} takes stopped before a phrase finished told something",
+                    s.told_unfinished, s.unfinished
+                ),
+            );
+            need(
+                s.cut_caught == 0,
+                format!("{} of {} faults past the notes judged caught", s.cut_caught, s.cut_faults),
+            );
+        }
         // A singer late behind the cursor is timed by the sound of the voice.
         if matches!(gate, Gate::Expert | Gate::Student | Gate::Wrong) {
             need(
@@ -591,6 +805,24 @@ impl Metrics {
                 );
                 need(self.in_tune == 0, format!("{} notes heard in tune", self.in_tune));
             }
+        }
+        out
+    }
+
+    /// Why takes stopped short fail to agree with the takes sung whole, if they do: the gate
+    /// of real takes stopped, which have no truth to be held to. Synthetic takes are held to
+    /// what was planted, and their agreement is held to the baseline (see `regressions`).
+    fn agreement_failures(&self) -> Vec<String> {
+        let Some(s) = self.stopped else { return Vec::new() };
+        let mut out = Vec::new();
+        if s.otherwise > 0 {
+            out.push(format!(
+                "{} of {} stopped takes judged otherwise than sung whole",
+                s.otherwise, s.compared
+            ));
+        }
+        if s.key_apart_cents > KEY_TOLERANCE {
+            out.push(format!("a stopped take's key {:.0} cents from the whole take's", s.key_apart_cents));
         }
         out
     }
@@ -702,6 +934,34 @@ impl Metrics {
             self.cadence_faults != base.cadence_faults,
         );
         check("takes", self.takes as f32, base.takes as f32, self.takes != base.takes);
+        // Where takes are stopped, and what is planted past the stop, is fixed by the suites too.
+        let stopped = |m: &Metrics| m.stopped.unwrap_or_default();
+        let (now, was) = (stopped(self), stopped(base));
+        check("stopped takes", now.takes as f32, was.takes as f32, now.takes != was.takes);
+        check(
+            "stopped before a phrase finished",
+            now.unfinished as f32,
+            was.unfinished as f32,
+            now.unfinished != was.unfinished,
+        );
+        check(
+            "faults past the notes judged",
+            now.cut_faults as f32,
+            was.cut_faults as f32,
+            now.cut_faults != was.cut_faults,
+        );
+        check(
+            "stopped takes judged otherwise than sung whole",
+            now.otherwise as f32,
+            was.otherwise as f32,
+            now.otherwise > was.otherwise,
+        );
+        check(
+            "stopped key_apart_cents",
+            now.key_apart_cents,
+            was.key_apart_cents,
+            now.key_apart_cents > was.key_apart_cents + 10.0,
+        );
         // SwiftF0 going deaf on a suite would otherwise drop its agreement from the gate.
         if let (None, Some(was)) = (self.agreement, base.agreement) {
             out.push(format!("agreement {was:.3} -> none: SwiftF0 compared no frames"));
@@ -771,7 +1031,12 @@ struct TakeOutput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     oracle: Option<&'a OracleTake>,
     timing: &'a Timing,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<&'a Stop>,
 }
+
+/// The widths of the console's columns of takes stopped short, after the suite's name.
+const STOP_WIDTHS: [usize; 8] = [7, 10, 5, 9, 6, 6, 8, 9];
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
 /// every take is also labelled by it and compared, outside the gates.
@@ -793,12 +1058,35 @@ pub fn run(
             .collect::<Result<_, _>>()?;
         suites.push((suite.name, suite.gate, judged));
     }
-    if let Some(dir) = takes_dir.filter(|_| only.is_none_or(|o| o == REAL)) {
-        let judged = load_real_takes(ear, oracle, dir)?;
-        if judged.is_empty() {
+    if let Some(dir) = takes_dir.filter(|_| only.is_none_or(is_real)) {
+        let recorded = json_files(dir)?.iter().map(|p| Recorded::read(p)).collect::<Result<Vec<_>, _>>()?;
+        if recorded.is_empty() {
             return Err(format!("{}: no takes", dir.display()));
         }
-        suites.push((REAL.into(), Gate::Expert, judged));
+        let whole = recorded
+            .iter()
+            .map(|t| judge_real(ear, oracle, t, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Each stopped where `stop_notes` says, and heard again from there.
+        let stopped: Option<Vec<Judged>> = if only.is_none_or(|o| o == REAL_STOPPED) {
+            let stops: Vec<(usize, usize)> = recorded
+                .iter()
+                .enumerate()
+                .flat_map(|(i, t)| stop_notes(&t.notes).into_iter().map(move |k| (i, k)))
+                .collect();
+            let judged = in_parallel(&stops, |_, &(i, k)| {
+                judge_real(ear, oracle, &recorded[i], Some((k, &whole[i].verdict)))
+            });
+            Some(judged.into_iter().collect::<Result<_, _>>()?)
+        } else {
+            None
+        };
+        if only.is_none_or(|o| o == REAL) {
+            suites.push((REAL.into(), Gate::Expert, whole));
+        }
+        if let Some(stopped) = stopped {
+            suites.push((REAL_STOPPED.into(), Gate::Expert, stopped));
+        }
     }
     if suites.is_empty() {
         return Err(format!("no suite named {}", only.unwrap_or("")));
@@ -850,13 +1138,18 @@ pub fn run(
     let mut baseline_failures = Vec::new();
     let mut oracle_md = String::new();
     let mut oracle_console = String::new();
+    let mut stop_md = String::new();
+    let mut stop_console = String::new();
     for (name, gate, judged) in &suites {
         let metrics = Metrics::of(judged);
         let oracle = OracleStats::of(judged);
-        let gated = metrics.gate_failures(*gate);
+        let mut gated = metrics.gate_failures(*gate);
+        if is_real(name) {
+            gated.extend(metrics.agreement_failures());
+        }
         let mut moved = Vec::new();
         // Real takes are held to their gate only: the set and its audio live elsewhere.
-        if name != REAL {
+        if !is_real(name) {
             match baseline.get(name) {
                 Some(base) => moved.extend(metrics.regressions(base, *gate)),
                 None => moved.push("not in the baseline".into()),
@@ -904,6 +1197,22 @@ pub fn run(
         ));
         gate_failures.extend(gated.iter().map(|f| format!("{name}: {f}")));
         baseline_failures.extend(moved.iter().map(|f| format!("{name}: {f}")));
+        if let Some(s) = metrics.stopped {
+            let counts = [
+                s.takes,
+                s.unfinished,
+                s.told_unfinished,
+                s.misjudged,
+                s.cut_faults,
+                s.cut_caught,
+                s.compared,
+                s.otherwise,
+            ];
+            let console: String = counts.iter().zip(STOP_WIDTHS).map(|(c, w)| format!(" {c:>w$}")).collect();
+            stop_console.push_str(&format!("{name:<22}{console} {:>9.1}\n", s.key_apart_cents));
+            let cells: String = counts.iter().map(|c| format!(" {c} |")).collect();
+            stop_md.push_str(&format!("| {name} |{cells} {:.1} |\n", s.key_apart_cents));
+        }
         if let Some(o) = oracle {
             let cents = o.tracking_cents.map_or("-".to_string(), |c| format!("{c:.2}"));
             let key = o.key_error_cents.map_or("-".to_string(), |c| format!("{c:.0}"));
@@ -930,6 +1239,7 @@ pub fn run(
                     report: &j.report,
                     oracle: j.oracle.as_ref(),
                     timing: &j.timing,
+                    stop: j.stop.as_ref(),
                 })
                 .collect(),
         });
@@ -939,6 +1249,28 @@ pub fn run(
         baseline_failures.push(format!("{name}: in the baseline but not in evals/suites"));
     }
 
+    if !stop_md.is_empty() {
+        let note = "Takes stopped short, judged to the end of the last phrase finished where the singer stopped. \
+             Unfinished: stopped before a phrase finished, so judged to nothing; told: of those, told anything. \
+             Misjudged: judged to elsewhere, or a mark or cadence past it. Cut faults: planted past the notes judged \
+             (caught: by a mark). Otherwise: judged otherwise than the take sung whole on the notes judged; \
+             key apart: the furthest the two keys were.";
+        let heads = [
+            "stopped",
+            "unfinished",
+            "told",
+            "misjudged",
+            "cut",
+            "caught",
+            "compared",
+            "otherwise",
+        ];
+        let heads: String = heads.iter().zip(STOP_WIDTHS).map(|(h, w)| format!(" {h:>w$}")).collect();
+        println!("\n{note}\n{:<22}{heads} {:>9}\n{stop_console}", "suite", "key apart");
+        md.push_str(&format!(
+            "\n{note}\n\n| suite | stopped | unfinished | told | misjudged | cut faults | caught | compared with the whole take | judged otherwise | key apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n{stop_md}"
+        ));
+    }
     if !oracle_md.is_empty() {
         let note = format!(
             "The oracle (CREPE), not gated. Heard: of the notes sung, the share it gave a pitch. \
@@ -1001,36 +1333,87 @@ fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(usize, &T) -> R + Sync)
         .collect()
 }
 
-fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, name: String) -> Result<Judged, String> {
+/// A suite's take: its chant, the chant's notes as timed in the take, the take rendered whole,
+/// and, when the singer stopped it short, how many of its samples were heard (to halfway
+/// through the note after `through`).
+fn render_spec(root: &Path, spec: &TakeSpec) -> Result<(String, Vec<Note>, Take, Option<usize>), String> {
     let path = root.join(&spec.gabc);
     let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
     for n in &mut notes {
         n.start_s += spec.lead_in_s;
     }
+    let take = render_take(&notes, &spec.profile, SAMPLE_RATE, spec.seed);
+    let heard = match spec.through {
+        None => None,
+        Some(through) => {
+            let next = notes
+                .get(through + 1)
+                .ok_or_else(|| format!("{}: note {through} is the chant's last or past it, so not stopped short", spec.gabc))?;
+            let end = ((next.start_s + next.dur_s / 2.0) * SAMPLE_RATE).round() as usize;
+            Some(end.min(take.samples.len()))
+        }
+    };
+    Ok((gabc, notes, take, heard))
+}
+
+fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, name: String) -> Result<Judged, String> {
+    let (gabc, chant, take, heard) = render_spec(root, spec)?;
     let profile = &spec.profile;
-    let take = render_take(&notes, profile, SAMPLE_RATE, spec.seed);
+    let len = heard.unwrap_or(take.samples.len());
+    let samples = &take.samples[..len];
     // The app knows when it played the cue; with none, the guide's bleed cannot be measured.
-    let guide = take.guide.as_deref().map(|samples| Guide {
-        samples,
-        alone: cue_span(&notes).unwrap_or((0.0, 0.0)),
-    });
-    let frames = ear.listen(&take.samples, SAMPLE_RATE, guide)?;
-    let report = score(&notes, &frames);
+    let guide = |len: usize| {
+        take.guide.as_deref().map(|played| Guide {
+            samples: &played[..len],
+            alone: cue_span(&chant).unwrap_or((0.0, 0.0)),
+        })
+    };
+    let frames = ear.listen(samples, SAMPLE_RATE, guide(len))?;
+    let planted_all = profile.planted(&chant);
+    let (notes, report, verdict, stop) = match spec.through {
+        None => {
+            let report = score(&chant, &frames);
+            let verdict = judge(&chant, &report);
+            (chant.clone(), report, verdict, None)
+        }
+        Some(want) => {
+            let through = through_heard(&chant, len as f32 / SAMPLE_RATE);
+            if through != Some(want) {
+                return Err(format!(
+                    "{name}: stopped after note {want}, but the take's length reads {through:?}"
+                ));
+            }
+            // Judged as the page judges it, by the ear's own function.
+            let shown = cantor_ear::judge_gabc(&gabc, spec.pulse_s, spec.lead_in_s, &frames, through);
+            let whole_frames = ear.listen(&take.samples, SAMPLE_RATE, guide(take.samples.len()))?;
+            let whole = judge(&chant, &score(&chant, &whole_frames));
+            let stop = Stop::of(&chant, &planted_all, through, &shown, whole);
+            (shown.notes, shown.report, shown.verdict, Some(stop))
+        }
+    };
     let oracle = match oracle {
-        Some(o) => Some(OracleTake::of(&notes, &o.label(&take.samples, SAMPLE_RATE, &notes, &frames)?)),
+        Some(_) if notes.is_empty() => Some(OracleTake::of(&notes, &[])),
+        Some(o) => Some(OracleTake::of(&notes, &o.label(samples, SAMPLE_RATE, &notes, &frames)?)),
         None => None,
     };
-    let verdict = judge(&notes, &report);
-    let timing = Timing::of(&notes, &take.samples, SAMPLE_RATE, &frames, &verdict, take.guide.is_some());
-    let planted = profile.planted(&notes);
+    let timing = Timing::of(
+        &chant,
+        stop.is_some(),
+        samples,
+        SAMPLE_RATE,
+        &frames,
+        &verdict,
+        take.guide.is_some(),
+    );
+    let planted = planted_all[..notes.len()].to_vec();
     let mid = |n: &Note| n.start_s + n.dur_s / 2.0;
     let truth = notes
         .iter()
         .zip(&planted)
         .map(|(n, p)| (!p.silent).then(|| profile.key_cents + p.cents + profile.drift_cents_per_second * mid(n)))
         .collect();
-    // The key at the first verse, where the judge sets it.
+    // The key at the first verse judged, where the judge sets it.
     let first_verse: Vec<f32> = notes.iter().filter(|n| n.verse == notes[0].verse).map(mid).collect();
     let t0 = first_verse.iter().sum::<f32>() / first_verse.len().max(1) as f32;
     let span = match (notes.first(), notes.last()) {
@@ -1049,6 +1432,7 @@ fn run_take(root: &Path, ear: &Ear, oracle: Option<&Oracle>, spec: &TakeSpec, na
         report,
         oracle,
         timing,
+        stop,
     })
 }
 
@@ -1074,7 +1458,8 @@ pub struct TakeFile {
 
 /// Take `index` of `suite`, as `ear` hears it in `cantor eval`, and its samples at `rate`.
 /// Takes with a guide are refused: the guide's bleed is measured from samples the app plays,
-/// which a file alone does not carry.
+/// which a file alone does not carry. So are takes stopped short, which the file would judge
+/// whole.
 pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Result<(Vec<f32>, TakeFile), String> {
     let suites = load_suites(&root.join("evals/suites"))?;
     let found = suites
@@ -1087,6 +1472,9 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
         .ok_or_else(|| format!("{suite} has {} takes", found.takes.len()))?;
     if spec.profile.guide != GuideMode::None {
         return Err(format!("{suite} {index} plays a guide"));
+    }
+    if spec.through.is_some() {
+        return Err(format!("{suite} {index} is stopped short"));
     }
     let judged = run_take(root, ear, None, spec, format!("{suite}-{index}"))?;
     let path = root.join(&spec.gabc);
@@ -1114,28 +1502,21 @@ pub fn take(root: &Path, ear: &Ear, suite: &str, index: usize, rate: f32) -> Res
     ))
 }
 
-/// Every take's audio and its rate, named as the eval names it: each suite's synthetic takes,
-/// then the real takes in `takes`.
+/// Every take's audio and its rate, named as the eval names it: each suite's synthetic takes
+/// (a take stopped short as far as it was heard), then the real takes in `takes`, whole.
 pub fn audio(root: &Path, takes: Option<&Path>) -> Result<Vec<(String, Vec<f32>, f32)>, String> {
     let mut out = Vec::new();
     for suite in load_suites(&root.join("evals/suites"))? {
         for (i, spec) in suite.takes.iter().enumerate() {
-            let path = root.join(&spec.gabc);
-            let gabc = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let mut notes = notes_from_gabc(&gabc, spec.pulse_s);
-            for n in &mut notes {
-                n.start_s += spec.lead_in_s;
-            }
-            let take = render_take(&notes, &spec.profile, SAMPLE_RATE, spec.seed);
+            let (_, _, mut take, heard) = render_spec(root, spec)?;
+            take.samples.truncate(heard.unwrap_or(take.samples.len()));
             out.push((format!("{}-{i}", suite.name), take.samples, SAMPLE_RATE));
         }
     }
     if let Some(dir) = takes {
         for path in json_files(dir)? {
-            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-            let (samples, rate) = crate::wav::read_mono(&path.parent().unwrap_or(dir).join(&take.audio))?;
-            out.push((format!("{REAL} {}", take.name), samples, rate));
+            let take = Recorded::read(&path)?;
+            out.push((format!("{REAL} {}", take.name), take.samples, take.rate));
         }
     }
     Ok(out)
@@ -1146,54 +1527,116 @@ pub fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R>
     in_parallel(items, |_, item| f(item))
 }
 
-fn load_real_takes(ear: &Ear, oracle: Option<&Oracle>, dir: &Path) -> Result<Vec<Judged>, String> {
-    json_files(dir)?.iter().map(|path| real_take(ear, oracle, path)).collect()
-}
-
 /// The ribbon of the real take described by the file at `path`, as `ear` hears it: an aligned
 /// recording's trace, which the page draws under the singer's.
 pub fn recording(ear: &Ear, path: &Path) -> Result<Vec<cantor_core::Band>, String> {
-    let take = real_take(ear, None, path)?;
+    let take = judge_real(ear, None, &Recorded::read(path)?, None)?;
     Ok(cantor_core::ribbon(&take.notes, &take.frames, &take.report, &take.verdict))
 }
 
-/// The real take described by the file at `path` (see [`RealTake`]), judged.
-fn real_take(ear: &Ear, oracle: Option<&Oracle>, path: &Path) -> Result<Judged, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let base = path.parent().unwrap_or(Path::new("."));
-    let gabc_path = base.join(&take.gabc);
-    let gabc = std::fs::read_to_string(&gabc_path).map_err(|e| format!("{}: {e}", gabc_path.display()))?;
-    let mut notes = notes_from_gabc(&gabc, 1.0);
-    if notes.len() != take.notes.len() {
-        return Err(format!("{}: {} note times for {} notes", take.name, take.notes.len(), notes.len()));
-    }
-    for (i, (n, [start, end])) in notes.iter_mut().zip(&take.notes).enumerate() {
-        if end <= start {
-            return Err(format!("{}: note {i} ends at {end} before it starts at {start}", take.name));
+/// A real take read (see [`RealTake`]): its name, the chant's notes at the times they were
+/// sung, and its audio.
+struct Recorded {
+    name: String,
+    notes: Vec<Note>,
+    samples: Vec<f32>,
+    rate: f32,
+}
+
+impl Recorded {
+    /// The real take described by the file at `path`.
+    fn read(path: &Path) -> Result<Recorded, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let take: RealTake = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let base = path.parent().unwrap_or(Path::new("."));
+        let gabc_path = base.join(&take.gabc);
+        let gabc = std::fs::read_to_string(&gabc_path).map_err(|e| format!("{}: {e}", gabc_path.display()))?;
+        let mut notes = notes_from_gabc(&gabc, 1.0);
+        if notes.len() != take.notes.len() {
+            return Err(format!("{}: {} note times for {} notes", take.name, take.notes.len(), notes.len()));
         }
-        n.start_s = *start;
-        n.dur_s = end - start;
+        for (i, (n, [start, end])) in notes.iter_mut().zip(&take.notes).enumerate() {
+            if end <= start {
+                return Err(format!("{}: note {i} ends at {end} before it starts at {start}", take.name));
+            }
+            n.start_s = *start;
+            n.dur_s = end - start;
+        }
+        // The page listens before the first note is due, so a take is timed as it would be.
+        if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
+            return Err(format!(
+                "{}: the first note starts at {} s, before the {PAGE_LEAD_S} s the page listens first",
+                take.name, first.start_s
+            ));
+        }
+        let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
+        Ok(Recorded {
+            name: take.name,
+            notes,
+            samples,
+            rate,
+        })
     }
-    // The page listens before the first note is due, so a take is timed as it would be.
-    if let Some(first) = notes.first().filter(|n| n.start_s < PAGE_LEAD_S) {
-        return Err(format!(
-            "{}: the first note starts at {} s, before the {PAGE_LEAD_S} s the page listens first",
-            take.name, first.start_s
-        ));
-    }
-    let (samples, rate) = crate::wav::read_mono(&base.join(&take.audio))?;
-    let frames = ear.listen(&samples, rate, None)?;
-    let report = score(&notes, &frames);
+}
+
+/// Where each real take is stopped short in `real-takes-stopped`: halfway through the middle
+/// note of its first, second, middle and last phrases (each once), as the notes' indices. The
+/// first leaves no phrase finished, the second only one, the last all but one.
+fn stop_notes(notes: &[Note]) -> Vec<usize> {
+    let Some(last) = notes.last() else { return Vec::new() };
+    let phrases = last.phrase as usize + 1;
+    let mut chosen = vec![0, 1, phrases / 2, phrases - 1];
+    chosen.retain(|&p| p < phrases);
+    chosen.sort_unstable();
+    chosen.dedup();
+    chosen
+        .into_iter()
+        .filter_map(|p| {
+            let first = notes.iter().position(|n| n.phrase as usize == p)?;
+            let last = notes.iter().rposition(|n| n.phrase as usize == p)?;
+            Some((first + last).div_ceil(2))
+        })
+        .collect()
+}
+
+/// A real take judged: whole, or with `stop`, stopped halfway through the note given, as
+/// the page judges it there, beside the verdict on it whole.
+fn judge_real(ear: &Ear, oracle: Option<&Oracle>, take: &Recorded, stop: Option<(usize, &Verdict)>) -> Result<Judged, String> {
+    let len = match stop {
+        None => take.samples.len(),
+        Some((k, _)) => {
+            let n = &take.notes[k];
+            (((n.start_s + n.dur_s / 2.0) * take.rate).round() as usize).min(take.samples.len())
+        }
+    };
+    let samples = &take.samples[..len];
+    let frames = ear.listen(samples, take.rate, None)?;
+    let (name, notes, report, verdict, stop) = match stop {
+        None => {
+            let report = score(&take.notes, &frames);
+            let verdict = judge(&take.notes, &report);
+            (format!("{REAL} {}", take.name), take.notes.clone(), report, verdict, None)
+        }
+        Some((k, whole)) => {
+            let through = through_heard(&take.notes, len as f32 / take.rate);
+            // A take stopped before its first note ended is not judged at all.
+            let sung = if through.is_some() { take.notes.clone() } else { Vec::new() };
+            let shown = cantor_ear::judge_notes(sung, &frames, through);
+            let planted = vec![Planted::default(); take.notes.len()];
+            let stop = Stop::of(&take.notes, &planted, through, &shown, whole.clone());
+            let name = format!("{REAL_STOPPED} {} in note {k}", take.name);
+            (name, shown.notes, shown.report, shown.verdict, Some(stop))
+        }
+    };
     let oracle = match oracle {
-        Some(o) => Some(OracleTake::of(&notes, &o.label(&samples, rate, &notes, &frames)?)),
+        Some(_) if notes.is_empty() => Some(OracleTake::of(&notes, &[])),
+        Some(o) => Some(OracleTake::of(&notes, &o.label(samples, take.rate, &notes, &frames)?)),
         None => None,
     };
-    let verdict = judge(&notes, &report);
-    let timing = Timing::of(&notes, &samples, rate, &frames, &verdict, false);
+    let timing = Timing::of(&take.notes, stop.is_some(), samples, take.rate, &frames, &verdict, false);
     let len = notes.len();
     Ok(Judged {
-        name: format!("{REAL} {}", take.name),
+        name,
         notes,
         planted: vec![Planted::default(); len],
         truth: vec![None; len],
@@ -1204,6 +1647,7 @@ fn real_take(ear: &Ear, oracle: Option<&Oracle>, path: &Path) -> Result<Judged, 
         report,
         oracle,
         timing,
+        stop,
     })
 }
 
@@ -1254,7 +1698,7 @@ fn load_suites(dir: &Path) -> Result<Vec<Suite>, String> {
 
 /// The keys a take may have: its own and the profile's.
 fn known_take_keys() -> Vec<String> {
-    let mut keys: Vec<String> = ["gabc", "pulse_s", "seed", "lead_in_s"].map(String::from).to_vec();
+    let mut keys: Vec<String> = ["gabc", "pulse_s", "seed", "lead_in_s", "through"].map(String::from).to_vec();
     if let Ok(Value::Object(p)) = serde_json::to_value(Profile::default()) {
         keys.extend(p.keys().cloned());
     }
@@ -1386,6 +1830,255 @@ mod tests {
         assert!(suites.iter().any(|s| s.gate == Gate::Student));
         assert!(suites.iter().any(|s| s.gate == Gate::Silent));
         assert!(suites.iter().any(|s| s.gate == Gate::Wrong));
+        // Takes are stopped mid-phrase, at a division and before a phrase finished, good ones and
+        // ones with faults planted before and after the stop.
+        let (mut mid, mut division, mut unfinished, mut faulted) = (0, 0, 0, 0);
+        for suite in &suites {
+            for spec in &suite.takes {
+                let Some(through) = spec.through else { continue };
+                let notes = notes_from_gabc(&std::fs::read_to_string(root.join(&spec.gabc)).expect("gabc"), spec.pulse_s);
+                assert!(through + 1 < notes.len(), "{}: stopped on its last note", suite.name);
+                let end = phrase_end(&notes, through);
+                match end {
+                    0 => unfinished += 1,
+                    e if e == through + 1 => division += 1,
+                    _ => mid += 1,
+                }
+                let planted = spec.profile.planted(&notes);
+                let fault: Vec<usize> = faults(&notes, &planted).collect();
+                faulted += usize::from(fault.iter().any(|&i| i < end) && fault.iter().any(|&i| i > through));
+            }
+        }
+        assert!(
+            mid >= 2 && division >= 2 && unfinished >= 2 && faulted >= 2,
+            "{mid} {division} {unfinished} {faulted}"
+        );
+    }
+
+    /// The psalm the suites sing, timed as `cantor eval` times it.
+    fn psalm() -> Vec<Note> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        notes_from_gabc(
+            &std::fs::read_to_string(root.join("evals/chants/psalm-117.gabc")).expect("gabc"),
+            0.45,
+        )
+    }
+
+    #[test]
+    fn the_page_reads_the_last_note_sung_whole_from_the_takes_length() {
+        let notes = psalm();
+        let mid = |n: &Note| n.start_s + n.dur_s / 2.0;
+        assert_eq!(through_heard(&notes, 0.0), None);
+        assert_eq!(through_heard(&notes, mid(&notes[0])), None, "the first note not yet ended");
+        assert_eq!(through_heard(&notes, notes[0].end_s()), Some(0));
+        assert_eq!(through_heard(&notes, mid(&notes[21])), Some(20));
+        // In the pause after a phrase, and halfway through the next phrase's first note.
+        assert_eq!(through_heard(&notes, notes[13].end_s() + 0.5), Some(13));
+        assert_eq!(through_heard(&notes, mid(&notes[14])), Some(13));
+        assert_eq!(through_heard(&notes, 1e4), Some(notes.len() - 1));
+    }
+
+    #[test]
+    fn the_eval_reads_the_phrases_finished_as_the_ear_judges_them() {
+        // Every stop in every chant the suites sing, and a chant whose first phrase is one note.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut chants: Vec<Vec<Note>> = load_suites(&root.join("evals/suites"))
+            .expect("suites")
+            .iter()
+            .flat_map(|s| &s.takes)
+            .map(|t| notes_from_gabc(&std::fs::read_to_string(root.join(&t.gabc)).expect("gabc"), t.pulse_s))
+            .collect();
+        chants.push(notes_from_gabc("(c4) A(g) (,) men(h)i(g) (:) al(f)le(g)lu(h)ia.(g) (::)", 0.5));
+        for notes in &chants {
+            for through in 0..notes.len() + 2 {
+                assert_eq!(phrase_end(notes, through), cantor_ear::finished(notes, Some(through)), "{through}");
+            }
+        }
+        let psalm = psalm();
+        assert_eq!(phrase_end(&psalm, 5), 0, "in the first phrase");
+        assert_eq!(phrase_end(&psalm, 7), 8, "at its end");
+        assert_eq!(phrase_end(&psalm, 20), 14, "mid-phrase: the phrases before");
+        assert_eq!(phrase_end(&psalm, 82), 83);
+        assert_eq!(phrase_end(&[], 3), 0);
+    }
+
+    #[test]
+    fn a_take_stopped_ends_halfway_through_the_next_note() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let spec = TakeSpec {
+            gabc: "evals/chants/scale.gabc".into(),
+            pulse_s: 0.5,
+            seed: 1,
+            lead_in_s: 1.0,
+            through: Some(20),
+            profile: Profile::default(),
+        };
+        let (_, notes, take, heard) = render_spec(&root, &spec).expect("take");
+        let heard = heard.expect("stopped");
+        let next = &notes[21];
+        assert_eq!(heard, ((next.start_s + next.dur_s / 2.0) * SAMPLE_RATE).round() as usize);
+        assert!(heard < take.samples.len());
+        assert!(
+            take.samples[heard - 100..heard].iter().any(|s| s.abs() > 0.01),
+            "cut while the note sounds"
+        );
+        assert_eq!(through_heard(&notes, heard as f32 / SAMPLE_RATE), Some(20));
+        let past = TakeSpec { through: Some(39), ..spec };
+        assert!(render_spec(&root, &past).is_err(), "stopped on the last note is not stopped short");
+    }
+
+    /// Frames as a tracker hears `notes` sung each `cents[i]` off (0 past the list), every hop
+    /// until `heard_s`, silent between notes.
+    fn heard(notes: &[Note], cents: &[f32], heard_s: f32) -> Vec<Frame> {
+        let hop = cantor_core::pitch::DEFAULT_HOP_S;
+        (0..)
+            .map(|k| k as f32 * hop)
+            .take_while(|&t| t < heard_s)
+            .map(|t| {
+                let sung = notes.iter().position(|n| n.start_s <= t && t < n.end_s());
+                Frame {
+                    t,
+                    midi: sung.map(|i| notes[i].midi + cents.get(i).copied().unwrap_or(0.0) / 100.0),
+                    clarity: if sung.is_some() { 0.95 } else { 0.0 },
+                    rms: if sung.is_some() { 0.1 } else { 0.0 },
+                    masked: false,
+                    quiet: sung.is_none(),
+                    other: None,
+                }
+            })
+            .collect()
+    }
+
+    /// `chant` sung `cents` off by note and stopped after note `through`, halfway through the
+    /// next, judged as `cantor eval` judges it; `whole`, the verdict on it sung whole.
+    fn stopped(chant: &[Note], cents: &[f32], through: usize, whole: Verdict) -> Judged {
+        stopped_as(chant, cents, through, whole, |frames, through| {
+            cantor_ear::judge_notes(chant.to_vec(), frames, through)
+        })
+    }
+
+    /// [`stopped`], judged by `judged` on the frames heard and the note the page reads as the
+    /// last sung whole.
+    fn stopped_as(
+        chant: &[Note],
+        cents: &[f32],
+        through: usize,
+        whole: Verdict,
+        judged: impl FnOnce(&[Frame], Option<usize>) -> cantor_ear::Judged,
+    ) -> Judged {
+        let next = &chant[through + 1];
+        let heard_s = next.start_s + next.dur_s / 2.0;
+        let frames = heard(chant, cents, heard_s);
+        let through = through_heard(chant, heard_s);
+        let shown = judged(&frames, through);
+        let planted: Vec<Planted> = (0..chant.len())
+            .map(|i| Planted {
+                cents: cents.get(i).copied().unwrap_or(0.0),
+                silent: false,
+            })
+            .collect();
+        let stop = Stop::of(chant, &planted, through, &shown, whole);
+        let n = shown.notes.len();
+        let on_time = Retimed {
+            entry: Entry {
+                due: 0.0,
+                sound: None,
+                at: 0.0,
+            },
+            kept: true,
+        };
+        Judged {
+            name: format!("stopped after {through:?}"),
+            planted: planted[..n].to_vec(),
+            truth: vec![None; n],
+            true_key: None,
+            planted_drift: 0.0,
+            frames,
+            notes: shown.notes,
+            verdict: shown.verdict,
+            report: shown.report,
+            oracle: None,
+            timing: Timing { on_time, late: Vec::new() },
+            stop: Some(stop),
+        }
+    }
+
+    /// The verdict on `chant` sung whole, each note `cents` off.
+    fn whole(chant: &[Note], cents: &[f32]) -> Verdict {
+        let end = chant.last().map_or(0.0, Note::end_s) + 0.5;
+        judge(chant, &score(chant, &heard(chant, cents, end)))
+    }
+
+    #[test]
+    fn a_take_stopped_is_judged_to_the_last_phrase_finished_and_no_further() {
+        // The scale, faults planted before the stop (notes 9 and 12), in the phrase it cut short
+        // (17, sung) and after it (33).
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let chant = notes_from_gabc(&std::fs::read_to_string(root.join("evals/chants/scale.gabc")).expect("gabc"), 0.5);
+        let mut cents = vec![0.0; chant.len()];
+        for (i, c) in [(9, 200.0), (12, -200.0), (17, 200.0), (33, 220.0)] {
+            cents[i] = c;
+        }
+        let take = stopped(&chant, &cents, 20, whole(&chant, &cents));
+        let first = stopped(&chant, &cents, 3, whole(&chant, &cents));
+        let m = Metrics::of(&[take, first]);
+        let s = m.stopped.expect("stopped");
+        assert_eq!((s.takes, s.unfinished, s.misjudged, s.told_unfinished), (2, 1, 0, 0));
+        assert_eq!(
+            (s.cut_faults, s.cut_caught),
+            (6, 0),
+            "17 and 33, and 9 and 12 stopped before, never caught"
+        );
+        assert_eq!((s.compared, s.otherwise), (1, 0));
+        assert_eq!((m.faults, m.recall), (2, 1.0), "the faults before the stop are caught");
+        assert_eq!(m.unjudged, 0, "a take with nothing to judge is not a take not heard");
+        assert!(m.worst_take_heard > 0.9);
+        assert!(m.gate_failures(Gate::Student).is_empty(), "{:?}", m.gate_failures(Gate::Student));
+        assert!(m.agreement_failures().is_empty());
+
+        // A judge that ignored the stop, judging the whole take, is caught out.
+        let ignored = stopped_as(&chant, &cents, 20, whole(&chant, &cents), |_, _| {
+            cantor_ear::judge_notes(chant.clone(), &heard(&chant, &cents, 30.0), None)
+        });
+        let s = Metrics::of(&[ignored]).stopped.expect("stopped");
+        assert_eq!((s.misjudged, s.cut_caught), (1, 2));
+
+        // One told anything for a take stopped before a phrase finished is caught out.
+        let mut told = stopped(&chant, &cents, 3, whole(&chant, &cents));
+        told.verdict.key_cents = Some(0.0);
+        let m = Metrics::of(&[told]);
+        assert_eq!(m.stopped.expect("stopped").told_unfinished, 1);
+        assert_eq!(m.gate_failures(Gate::None).len(), 1);
+
+        // And a take stopped judged otherwise than sung whole: a fault there it was not sung
+        // with, or another key.
+        let clean = whole(&chant, &[]);
+        let other = stopped(&chant, &cents, 20, clean);
+        let mut sharp = whole(&chant, &cents);
+        sharp.key_cents = sharp.key_cents.map(|k| k + 80.0);
+        let apart = stopped(&chant, &cents, 20, sharp);
+        let m = Metrics::of(&[other, apart]);
+        let s = m.stopped.expect("stopped");
+        assert_eq!(s.otherwise, 1);
+        assert!((s.key_apart_cents - 80.0).abs() < 1e-3, "{}", s.key_apart_cents);
+        assert_eq!(m.agreement_failures().len(), 2);
+    }
+
+    #[test]
+    fn a_take_stopped_agrees_with_the_take_sung_whole_mark_by_mark() {
+        let chant = psalm();
+        let mut cents = vec![0.0; chant.len()];
+        // A verse sung a tone high, stopped in its second phrase: its mark runs past the notes
+        // judged, and is compared as far as they go.
+        for c in &mut cents[45..=61] {
+            *c = 200.0;
+        }
+        let take = stopped(&chant, &cents, 58, whole(&chant, &cents));
+        assert_eq!(take.stop.as_ref().map(|s| s.finished), Some(56));
+        assert_eq!(take.verdict.marks.len(), 1);
+        assert_eq!((take.verdict.marks[0].first, take.verdict.marks[0].last), (45, 55));
+        let s = Metrics::of(&[take]).stopped.expect("stopped");
+        assert_eq!((s.misjudged, s.otherwise, s.cut_faults, s.cut_caught), (0, 0, 6, 0));
     }
 
     #[test]
