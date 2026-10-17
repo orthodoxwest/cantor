@@ -1,31 +1,34 @@
-// Finding one's way about a take shown: the core's marks in the order sung, stepped through one
-// at a time from the bar, and gathered by the run of phrases each chooses (loop.ts) for the list
-// under the score. The page orders and gathers the marks; it ranks none and adds none.
+// Finding one's way about a take shown: the places the core tells of (its marks, and the phrase
+// endings it heard off pitch) in the order sung, stepped through one at a time from the bar, and
+// gathered by the run of phrases each is in (loop.ts) for the list under the score. The page
+// orders and gathers them; it ranks none and adds none.
 import type { Pause } from "neuma";
 import { phraseOf } from "./loop";
-import type { Mark } from "./marks";
 
 type Pauses = readonly Pick<Pause, "beforeNote" | "kind">[];
+/** A place the core tells of, over the notes `first` to `last`. */
+type Spot = { readonly first: number; readonly last: number };
 
-/** The marks' indexes in the order sung: by first note, then as the core gave them. */
-export function sungOrder(marks: readonly Mark[]): number[] {
+/** The places' indexes in the order sung: by first note, then as given. */
+export function sungOrder(marks: readonly Spot[]): number[] {
   return marks
     .map((m, k) => ({ m, k }))
     .sort((a, b) => a.m.first - b.m.first || a.k - b.k)
     .map(({ k }) => k);
 }
 
-/** The run a mark chooses: from the start of its first note's phrase to the end of its last's. */
-export function runOf(mark: Mark, pauses: Pauses, count: number): [number, number] {
+/** The run of phrases a place is in: from the start of its first note's phrase to the end of its
+ * last's. */
+export function runOf(mark: Spot, pauses: Pauses, count: number): [number, number] {
   const [a] = phraseOf(mark.first, pauses, count);
   const [, b] = phraseOf(mark.last, pauses, count);
   return [a, b];
 }
 
-/** The mark a step `by` goes to in the order sung: the next or last from the one open; else,
+/** The place a step `by` goes to in the order sung: the next or last from the one open; else,
  * from the run chosen, the first at or after its start or the last before it; else the first or
  * the last of all. Null past either end. */
-export function stepTo(marks: readonly Mark[], open: number | null, run: readonly [number, number] | null, by: 1 | -1): number | null {
+export function stepTo(marks: readonly Spot[], open: number | null, run: readonly [number, number] | null, by: 1 | -1): number | null {
   const order = sungOrder(marks);
   const at = open === null ? -1 : order.indexOf(open);
   if (at >= 0) return order[at + by] ?? null;
@@ -35,14 +38,15 @@ export function stepTo(marks: readonly Mark[], open: number | null, run: readonl
   return (after < 0 ? order.at(-1) : order[after - 1]) ?? null;
 }
 
-/** A run of phrases and the marks in it, in the order sung. */
+/** A run of phrases and the places in it, in the order sung. */
 export interface Place {
   run: [number, number];
   marks: number[];
 }
 
-/** The marks gathered by the run each chooses, the runs in the order their first mark is sung. */
-export function byPhrase(marks: readonly Mark[], pauses: Pauses, count: number): Place[] {
+/** The places gathered by the run of phrases each is in, the runs in the order their first place
+ * is sung. */
+export function byPhrase(marks: readonly Spot[], pauses: Pauses, count: number): Place[] {
   const places = new Map<string, Place>();
   for (const k of sungOrder(marks)) {
     const run = runOf(marks[k]!, pauses, count);

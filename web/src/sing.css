@@ -406,11 +406,23 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
 #summary {
   font-size: 1.15rem;
 }
+/* The summary's sentence of endings off pitch, which goes to the first of them. */
+#summary .said {
+  font: inherit;
+  color: var(--rubric);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
 #cut {
   color: var(--muted);
 }
-/* The core's marks in words under the score, a folded row for each phrase they are in, in the
-   order sung (sing.ts listMarks); each opens its ring. */
+/* The core's marks and endings off pitch in words under the score, a folded row for each phrase
+   they are in, in the order sung (sing.ts listSpots); each opens its place. */
 .places {
   border-top: 1px solid var(--gold-line);
   margin-bottom: 1rem;

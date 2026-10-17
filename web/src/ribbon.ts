@@ -36,6 +36,9 @@ export interface Judged {
   told: string[];
   /** The take as a whole in two sentences, or none when it was not heard. */
   summary: string[];
+  /** The phrase endings the second sentence tells of as off pitch, each over notes `first` to
+   * `last` and in words; from the ear only. */
+  endings?: Array<{ first: number; last: number; words: string }>;
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */
