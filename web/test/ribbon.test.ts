@@ -165,6 +165,9 @@ describe("ribbon", () => {
     // A recording with the whole note is drawn across it, as the singer's is.
     const whole = [{ ...recorded[0]!, start_s: 3.5, end_s: 6.5, trace: [[3.5, 0], [6.5, 0]] as Array<[number, number]> }];
     expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, whole), "band-recorded")).toEqual([88, 113]);
+    // One with only one of the whole note's times is drawn as one with neither.
+    const half = [{ ...recorded[0]!, start_s: 3.5 }];
+    expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, half), "band-recorded")).toEqual(xs(svg, "band-trace"));
   });
 
   it("names the key as a transposition", () => {

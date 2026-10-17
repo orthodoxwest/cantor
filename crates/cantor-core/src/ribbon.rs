@@ -14,10 +14,10 @@ use crate::synth::Note;
 
 /// How many frames each point of a band's trace is the median of.
 pub const SMOOTH_FRAMES: usize = 3;
-/// A frame the second tracker hears further than this from the first, in cents (not folded:
-/// an octave apart is a tracker's error), is left out of a trace, so that the error is not
-/// drawn as a slide.
-pub const TRACE_AGREE_CENTS: f32 = 100.0;
+/// A frame the second tracker hears further than this from the first, in cents (not folded), is
+/// left out of a trace, so that the error is not drawn as a slide: more than a tritone apart is
+/// a tracker's octave or harmonic error, not two trackers following a slide differently.
+pub const TRACE_AGREE_CENTS: f32 = 600.0;
 
 /// One note's band.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -35,7 +35,9 @@ pub struct Band {
     /// ([`Verdict::relative`]); `None` when it was not heard.
     pub cents: Option<f32>,
     /// The pitch heard over the whole note, as (seconds, cents) on the same reference, each
-    /// point the median of [`SMOOTH_FRAMES`] voiced frames; empty when not heard.
+    /// point the median of [`SMOOTH_FRAMES`] voiced frames, leaving out those the two trackers
+    /// hear far apart ([`TRACE_AGREE_CENTS`]); empty when not heard, or when they heard every
+    /// frame so.
     pub trace: Vec<(f32, f32)>,
 }
 
@@ -68,15 +70,27 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
             let trace = reference.map_or_else(Vec::new, |reference| {
                 let off = |f: &Frame| f.midi.map(|m| m * 100.0 - reference);
                 let held = |f: &Frame| f.t >= from_s && f.t < to_s;
-                // Each point is measured from the octave the note was held in (the judge folds
-                // its value to the note, so a singer an octave below the score is on it), not
-                // folded itself: where the singer is still on the note before or already on the
-                // next, a fifth or more away, it keeps its side, however far into the note.
-                let mut deviations: Vec<f32> = frames.iter().filter(|f| held(f)).filter_map(off).collect();
-                deviations.sort_by(f32::total_cmp);
-                let octave = deviations.get(deviations.len() / 2).map_or(0.0, |c| (c / 1200.0).round() * 1200.0);
                 let contradicted =
                     |f: &Frame| matches!((f.midi, f.other), (Some(m), Some(o)) if ((o - m) * 100.0).abs() > TRACE_AGREE_CENTS);
+                // Each point is measured from the octave the note was held in (the judge folds
+                // its value to the note, so a singer an octave below the score is on it), over
+                // the frames the trace draws (or all held, when the trackers disagree on every
+                // one), not folded itself: where the singer is still on the note before or
+                // already on the next, a fifth or more away, it keeps its side, while the note
+                // is held over most of its sustained part.
+                let held_deviations = |drawn: bool| -> Vec<f32> {
+                    frames
+                        .iter()
+                        .filter(|f| held(f) && !(drawn && contradicted(f)))
+                        .filter_map(off)
+                        .collect()
+                };
+                let mut deviations = held_deviations(true);
+                if deviations.is_empty() {
+                    deviations = held_deviations(false);
+                }
+                deviations.sort_by(f32::total_cmp);
+                let octave = deviations.get(deviations.len() / 2).map_or(0.0, |c| (c / 1200.0).round() * 1200.0);
                 let voiced: Vec<(f32, f32)> = frames
                     .iter()
                     .filter(|f| f.t >= start_s && f.t < end_s && !contradicted(f))
@@ -248,6 +262,48 @@ mod tests {
         assert!(band.trace.iter().all(|&(_, c)| c.abs() < 100.0), "{band:?}");
         assert!(band.trace.iter().any(|&(t, _)| t < 0.15), "{band:?}");
         assert!(!band.trace.iter().any(|&(t, _)| t < 0.08), "{band:?}");
+    }
+
+    #[test]
+    fn a_band_its_first_tracker_hears_an_octave_out_over_most_of_is_drawn_on_its_note() {
+        // The first tracker an octave down over most of the sustained part, where the second
+        // hears the note throughout.
+        let notes = [Note::new(60.0, 0.0, 1.0)];
+        let mut fr = frames(&notes, &[0.0]);
+        for f in fr.iter_mut() {
+            f.other = Some(60.0);
+            if f.t >= 0.2 && f.t < 0.62 {
+                f.midi = Some(48.0);
+            }
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let band = &ribbon(&notes, &fr, &report, &verdict)[0];
+        assert!(band.cents.unwrap().abs() < 1.0, "{band:?}");
+        assert!(
+            !band.trace.is_empty() && band.trace.iter().all(|&(_, c)| c.abs() < 100.0),
+            "{band:?}"
+        );
+    }
+
+    #[test]
+    fn a_slide_the_trackers_follow_apart_is_drawn() {
+        // A slide up a third into the second note, the second tracker a step and a half behind
+        // the first while it moves.
+        let notes = [Note::new(60.0, 0.0, 1.0), Note::new(64.0, 1.0, 1.0)];
+        let mut fr = frames(&notes, &[0.0, 0.0]);
+        for f in fr.iter_mut() {
+            f.other = f.midi;
+            if f.t >= 1.0 && f.t < 1.1 {
+                let m = 60.0 + 4.0 * (f.t - 1.0) / 0.1;
+                f.midi = Some(m);
+                f.other = Some(m - 1.5);
+            }
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let band = &ribbon(&notes, &fr, &report, &verdict)[1];
+        assert!(band.trace.iter().any(|&(t, c)| t < 1.05 && c < -150.0), "{band:?}");
     }
 
     #[test]
