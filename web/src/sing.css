@@ -189,16 +189,17 @@ main {
 :root {
   scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + var(--why-h, 0px) + 1.5rem);
 }
-/* A long chant in the bar beside a take, a segment a phrase as long as its notes are many, each
-   named by its words and ticked where the core tells of a place (sing.ts drawOverview): the
-   chosen pressed, a tap or a drag going to another. */
+/* A long chant in the bar beside a take, a segment a phrase (or a few) as long as its notes are
+   many, no narrower than sing.ts sets, each named by its words and ticked where the core tells
+   of a place (sing.ts drawOverview): those chosen current, the one a drag passes outlined, a
+   tap or the end of a drag going to another. A swipe up or down on it scrolls the page. */
 .overview {
   max-width: var(--measure);
   margin: 0 auto 0.5rem;
   display: flex;
   gap: 2px;
   height: 1.75rem;
-  touch-action: none;
+  touch-action: pan-y;
 }
 .overview[hidden] {
   display: none;
@@ -220,12 +221,13 @@ main {
   overflow: hidden;
   cursor: pointer;
 }
-.overview button[aria-pressed="true"] {
+.overview button[aria-current="true"] {
   background: var(--pressed);
   border-color: var(--rubric);
   color: var(--text);
 }
-.overview button:focus-visible {
+.overview button:focus-visible,
+.overview button.passing {
   outline: 2px solid var(--rubric);
   outline-offset: 1px;
 }

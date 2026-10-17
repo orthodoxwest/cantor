@@ -404,6 +404,8 @@ function bringIntoView(k: number): void {
 function reveal(els: ReadonlyArray<Element | null>, behavior: "smooth" | "auto"): void {
   const boxes = els.flatMap((el) => (el ? [el.getBoundingClientRect()] : []));
   if (boxes.length === 0) return;
+  // The bar may have grown with what was just drawn in it, before its observer has run.
+  document.documentElement.style.setProperty("--bar-h", `${bar.getBoundingClientRect().height}px`);
   const top = Math.min(...boxes.map((b) => b.top));
   const bottom = Math.max(...boxes.map((b) => b.bottom));
   // The page's scroll padding keeps clear of the bar and the card at the foot.
@@ -1091,8 +1093,11 @@ function drawChosen(): void {
 const overview = byId<HTMLDivElement>("overview");
 /** The fewest phrases a chant has for the overview to be drawn. */
 const OVERVIEW_PHRASES = 3;
-/** The take and the chant the overview's segments were made for. */
-let overviewOf: { judged: Judged; source: string } | null = null;
+/** The narrowest a segment is drawn, in CSS pixels: past as many as fit, each is of several
+ * phrases together. */
+const SEGMENT_PX = 12;
+/** The take, the chant and the runs the overview's segments were made for. */
+let overviewOf: { judged: Judged; source: string; runs: string } | null = null;
 
 /** The chant's phrases, from division to division (loop.ts `phraseOf`). */
 function phrases(): Array<[number, number]> {
@@ -1106,29 +1111,47 @@ function phrases(): Array<[number, number]> {
   return out;
 }
 
-/** The overview, beside a take of a chant of [`OVERVIEW_PHRASES`] phrases or more whose score is
- * taller than the window: a segment a phrase, as wide as its notes are many, named by its words
- * and ticked at the note each place the core tells of is shown at; those in the run chosen pressed, the
- * first of them (else the first) the one tab stop. Made once a take, so that a segment keeps the
+/** The runs of the overview's segments, across `width` pixels with `gap` between them: a
+ * phrase each, or where more phrases than fit, as few of them together as make them fit. */
+function segmentRuns(all: ReadonlyArray<[number, number]>, width: number, gap: number): Array<[number, number]> {
+  const fit = Math.max(1, Math.floor((width + gap) / (SEGMENT_PX + gap)));
+  const per = Math.ceil(all.length / fit);
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < all.length; i += per) out.push([all[i]![0], all[Math.min(i + per, all.length) - 1]![1]]);
+  return out;
+}
+
+/** The overview, beside a heard take of a chant of [`OVERVIEW_PHRASES`] phrases or more whose
+ * score is taller than the window: a segment a phrase (or a few, where they would not all fit),
+ * as wide as its notes are many, named by its words and ticked at the note each place the core
+ * tells of is shown at; those in the run chosen current, the first of them (else the first) the
+ * one tab stop. Made again only for another take, chant or width, so that a segment keeps the
  * keyboard. */
 function drawOverview(): void {
-  const runs = shown && !taking ? phrases() : [];
-  overview.hidden = runs.length < OVERVIEW_PHRASES || score.host.getBoundingClientRect().height <= window.innerHeight;
+  const all = shown && !taking && shown.verdict.key_cents !== null ? phrases() : [];
+  overview.hidden = all.length < OVERVIEW_PHRASES || score.host.getBoundingClientRect().height <= window.innerHeight;
   if (overview.hidden || !shown) {
     overviewOf = null;
     return overview.replaceChildren();
   }
-  if (overviewOf?.judged !== shown || overviewOf.source !== score.source) {
-    overviewOf = { judged: shown, source: score.source };
+  const runs = segmentRuns(all, overview.clientWidth, parseFloat(getComputedStyle(overview).columnGap) || 0);
+  const made = runs.map(([a, b]) => `${a}-${b}`).join(" ");
+  if (overviewOf?.judged !== shown || overviewOf.source !== score.source || overviewOf.runs !== made) {
+    overviewOf = { judged: shown, source: score.source, runs: made };
+    const phraseAt = new Map(all.map(([a], n) => [a, n + 1]));
+    const lastAt = new Map(all.map(([, b], n) => [b, n + 1]));
     overview.replaceChildren(
-      ...runs.map(([a, b], n) => {
+      ...runs.map(([a, b]) => {
         const button = document.createElement("button");
         button.type = "button";
         button.dataset.run = `${a}-${b}`;
         button.style.flexGrow = String(b - a + 1);
+        button.style.minWidth = `${SEGMENT_PX}px`;
         const words = wordsOf(a, b);
+        const [first, last] = [phraseAt.get(a)!, lastAt.get(b)!];
         const ks = sungOrder(spots).filter((k) => spots[k]!.at >= a && spots[k]!.at <= b);
-        button.setAttribute("aria-label", `Phrase ${n + 1}${words ? `, “${words}”` : ""}${ks.length ? `, ${counted(ks)}` : ""}`);
+        const name = first === last ? `Phrase ${first}` : `Phrases ${first} to ${last}`;
+        button.setAttribute("aria-label", `${name}${words ? `, “${words}”` : ""}${ks.length ? `, ${counted(ks)}` : ""}`);
         button.title = words;
         button.append(words);
         for (const k of ks) {
@@ -1140,27 +1163,42 @@ function drawOverview(): void {
       }),
     );
   }
-  const buttons = [...overview.querySelectorAll<HTMLButtonElement>("[data-run]")];
-  const pressed = buttons.map((button) => {
+  const buttons = segments();
+  const current = buttons.map((button) => {
     const [a, b] = runOfSegment(button);
     return loop !== null && loop[0] <= b && loop[1] >= a;
   });
-  const stop = Math.max(pressed.indexOf(true), 0);
+  const stop = Math.max(current.indexOf(true), 0);
   buttons.forEach((button, i) => {
-    button.setAttribute("aria-pressed", String(pressed[i]));
+    if (current[i]) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
     button.tabIndex = i === stop ? 0 : -1;
   });
 }
+// Whether the score is taller than the window changes as either does.
 window.addEventListener("resize", () => drawOverview());
+new ResizeObserver(() => drawOverview()).observe(score.host);
 
-/** The phrase segment `button` of the overview stands for. */
+/** The overview's segments, in order. */
+function segments(): HTMLButtonElement[] {
+  return [...overview.querySelectorAll<HTMLButtonElement>("[data-run]")];
+}
+
+/** The run of phrases segment `button` of the overview stands for. */
 function runOfSegment(button: HTMLElement): [number, number] {
   const [a, b] = button.dataset.run!.split("-").map(Number);
   return [a!, b!];
 }
 
-/** Chooses the phrase of segment `button`, unless it is chosen already, and brings its start
- * into view. */
+/** Brings the start of segment `button`'s run into view. */
+function revealSegment(button: HTMLElement, behavior: "smooth" | "auto"): void {
+  const [a] = runOfSegment(button);
+  const note = score.timeline.notes[a];
+  reveal([note ? (score.ink(note.id)[0] ?? null) : null, score.host.querySelector(`[data-band="${a}"]`)], behavior);
+}
+
+/** Chooses the run of segment `button`, unless it is chosen already, and brings its start into
+ * view. */
 function goTo(button: HTMLElement, behavior: "smooth" | "auto"): void {
   if (taking || !guide) return;
   const [a, b] = runOfSegment(button);
@@ -1168,49 +1206,65 @@ function goTo(button: HTMLElement, behavior: "smooth" | "auto"): void {
     stopPlay();
     setLoop([a, b]);
   }
-  const note = score.timeline.notes[a];
-  reveal([note ? (score.ink(note.id)[0] ?? null) : null, score.host.querySelector(`[data-band="${a}"]`)], behavior);
+  revealSegment(button, behavior);
 }
 overview.addEventListener("click", (e) => {
   const button = (e.target as Element | null)?.closest<HTMLButtonElement>("[data-run]");
   if (button) goTo(button, "smooth");
 });
+// The arrows move along the segments, Home and End to the first and last, one tab stop among them.
 overview.addEventListener("keydown", (e) => {
-  const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-  const buttons = [...overview.querySelectorAll<HTMLButtonElement>("[data-run]")];
+  const buttons = segments();
   const at = buttons.indexOf(e.target as HTMLButtonElement);
-  if (!step || at < 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[e.key];
+  if (to === undefined || at < 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
   e.preventDefault();
-  const to = buttons[at + step];
-  if (!to) return;
+  const button = buttons[to];
+  if (!button) return;
   buttons[at]!.tabIndex = -1;
-  to.tabIndex = 0;
-  to.focus();
+  button.tabIndex = 0;
+  button.focus();
 });
-// A drag along the overview goes from phrase to phrase as it passes them; a tap is a click.
-let dragging: { id: number; x: number; moved: boolean; at: HTMLElement | null } | null = null;
+// A drag along the overview shows each segment it passes and brings it into view, and chooses
+// the one it ends on, so that the score is drawn again once; a tap is a click.
+let dragging: { id: number; x: number; moved: boolean; at: HTMLButtonElement | null } | null = null;
 overview.addEventListener("pointerdown", (e) => {
   if (e.button === 0) dragging = { id: e.pointerId, x: e.clientX, moved: false, at: null };
 });
 overview.addEventListener("pointermove", (e) => {
   if (!dragging || dragging.id !== e.pointerId) return;
+  // A press let go away from the page ended there.
+  if ((e.buttons & 1) === 0) return endDrag(null);
   if (!dragging.moved) {
     if (Math.abs(e.clientX - dragging.x) < 6) return;
     dragging.moved = true;
     overview.setPointerCapture(e.pointerId);
   }
-  const button = [...overview.querySelectorAll<HTMLButtonElement>("[data-run]")].find((b) => {
+  const button = segments().find((b) => {
     const box = b.getBoundingClientRect();
     return e.clientX >= box.left && e.clientX < box.right;
   });
   if (!button || button === dragging.at) return;
+  dragging.at?.classList.remove("passing");
   dragging.at = button;
-  goTo(button, "auto");
+  button.classList.add("passing");
+  revealSegment(button, "auto");
 });
-for (const type of ["pointerup", "pointercancel"] as const)
-  overview.addEventListener(type, (e) => {
-    if (dragging?.id === e.pointerId) dragging = null;
-  });
+/** Ends the drag under way, choosing the segment it ended on if it was let go there (`ended`),
+ * and moving the keyboard there if it was in the overview. */
+function endDrag(ended: PointerEvent | null): void {
+  const drag = dragging;
+  if (!drag || (ended && ended.pointerId !== drag.id)) return;
+  dragging = null;
+  drag.at?.classList.remove("passing");
+  if (!ended || ended.type !== "pointerup" || !drag.moved || !drag.at) return;
+  const keyboard = overview.contains(document.activeElement);
+  goTo(drag.at, "auto");
+  if (keyboard) drag.at.focus({ preventScroll: true });
+}
+// Let go anywhere: off the overview, a press does not go on as a drag.
+window.addEventListener("pointerup", (e) => endDrag(e));
+window.addEventListener("pointercancel", (e) => endDrag(e));
 
 prevButton.addEventListener("click", () => {
   if (prevButton.getAttribute("aria-disabled") !== "true") stepSpot(-1);
