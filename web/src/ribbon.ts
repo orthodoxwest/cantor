@@ -27,10 +27,16 @@ export interface Band {
   trace: Array<[number, number]>;
 }
 
+/** Whether `band` has the whole note's times, as the core's bands do since they were drawn over
+ * it; one sent or seeded before has its sustained part only. */
+function whole(band: Band): band is Band & { start_s: number; end_s: number } {
+  return band.start_s !== undefined && band.end_s !== undefined;
+}
+
 /** The seconds a band's trace is drawn across: the whole note, or for a band without it the
  * sustained part. */
 export function span(band: Band): [number, number] {
-  return band.start_s !== undefined && band.end_s !== undefined ? [band.start_s, band.end_s] : [band.from_s, band.to_s];
+  return whole(band) ? [band.start_s, band.end_s] : [band.from_s, band.to_s];
 }
 
 /** A take judged, as the ear's `Judged` serializes: what the page reads of it. */
@@ -150,7 +156,7 @@ export function drawRibbon(
       if (!(to > from)) return null;
       // A recording's band with only its sustained part, under the singer's with the whole note,
       // is drawn over the part the singer's value was read from, so that the two keep one time.
-      if (b !== band && b.start_s === undefined && band.start_s !== undefined) {
+      if (b !== band && !whole(b) && whole(band)) {
         const own = xOf(band);
         if (!own) return null;
         const [x1, x2] = [own(band.from_s), own(band.to_s)];

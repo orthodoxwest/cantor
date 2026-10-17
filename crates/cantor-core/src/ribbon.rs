@@ -14,6 +14,10 @@ use crate::synth::Note;
 
 /// How many frames each point of a band's trace is the median of.
 pub const SMOOTH_FRAMES: usize = 3;
+/// A frame the second tracker hears further than this from the first, in cents (not folded:
+/// an octave apart is a tracker's error), is left out of a trace, so that the error is not
+/// drawn as a slide.
+pub const TRACE_AGREE_CENTS: f32 = 100.0;
 
 /// One note's band.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -64,17 +68,19 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
             let trace = reference.map_or_else(Vec::new, |reference| {
                 let off = |f: &Frame| f.midi.map(|m| m * 100.0 - reference);
                 let held = |f: &Frame| f.t >= from_s && f.t < to_s;
-                // Over the sustained part each point is folded to the note, as the judge folds
-                // its value; around it, where the singer may still be on the note before or
-                // already on the next, a fifth or more away, each is measured from the octave
-                // the note was held in, so that it keeps its side.
-                let mut octaves: Vec<f32> = frames.iter().filter(|f| held(f)).filter_map(off).collect();
-                octaves.sort_by(f32::total_cmp);
-                let octave = octaves.get(octaves.len() / 2).map_or(0.0, |c| (c / 1200.0).round() * 1200.0);
+                // Each point is measured from the octave the note was held in (the judge folds
+                // its value to the note, so a singer an octave below the score is on it), not
+                // folded itself: where the singer is still on the note before or already on the
+                // next, a fifth or more away, it keeps its side, however far into the note.
+                let mut deviations: Vec<f32> = frames.iter().filter(|f| held(f)).filter_map(off).collect();
+                deviations.sort_by(f32::total_cmp);
+                let octave = deviations.get(deviations.len() / 2).map_or(0.0, |c| (c / 1200.0).round() * 1200.0);
+                let contradicted =
+                    |f: &Frame| matches!((f.midi, f.other), (Some(m), Some(o)) if ((o - m) * 100.0).abs() > TRACE_AGREE_CENTS);
                 let voiced: Vec<(f32, f32)> = frames
                     .iter()
-                    .filter(|f| f.t >= start_s && f.t < end_s)
-                    .filter_map(|f| off(f).map(|c| (f.t, if held(f) { fold(c) } else { c - octave })))
+                    .filter(|f| f.t >= start_s && f.t < end_s && !contradicted(f))
+                    .filter_map(|f| off(f).map(|c| (f.t, c - octave)))
                     .collect();
                 smooth(&voiced)
             });
@@ -192,6 +198,56 @@ mod tests {
             band.trace.iter().filter(|&&(t, _)| t >= band.from_s).all(|&(_, c)| c.abs() < 1.0),
             "{band:?}"
         );
+    }
+
+    #[test]
+    fn a_fifth_reached_late_into_the_sustained_part_keeps_its_side() {
+        // 60 67 60, each note reached 0.3 s late (past its head) and left 0.15 s early (before
+        // its tail), on the neighbouring note throughout.
+        let midis = [60.0f32, 67.0, 60.0];
+        let notes: Vec<Note> = midis.iter().enumerate().map(|(i, &m)| Note::new(m, i as f32, 1.0)).collect();
+        let mut fr = frames(&notes, &[0.0, 0.0, 0.0]);
+        for f in fr.iter_mut() {
+            let i = (f.t.floor() as usize).min(2);
+            let into = f.t - i as f32;
+            if i > 0 && into < 0.3 {
+                f.midi = Some(midis[i - 1]);
+            } else if i < 2 && into > 0.85 {
+                f.midi = Some(midis[i + 1]);
+            }
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let bands = ribbon(&notes, &fr, &report, &verdict);
+        let within = |b: &Band, lo: f32, hi: f32| {
+            let points: Vec<f32> = b.trace.iter().filter(|&&(t, _)| t >= lo && t < hi).map(|&(_, c)| c).collect();
+            assert!(!points.is_empty(), "{b:?}");
+            points
+        };
+        assert!(within(&bands[1], 1.0, 1.28).iter().all(|&c| c < -600.0), "{:?}", bands[1]);
+        assert!(within(&bands[1], 1.87, 2.0).iter().all(|&c| c < -600.0), "{:?}", bands[1]);
+        assert!(within(&bands[2], 2.0, 2.28).iter().all(|&c| c > 600.0), "{:?}", bands[2]);
+        assert!(within(&bands[0], 0.87, 1.0).iter().all(|&c| c > 600.0), "{:?}", bands[0]);
+    }
+
+    #[test]
+    fn a_frame_the_second_tracker_hears_elsewhere_is_left_out_of_the_trace() {
+        // The first tracker an octave up at the onset, where the second hears the note; agreeing
+        // after.
+        let notes = [Note::new(60.0, 0.0, 1.0)];
+        let mut fr = frames(&notes, &[0.0]);
+        for f in fr.iter_mut() {
+            f.other = Some(60.0);
+            if f.t < 0.08 {
+                f.midi = Some(72.0);
+            }
+        }
+        let report = score(&notes, &fr);
+        let verdict = judge(&notes, &report);
+        let band = &ribbon(&notes, &fr, &report, &verdict)[0];
+        assert!(band.trace.iter().all(|&(_, c)| c.abs() < 100.0), "{band:?}");
+        assert!(band.trace.iter().any(|&(t, _)| t < 0.15), "{band:?}");
+        assert!(!band.trace.iter().any(|&(t, _)| t < 0.08), "{band:?}");
     }
 
     #[test]
