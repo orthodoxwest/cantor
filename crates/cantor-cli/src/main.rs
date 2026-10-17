@@ -230,12 +230,13 @@ fn notes_cmd(args: &[String]) -> Result<(), String> {
 }
 
 /// A chant's notes as a table: a `# language:` line, a header, then per note its start and
-/// length in seconds, MIDI pitch, phrase, word and syllable indices, syllable text, vowel and
-/// glide, tab-separated. Whitespace inside a syllable's text becomes one space.
+/// length in seconds, MIDI pitch, phrase, word and syllable indices, syllable text (trimmed, each
+/// run of whitespace one space), vowel and glide, tab-separated.
 fn notes_tsv(gabc: &str, pulse_s: f32, transpose: f32) -> String {
-    let part = part_from_gabc(gabc, pulse_s);
     let lyrics = cantor_core::timeline::lyrics_from_gabc(gabc, pulse_s);
-    let language = match cantor_core::Language::of_gabc(gabc) {
+    let language = cantor_core::Language::of_gabc(gabc);
+    let part = cantor_core::diction::part(language, &lyrics);
+    let language = match language {
         cantor_core::Language::Latin => "Latin",
         cantor_core::Language::English => "English",
     };
