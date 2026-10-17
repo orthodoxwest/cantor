@@ -37,8 +37,8 @@ export interface Judged {
   /** The take as a whole in two sentences, or none when it was not heard. */
   summary: string[];
   /** The phrase endings the second sentence tells of as off pitch, each over notes `first` to
-   * `last`, with its note furthest off, the mark over that note that tells of it already if one
-   * is, and in words; from the ear only. */
+   * `last`, with its note furthest off, the mark on its notes that tells of it already if one
+   * does, and in words; from the ear only. */
   endings?: Array<{ first: number; last: number; note: number; mark: number | null; words: string }>;
 }
 

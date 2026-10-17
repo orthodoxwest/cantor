@@ -175,9 +175,9 @@ let shownWorn = false;
 let shownPitch = 0;
 
 /** A place in the take shown that the core tells of: one of its marks, or a phrase ending it
- * heard off pitch (of those the summary's second sentence counts) that no mark over the note it
- * tells of tells of already, over notes `first` to `last`, with the core's words for it and the note they are of
- * (a mark's first, an ending's furthest off). */
+ * heard off pitch (of those the summary's second sentence counts) that none of its marks tells
+ * of already, over notes `first` to `last`, with the core's words for it and the note they are
+ * of (a mark's first, an ending's furthest off). */
 interface Spot {
   first: number;
   last: number;

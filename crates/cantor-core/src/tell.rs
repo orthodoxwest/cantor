@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::judge::{IN_TUNE_CENTS, Mark, MarkKind, Outcome, Verdict, recited};
+use crate::judge::{CADENCE_CENTS, Mark, MarkKind, Outcome, Verdict, recited};
 use crate::score::fold;
 use crate::synth::Note;
 
@@ -40,15 +40,16 @@ pub struct Ending {
     pub last: usize,
     /// Its note furthest off, by index: the one its words tell of.
     pub note: usize,
-    /// The mark over that note that tells of the same fault, by index, when one is: off by
-    /// within [`IN_TUNE_CENTS`] of what the ending is, so told already. Not a verse's mark of a
-    /// level further from the note's, nor one of a verse not heard.
+    /// The mark that tells of the same fault, by index, when one does: one over the ending's
+    /// notes, that note's own if it is, at a level the ending is not off pitch from (within
+    /// [`CADENCE_CENTS`] of it), so told already. Not a verse's mark of a level further off, nor
+    /// one of a verse not heard.
     pub mark: Option<usize>,
     pub words: String,
 }
 
 /// The phrase endings [`summary`] tells of as off pitch, in order, each with the note it tells
-/// of, and the mark over that note telling of the same fault if there is one, in words: the
+/// of, and the mark telling of the same fault if there is one, in words: the
 /// places its second sentence is about. None for a take not heard.
 pub fn endings(verdict: &Verdict) -> Vec<Ending> {
     if verdict.outcome != Outcome::Heard {
@@ -64,10 +65,15 @@ pub fn endings(verdict: &Verdict) -> Vec<Ending> {
                 first: c.first,
                 last: c.last,
                 note,
-                mark: verdict
-                    .marks
-                    .iter()
-                    .position(|m| m.covers(note) && m.cents.is_some_and(|c| fold(cents - c).abs() < IN_TUNE_CENTS)),
+                mark: {
+                    let level = |m: &Mark| m.cents.is_some_and(|at| fold(cents - at).abs() < CADENCE_CENTS);
+                    let over = |m: &Mark| m.first <= c.last && c.first <= m.last;
+                    let marks = &verdict.marks;
+                    marks
+                        .iter()
+                        .position(|m| m.covers(note) && level(m))
+                        .or_else(|| marks.iter().position(|m| over(m) && level(m)))
+                },
                 words: format!(
                     "This phrase ended off pitch: a note of its ending was sung {} where your key puts it ({cents:+.0} cents).",
                     interval(cents)
@@ -430,9 +436,9 @@ mod tests {
         };
         let off = endings(&verdict);
         assert_eq!(off.iter().map(|e| (e.note, e.mark)).collect::<Vec<_>>(), [(1, None), (3, Some(0))]);
-        // A verse's mark tells of the ending only when it is off by within the in-tune margin of
-        // the ending's own level, whether or not their words fall in the same step; one of a
-        // verse not heard never does.
+        // A verse's mark tells of the ending only when the ending is not off pitch from the
+        // verse's own level, whether or not their words fall in the same step; one of a verse not
+        // heard never does.
         let over = |kind, cents| Verdict {
             marks: vec![Mark {
                 kind,
@@ -446,17 +452,64 @@ mod tests {
         assert_eq!(marked(&over(MarkKind::Verse, Some(390.0))), Some(0));
         assert_eq!(marked(&over(MarkKind::Verse, Some(200.0))), None);
         assert_eq!(marked(&over(MarkKind::VerseMissing, None)), None);
+        // A mark on another note of the ending tells of it, at its level.
+        let beside = |cents: f32| Verdict {
+            marks: vec![Mark {
+                kind: MarkKind::Note,
+                first: 2,
+                last: 2,
+                cents: Some(cents),
+            }],
+            ..verdict.clone()
+        };
+        assert_eq!(marked(&beside(380.0)), Some(0));
+        assert_eq!(marked(&beside(-380.0)), None);
         let at = |verse: f32, ending: f32| {
             let mut v = over(MarkKind::Verse, Some(verse));
             v.cadences[1].cents = Some(ending);
             marked(&v)
         };
-        // "a whole tone" and "about a whole tone", told once.
+        // "a whole tone" and "about a whole tone", or a whole tone and about a minor third, told
+        // once.
         assert_eq!(at(176.0, 174.0), Some(0));
-        assert_eq!(at(200.0, 249.0), Some(0));
+        assert_eq!(at(200.0, 251.0), Some(0));
         assert_eq!(at(-224.0, -226.0), Some(0));
-        // Both "about a whole tone", but nearly a semitone apart: told twice.
-        assert_eq!(at(152.0, 248.0), None);
-        assert_eq!(at(200.0, 251.0), None);
+        assert_eq!(at(152.0, 248.0), Some(0));
+        assert_eq!(at(176.0, 275.0), Some(0));
+        // Across the tritone, where a level folds to its other side.
+        assert_eq!(at(-550.0, -600.0), Some(0));
+        assert_eq!(at(560.0, -560.0), Some(0));
+        // A semitone or more from the verse: off pitch from where the verse was sung, told apart.
+        assert_eq!(at(200.0, 300.0), None);
+    }
+    #[test]
+    fn an_ending_at_the_level_of_a_mark_on_another_of_its_notes_is_told_by_it() {
+        // At a brisk pulse the ending's last note, a pulse long, counts toward the ending but is
+        // too short to be marked; the one before it, held longer, is.
+        let gabc = "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then(j.) *(:) praise(j) him(j) all(j) ye(j) na(h)tions.(g.) (::)";
+        let notes = crate::notes_from_gabc(gabc, 0.38);
+        let heard = |index: usize, cents: f32| crate::score::NoteResult {
+            index,
+            expected_midi: notes[index].midi,
+            voiced_frames: 12,
+            masked_frames: 0,
+            quiet_frames: 0,
+            frames: 12,
+            spread_cents: Some(10.0),
+            cents: Some(cents),
+        };
+        let report = |a: f32, b: f32| crate::score::Report {
+            notes: (0..notes.len())
+                .map(|i| heard(i, [(12, a), (13, b)].iter().find(|(n, _)| *n == i).map_or(0.0, |p| p.1)))
+                .collect(),
+            heard_fraction: 1.0,
+            gross_error_rate: 0.0,
+            mean_abs_cents: 0.0,
+        };
+        for (a, b, want) in [(320.0, 300.0, Some(0)), (300.0, 320.0, Some(0)), (-320.0, 200.0, None)] {
+            let verdict = crate::judge::judge(&notes, &report(a, b));
+            let told = endings(&verdict);
+            assert_eq!((verdict.marks.len(), told.len(), told[0].mark), (1, 1, want), "{a} {b}");
+        }
     }
 }
