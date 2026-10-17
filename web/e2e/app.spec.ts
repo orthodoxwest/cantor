@@ -270,10 +270,18 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   await expect(chosen).toBeHidden();
   await page.getByRole("button", { name: "Choose the phrase of note 5", exact: true }).click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
-  // Whole chant in the bar lets it go.
+  // The bands chosen are pressed, the first of them the one tab stop; the arrows move along.
+  const pressed = () => page.locator("[data-band]").evaluateAll((els) => els.map((el) => [el.getAttribute("aria-pressed"), el.getAttribute("tabindex")]));
+  expect(await pressed()).toEqual([["false", "-1"], ["false", "-1"], ["true", "0"], ["true", "-1"], ["true", "-1"], ["true", "-1"]]);
+  await page.getByRole("button", { name: "Choose the phrase of note 3", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("button", { name: "Choose the phrase of note 4", exact: true })).toBeFocused();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  // Whole chant in the bar lets it go, and leaves the keyboard on Your take.
   await chosen.getByRole("button", { name: "Whole chant" }).click();
   expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
   await expect(chosen).toBeHidden();
+  await expect(page.locator("#hear")).toBeFocused();
   // A mark opened, on the score or in the list, chooses the phrase it is in (the A4 heard is
   // marked on note 3); closed, it leaves the phrase chosen.
   const ring = page.getByRole("button", { name: "Why note 3 is marked" });
@@ -285,6 +293,54 @@ test("beside a take, a note, a band or a mark tapped chooses its phrase, named i
   await page.locator("#marked button").first().click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
   await expect(chosen).toBeVisible();
+  // The mark's words stay in view above the bar, however tall the chosen line makes it.
+  const why = await page.locator("#why").boundingBox();
+  const bar = await page.locator(".bar").boundingBox();
+  expect(why!.y + why!.height).toBeLessThanOrEqual(bar!.y + 1);
+  // Another take shown lets the run go: Your take plays it whole until a phrase is chosen.
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  await expect(chosen).toBeHidden();
+});
+
+test("a phrase after where a take was stopped is sung by the guide, and your take says it has none", async ({ page }) => {
+  await open(page);
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.waitForTimeout(3000);
+  await page.evaluate(() => void window.__cantor.listen());
+  // Stopped at note 4: judged through the first phrase.
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2, 3), [gabc] as const);
+  await expect(page.locator("[data-band]")).toHaveCount(2);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await expect(page.locator("#chosen-text")).toHaveText(/: Play sings the guide here; your take stopped before it\.$/);
+  await page.getByRole("button", { name: "Your take" }).click();
+  await expect(page.locator("#status")).toHaveText("You stopped the take before this phrase, so there is none of it to hear.");
+  expect(await page.evaluate(() => window.__cantor.replayed.playing)).toBe(false);
+});
+
+test("on a phone, beside a take, the bar keeps Drone and gives Your take Start note's room", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await open(page);
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(page.getByRole("button", { name: "Your take" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Drone" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start note" })).toBeHidden();
+  // Play leaves the take shown, and the bar as it is.
+  await page.getByRole("button", { name: "Play" }).click();
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(page.getByRole("button", { name: "Drone" })).toBeVisible();
+  // The bar is one row.
+  const tops = await page.locator(".bar-in > :visible").evaluateAll((els) => new Set(els.map((el) => Math.round(el.getBoundingClientRect().top))).size);
+  expect(tops).toBe(1);
 });
 
 test("your take plays back against the score with the cursor, and stops for Play", async ({ page }) => {

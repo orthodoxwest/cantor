@@ -105,7 +105,8 @@
 body:not(.taking) #score svg :is([data-note], [data-syllable]) {
   cursor: pointer;
 }
-/* Beside a take, the run chosen is named in the bar instead (#chosen). */
+/* The loop's line is not shown in a take, nor beside one, where the bar names the run chosen
+   (#chosen). */
 body.taking #loop {
   display: none;
 }
@@ -160,8 +161,13 @@ main:has(#result:not([hidden])) #loop {
   font-size: 0.95rem;
   line-height: 1.3;
 }
-body:has(#chosen:not([hidden])) main {
-  padding-bottom: calc(12rem + env(safe-area-inset-bottom, 0px));
+/* The foot of the page, and what is scrolled to, clear the bar however tall it is (--bar-h,
+   measured in sing.ts). */
+main {
+  padding-bottom: calc(var(--bar-h, calc(4.1rem + env(safe-area-inset-bottom, 0px))) + 5rem);
+}
+:root {
+  scroll-padding-bottom: calc(var(--bar-h, 4.1rem) + 6rem);
 }
 .chosen span {
   flex: 1;
@@ -254,7 +260,7 @@ body:has(#chosen:not([hidden])) main {
 /* The tapped mark's words stay in view, just above the bar. */
 .why {
   position: sticky;
-  bottom: calc(4.1rem + env(safe-area-inset-bottom, 0px));
+  bottom: var(--bar-h, calc(4.1rem + env(safe-area-inset-bottom, 0px)));
   margin: 0;
   padding: 0.5rem 0;
   background: var(--bg);
@@ -277,13 +283,12 @@ body:has(#chosen:not([hidden])) main {
   }
 }
 /* Outside a take the readout has nothing to say, and in one Start note and Drone are off;
-   beside a take shown, Your take has their room, unless the drone sounds. So on a narrow screen
-   the bar keeps to one row. */
+   beside a take shown, Your take has Start note's room (a take gives its opening notes anyway).
+   So on a narrow screen the bar keeps to one row, or wraps to a second on the narrowest. */
 @media (max-width: 699.98px) {
   body:not(.taking) #readout,
   body:not(.taking) .bar .spacer,
   body:has(#hear:not([hidden])) #note,
-  body:has(#hear:not([hidden])) #drone:not([aria-pressed="true"]),
   body.taking #note,
   body.taking #drone {
     display: none;

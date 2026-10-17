@@ -256,7 +256,7 @@ function drawResult(): void {
     (timeline, room) =>
       // The marks first, so that the keyboard reaches them before the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, null, (i) => `Choose the phrase of note ${i + 1}`, underlay),
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, (i) => `Choose the phrase of note ${i + 1}`, underlay),
   );
   say(open === null ? "" : (judged.told[open] ?? ""));
   keyText.textContent = `Your key: ${describeKey(key)}.`;
@@ -343,6 +343,9 @@ sendButton.addEventListener("click", () => {
  * in headphones if `worn`, or clears it. */
 function showResult(judged: Judged | null, cut: number | null = null, worn = false): void {
   if (!judged) offerReplay(null);
+  // A run chosen before the take, or beside another, is let go: Your take plays the take whole
+  // until a phrase of it is chosen.
+  if (judged && loop) setLoop(null);
   shown = judged;
   cutAt = judged ? cut : null;
   shownWorn = worn;
@@ -397,13 +400,20 @@ score.host.addEventListener("click", (e) => {
   if (!tap(e.target, false)) tapScore(e);
 });
 score.host.addEventListener("keydown", (e) => {
-  if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) e.preventDefault();
+  if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) return e.preventDefault();
+  // The arrows move along the bands, one tab stop among them.
+  const band = (e.target as Element | null)?.closest<SVGGElement>("[data-band]");
+  const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+  if (!band || !step || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  e.preventDefault();
+  const to = Number(band.dataset.band) + step;
+  score.host.querySelector<SVGGElement>(`[data-band="${to}"]`)?.focus();
 });
 
 /** Chooses the phrase or phrases mark `k` is in, so that Play and Your take play them. */
 function chooseMark(k: number): void {
   const mark = shown?.verdict.marks[k];
-  if (!mark || taking) return;
+  if (!mark || taking || !guide) return;
   const { pauses, notes } = score.timeline;
   const [a] = phraseOf(mark.first, pauses, notes.length);
   const [, b] = phraseOf(mark.last, pauses, notes.length);
@@ -626,6 +636,10 @@ const chosenLine = byId<HTMLParagraphElement>("chosen");
 const chosenText = byId<HTMLSpanElement>("chosen-text");
 const unchooseButton = byId<HTMLButtonElement>("unchoose");
 const loopStyle = document.head.appendChild(document.createElement("style"));
+// The bar's height, which the chosen line or a second row of buttons changes, for what must
+// stay clear of it (the words of a mark, the foot of the score).
+const bar = document.querySelector<HTMLElement>(".bar")!;
+new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${bar.offsetHeight}px`)).observe(bar);
 let loop: [number, number] | null = null;
 /** Counts plays, so a loop stopped while it waits between times round does not go on. */
 let plays = 0;
@@ -651,25 +665,37 @@ function setLoop(next: [number, number] | null): void {
   loopText.textContent = next
     ? `Play goes over notes ${a + 1} to ${b + 1} until you stop it.`
     : "Tap a phrase or a bar on the score to play it over and over.";
-  drawChosen();
+  // Beside a take, its bands say which are chosen.
+  if (shown) drawResult();
+  else drawChosen();
 }
 
 /** Names the run chosen in the bar, beside a take shown. */
 function drawChosen(): void {
   chosenLine.hidden = !loop || !shown || taking;
-  if (!loop) return;
+  if (!loop || !shown) return;
   const [a, b] = loop;
   const sung = [syllableOf(a), a === b ? "" : syllableOf(b)].filter(Boolean);
   const words = sung.length ? ` (“${sung.join(" … ")}”)` : "";
-  chosenText.textContent = `${a === b ? `Note ${a + 1}` : `Notes ${a + 1} to ${b + 1}`}${words}: Play sings the guide here, Your take plays you.`;
+  // A take stopped short is judged, and heard, only so far (`judged`).
+  const after = a >= shown.ribbon.length ? "Play sings the guide here; your take stopped before it." : "Play sings the guide here, Your take plays you.";
+  const text = `${a === b ? `Note ${a + 1}` : `Notes ${a + 1} to ${b + 1}`}${words}: ${after}`;
+  // Announced only when it changes.
+  if (chosenText.textContent !== text) chosenText.textContent = text;
 }
 
-for (const button of [unloopButton, unchooseButton])
-  button.addEventListener("click", () => {
-    if (taking) return;
-    stopPlay();
-    setLoop(null);
-  });
+unloopButton.addEventListener("click", () => {
+  if (taking) return;
+  stopPlay();
+  setLoop(null);
+});
+unchooseButton.addEventListener("click", () => {
+  if (taking) return;
+  stopPlay();
+  // The line goes; the keyboard stays in the bar.
+  (hearButton.hidden ? playButton : hearButton).focus();
+  setLoop(null);
+});
 
 /** The note a tap on the score means: a note's ink, a syllable's first note, or the last note
  * before a bar tapped; -1 for none. */
@@ -736,8 +762,9 @@ async function play(): Promise<void> {
 // Start note and Drone while a take is shown.
 const hearButton = byId<HTMLButtonElement>("hear");
 const replay = new Replay(score, cursor, () => hearButton.setAttribute("aria-pressed", "false"));
-/** The take shown, as it may be heard again: its pulse and where its pulse 0 fell. */
-let replayable: { pulse: number; offset: number } | null = null;
+/** The take shown, as it may be heard again: its pulse, where its pulse 0 fell, and how many
+ * notes of it were judged (a take stopped short, fewer than the chant's). */
+let replayable: { pulse: number; offset: number; judged: number } | null = null;
 /** Counts presses of Your take and stops, so one stopped while its audio is fetched does not go on. */
 let hears = 0;
 
@@ -747,15 +774,18 @@ function stopHear(): void {
   hearButton.setAttribute("aria-pressed", "false");
 }
 
-function offerReplay(take: { pulse: number; offset: number } | null): void {
+function offerReplay(take: { pulse: number; offset: number; judged: Judged } | null): void {
   stopHear();
-  replayable = take && { pulse: take.pulse, offset: take.offset };
+  replayable = take && { pulse: take.pulse, offset: take.offset, judged: take.judged.ribbon.length };
   hearButton.hidden = !replayable;
 }
 
 async function hear(): Promise<void> {
   const take = replayable;
   if (!take) return;
+  // The run chosen, as far as the take was judged; none of it, if it stopped before.
+  const range = loop && ([loop[0], Math.min(loop[1], take.judged - 1)] as const);
+  if (range && range[0] > range[1]) return setStatus("You stopped the take before this phrase, so there is none of it to hear.", true);
   stopPlay();
   stopPitch();
   stopDrone();
@@ -765,7 +795,7 @@ async function hear(): Promise<void> {
     const ctx = await audioContext();
     const { wav } = await listener.audio();
     if (press !== hears) return;
-    await replay.play(ctx, wav, take.pulse, take.offset, loop ?? undefined);
+    await replay.play(ctx, wav, take.pulse, take.offset, range ?? undefined);
   } catch (error) {
     if (press !== hears) return;
     stopHear();
@@ -1126,18 +1156,18 @@ if (test) {
     },
     /** The page's times for the notes on it, at `pulse` seconds a pulse. */
     timed: (pulse: number) => timed(score.timeline.notes, pulse),
-    // Shows the last take judged against `gabc` (put on the page if it is not there);
-    // returns the JSON.
-    show: async (gabc: string, pulse: number, offset: number) => {
+    // Shows the last take judged against `gabc` (put on the page if it is not there), through
+    // note `through` as if stopped there; returns the JSON.
+    show: async (gabc: string, pulse: number, offset: number, through: number | null = null) => {
       if (gabc !== score.source) {
         stopPlay();
         setLoop(null);
         offerReplay(null);
         score.setChant(new Chant(gabc));
       }
-      const json = await listener.judge(gabc, pulse, offset);
+      const json = await listener.judge(gabc, pulse, offset, through);
       const judged = JSON.parse(json) as Judged;
-      showResult(judged);
+      showResult(judged, through);
       offerSend({ gabc, pulse, offset, judged });
       return json;
     },
