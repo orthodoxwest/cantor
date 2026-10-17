@@ -608,6 +608,22 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   await expect.poll(() => clear(14)).toBe(true);
   await page.keyboard.press("ArrowLeft");
   await expect(segments.nth(6)).toBeFocused();
+  // The strip narrowed so that its phrases are shared among fewer segments, the keyboard keeps to
+  // the notes it was on and is the tab stop; widened again, it is back on its segment.
+  const keyed = () =>
+    page.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      return el.closest("#overview") ? { run: el.dataset.run, tab: el.tabIndex } : null;
+    });
+  await page.setViewportSize({ width: 240, height: 600 });
+  await expect.poll(async () => (await keyed())?.run).not.toBe("12-13");
+  const narrowed = (await keyed())!;
+  const [from, to] = narrowed.run!.split("-").map(Number);
+  expect(from! <= 12 && 12 <= to!).toBe(true);
+  expect(narrowed.tab).toBe(0);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(segments.nth(6)).toBeFocused();
+  expect(await keyed()).toEqual({ run: "12-13", tab: 0 });
   await page.keyboard.press("Enter");
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([12, 13]);
   await expect.poll(() => clear(12)).toBe(true);
@@ -728,6 +744,17 @@ test.describe("on a touch screen", () => {
       expect(await page.evaluate(() => window.__cantor.loop)).toEqual([3 * (k + 1), 3 * (k + 1) + 2]);
       await page.locator("#unchoose").evaluate((b) => (b as HTMLButtonElement).click());
     }
+    // A longer drag sends no click at all, so nothing is let fall after it: a key pressed then
+    // still does what it does.
+    const [from, far] = [(await segments.nth(4).boundingBox())!, (await segments.nth(9).boundingBox())!];
+    const [x, y, to] = [from.x + from.width / 2, from.y + from.height / 2, far.x + far.width / 2];
+    await touch("touchStart", x, y);
+    for (let step = 1; step <= 8; step++) await touch("touchMove", x + ((to - x) * step) / 8, y);
+    await touch("touchEnd");
+    expect(await page.evaluate(() => window.__cantor.loop)).toEqual([27, 29]);
+    await page.locator("#unchoose").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#chosen")).toBeHidden();
   });
 });
 
@@ -738,15 +765,16 @@ test("on a phone, a chant of more phrases than fit has them gathered, a few to a
   await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
   await page.waitForTimeout(3000);
   await page.evaluate(() => void window.__cantor.listen());
-  // Sixty phrases, stopped after the second: judged through it.
-  const gabc = `(c4) ${Array.from({ length: 60 }, (_, i) => `la${i}(h) la(h) (;)`).join(" ")}`.replace(/\(;\)$/, "(::)");
+  // Sixty-one phrases, stopped after the second: judged through it. (Sixty would share as evenly
+  // among twenty segments however they were grouped.)
+  const gabc = `(c4) ${Array.from({ length: 61 }, (_, i) => `la${i}(h) la(h) (;)`).join(" ")}`.replace(/\(;\)$/, "(::)");
   await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2, 3), [gabc] as const);
   const overview = page.locator("#overview");
   await expect(overview).toBeVisible();
   const runs = await overview.getByRole("button").evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.run!.split("-").map(Number)));
   // Fewer segments than phrases, none narrower than a fingertip's edge, all on the screen, and
   // between them every note, in order.
-  expect(runs.length).toBeLessThan(60);
+  expect(runs.length).toBeLessThan(61);
   // As many as fit, the phrases shared among them as evenly as they go.
   const phrasesOf = runs.map(([a, b]) => (b! - a! + 1) / 2);
   expect(Math.max(...phrasesOf) - Math.min(...phrasesOf)).toBeLessThanOrEqual(1);
@@ -754,9 +782,20 @@ test("on a phone, a chant of more phrases than fit has them gathered, a few to a
   const widths = await overview.getByRole("button").evaluateAll((els) => els.map((el) => el.getBoundingClientRect()));
   expect(widths.every((b) => b.width >= 12 - 0.01 && b.right <= 320)).toBe(true);
   expect(runs[0]![0]).toBe(0);
-  expect(runs.at(-1)![1]).toBe(119);
+  expect(runs.at(-1)![1]).toBe(121);
   for (let i = 1; i < runs.length; i++) expect(runs[i]![0]).toBe(runs[i - 1]![1]! + 1);
-  await expect(overview.getByRole("button").last()).toHaveAccessibleName(/^Phrases \d+ to 60, “/);
+  await expect(overview.getByRole("button").last()).toHaveAccessibleName(/^Phrases \d+ to 61, “/);
+  // Turned on its side and back, the phrases grouped otherwise between, the keyboard comes back to
+  // the segment it was on, not one before it.
+  const keyed = () => page.evaluate(() => (document.activeElement as HTMLElement).dataset.run);
+  const k = Math.floor(runs.length / 2) + 1;
+  await overview.getByRole("button").nth(k).focus();
+  const was = await keyed();
+  await page.setViewportSize({ width: 568, height: 320 });
+  await expect.poll(async () => (await overview.getByRole("button").count()) !== runs.length).toBe(true);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await expect.poll(async () => await overview.getByRole("button").count()).toBe(runs.length);
+  expect(await keyed()).toBe(was);
   // A segment goes to its phrases together.
   await overview.getByRole("button").nth(1).click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual(runs[1]);

@@ -1091,6 +1091,14 @@ function drawChosen(): void {
 
 // A long chant's phrases in the bar beside a take, to go to one at a tap, or along them in a drag.
 const overview = byId<HTMLDivElement>("overview");
+/** The note the keyboard was put on in the strip, the first of the segment it was put on, kept
+ * while the segments it goes to as the strip is made again hold it. */
+let keyboardNote: number | null = null;
+const within = ([a, b]: readonly [number, number], i: number) => a <= i && i <= b;
+overview.addEventListener("focusin", (e) => {
+  const run = e.target instanceof HTMLButtonElement ? runOfSegment(e.target) : null;
+  if (run && (keyboardNote === null || !within(run, keyboardNote))) keyboardNote = run[0];
+});
 /** The fewest phrases a chant has for the overview to be drawn. */
 const OVERVIEW_PHRASES = 3;
 /** The narrowest a segment is drawn, in CSS pixels: past as many as fit, each is of several
@@ -1141,6 +1149,9 @@ function drawOverview(): void {
   }
   const focused = segments().find((b) => b === document.activeElement);
   const focusedRun = focused ? runOfSegment(focused) : null;
+  // The keyboard goes to the segment with the note it was put on, so that a narrower strip and a
+  // wider one again bring it back where it was.
+  const keyboardAt = focusedRun && keyboardNote !== null && within(focusedRun, keyboardNote) ? keyboardNote : focusedRun?.[0];
   const runs = segmentRuns(all, overview.clientWidth, parseFloat(getComputedStyle(overview).columnGap) || 0);
   const made = runs.map(([a, b]) => `${a}-${b}`).join(" ");
   if (overviewOf?.judged !== shown || overviewOf.source !== score.source || overviewOf.runs !== made) {
@@ -1176,7 +1187,7 @@ function drawOverview(): void {
     return a <= d && b >= c;
   };
   const current = buttons.map((button) => loop !== null && over(button, loop));
-  const keyboard = focusedRun ? buttons.findIndex((button) => over(button, focusedRun)) : -1;
+  const keyboard = keyboardAt === undefined ? -1 : buttons.findIndex((button) => within(runOfSegment(button), keyboardAt));
   const stop = keyboard >= 0 ? keyboard : Math.max(current.indexOf(true), 0);
   buttons.forEach((button, i) => {
     if (current[i]) button.setAttribute("aria-current", "true");
@@ -1288,6 +1299,8 @@ window.addEventListener(
   (e) => {
     if (!afterDrag) return;
     afterDrag = false;
+    // Only a click a press sends; one from a key, a script or assistive technology goes through.
+    if (e.detail === 0) return;
     e.preventDefault();
     e.stopPropagation();
   },
