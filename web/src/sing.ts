@@ -175,8 +175,8 @@ let shownWorn = false;
 let shownPitch = 0;
 
 /** A place in the take shown that the core tells of: one of its marks, or a phrase ending it
- * heard off pitch (of those the summary's second sentence counts) with no mark over the note it
- * tells of, over notes `first` to `last`, with the core's words for it and the note they are of
+ * heard off pitch (of those the summary's second sentence counts) that no mark over the note it
+ * tells of tells of already, over notes `first` to `last`, with the core's words for it and the note they are of
  * (a mark's first, an ending's furthest off). */
 interface Spot {
   first: number;
@@ -189,7 +189,7 @@ interface Spot {
  * on the score has, then its endings off pitch that no mark tells of already. */
 let spots: Spot[] = [];
 /** The place the summary's sentence of endings off pitch opens: the first ending's, or the mark
- * over its note. */
+ * that tells of it already. */
 let saidAt: number | null = null;
 /** The place open, by index, or none. */
 let open: number | null = null;
@@ -212,8 +212,8 @@ function spotsOf(judged: Judged | null): Spot[] {
   ];
 }
 
-/** The place the first ending off pitch is (`saidAt`): the mark over its note, or the first of
- * the endings among the places, after the marks. */
+/** The place the first ending off pitch is (`saidAt`): the mark that tells of it already, or
+ * the first of the endings among the places, after the marks. */
 function saidOf(judged: Judged | null): number | null {
   const first = judged?.endings?.[0];
   if (!first || spots.length === 0) return null;

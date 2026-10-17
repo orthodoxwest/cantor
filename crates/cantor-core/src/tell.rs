@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::judge::{Mark, MarkKind, Outcome, Verdict, recited};
+use crate::judge::{IN_TUNE_CENTS, Mark, MarkKind, Outcome, Verdict, recited};
 use crate::score::fold;
 use crate::synth::Note;
 
@@ -40,15 +40,15 @@ pub struct Ending {
     pub last: usize,
     /// Its note furthest off, by index: the one its words tell of.
     pub note: usize,
-    /// The mark over that note that tells of the same step from the key, by index, when one
-    /// is: the same fault, told already. Not a verse's mark of another step, nor one of a verse
-    /// not heard.
+    /// The mark over that note that tells of the same fault, by index, when one is: off by
+    /// within [`IN_TUNE_CENTS`] of what the ending is, so told already. Not a verse's mark of a
+    /// level further from the note's, nor one of a verse not heard.
     pub mark: Option<usize>,
     pub words: String,
 }
 
 /// The phrase endings [`summary`] tells of as off pitch, in order, each with the note it tells
-/// of, and the mark over that note telling of the same step if there is one, in words: the
+/// of, and the mark over that note telling of the same fault if there is one, in words: the
 /// places its second sentence is about. None for a take not heard.
 pub fn endings(verdict: &Verdict) -> Vec<Ending> {
     if verdict.outcome != Outcome::Heard {
@@ -67,7 +67,7 @@ pub fn endings(verdict: &Verdict) -> Vec<Ending> {
                 mark: verdict
                     .marks
                     .iter()
-                    .position(|m| m.covers(note) && m.cents.is_some_and(|c| interval(c) == interval(cents))),
+                    .position(|m| m.covers(note) && m.cents.is_some_and(|c| fold(cents - c).abs() < IN_TUNE_CENTS)),
                 words: format!(
                     "This phrase ended off pitch: a note of its ending was sung {} where your key puts it ({cents:+.0} cents).",
                     interval(cents)
@@ -430,7 +430,8 @@ mod tests {
         };
         let off = endings(&verdict);
         assert_eq!(off.iter().map(|e| (e.note, e.mark)).collect::<Vec<_>>(), [(1, None), (3, Some(0))]);
-        // A verse's mark tells of the ending only when it tells of the same step, and one of a
+        // A verse's mark tells of the ending only when it is off by within the in-tune margin of
+        // the ending's own level, whether or not their words fall in the same step; one of a
         // verse not heard never does.
         let over = |kind, cents| Verdict {
             marks: vec![Mark {
@@ -445,5 +446,17 @@ mod tests {
         assert_eq!(marked(&over(MarkKind::Verse, Some(390.0))), Some(0));
         assert_eq!(marked(&over(MarkKind::Verse, Some(200.0))), None);
         assert_eq!(marked(&over(MarkKind::VerseMissing, None)), None);
+        let at = |verse: f32, ending: f32| {
+            let mut v = over(MarkKind::Verse, Some(verse));
+            v.cadences[1].cents = Some(ending);
+            marked(&v)
+        };
+        // "a whole tone" and "about a whole tone", told once.
+        assert_eq!(at(176.0, 174.0), Some(0));
+        assert_eq!(at(200.0, 249.0), Some(0));
+        assert_eq!(at(-224.0, -226.0), Some(0));
+        // Both "about a whole tone", but nearly a semitone apart: told twice.
+        assert_eq!(at(152.0, 248.0), None);
+        assert_eq!(at(200.0, 251.0), None);
     }
 }
