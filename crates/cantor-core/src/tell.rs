@@ -40,14 +40,16 @@ pub struct Ending {
     pub last: usize,
     /// Its note furthest off, by index: the one its words tell of.
     pub note: usize,
-    /// The mark over that note, by index, when one is: the same fault, told already.
+    /// The mark over that note that tells of the same step from the key, by index, when one
+    /// is: the same fault, told already. Not a verse's mark of another step, nor one of a verse
+    /// not heard.
     pub mark: Option<usize>,
     pub words: String,
 }
 
 /// The phrase endings [`summary`] tells of as off pitch, in order, each with the note it tells
-/// of, and the mark over that note if there is one, in words: the places its second sentence is
-/// about. None for a take not heard.
+/// of, and the mark over that note telling of the same step if there is one, in words: the
+/// places its second sentence is about. None for a take not heard.
 pub fn endings(verdict: &Verdict) -> Vec<Ending> {
     if verdict.outcome != Outcome::Heard {
         return Vec::new();
@@ -62,7 +64,10 @@ pub fn endings(verdict: &Verdict) -> Vec<Ending> {
                 first: c.first,
                 last: c.last,
                 note,
-                mark: verdict.marks.iter().position(|m| m.covers(note)),
+                mark: verdict
+                    .marks
+                    .iter()
+                    .position(|m| m.covers(note) && m.cents.is_some_and(|c| interval(c) == interval(cents))),
                 words: format!(
                     "This phrase ended off pitch: a note of its ending was sung {} where your key puts it ({cents:+.0} cents).",
                     interval(cents)
@@ -425,5 +430,20 @@ mod tests {
         };
         let off = endings(&verdict);
         assert_eq!(off.iter().map(|e| (e.note, e.mark)).collect::<Vec<_>>(), [(1, None), (3, Some(0))]);
+        // A verse's mark tells of the ending only when it tells of the same step, and one of a
+        // verse not heard never does.
+        let over = |kind, cents| Verdict {
+            marks: vec![Mark {
+                kind,
+                first: 2,
+                last: 3,
+                cents,
+            }],
+            ..verdict.clone()
+        };
+        let marked = |v: &Verdict| endings(v)[1].mark;
+        assert_eq!(marked(&over(MarkKind::Verse, Some(390.0))), Some(0));
+        assert_eq!(marked(&over(MarkKind::Verse, Some(200.0))), None);
+        assert_eq!(marked(&over(MarkKind::VerseMissing, None)), None);
     }
 }

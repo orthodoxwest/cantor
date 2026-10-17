@@ -130,8 +130,11 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   for (const e of endings) {
     expect(e.note).toBeGreaterThanOrEqual(e.first);
     expect(e.note).toBeLessThanOrEqual(e.last);
-    const over = got.verdict.marks.findIndex((m: Marked) => m.first <= e.note && e.note <= m.last);
-    expect(e.mark).toBe(over < 0 ? null : over);
+    // A note's mark over it tells of it already; a verse's, only of the same step.
+    const covers = (m: Marked) => m.first <= e.note && e.note <= m.last;
+    const over = got.verdict.marks.findIndex((m: Marked & { kind: string }) => m.kind === "note" && covers(m));
+    if (over >= 0) expect(e.mark).toBe(over);
+    if (e.mark !== null) expect(covers(got.verdict.marks[e.mark])).toBe(true);
   }
   const alone = endings.filter((e) => e.mark === null);
   const count = (n: number, one: string) => (n ? [` · ${n} ${one}${n === 1 ? "" : "s"}`] : []);

@@ -13,7 +13,7 @@ import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
 import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
-import { melismaNeumes, phraseOf, tapLoop } from "./loop";
+import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
 import { Replay } from "./replay";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
@@ -140,6 +140,7 @@ const cursor = new Cursor(score);
 // its phrase, for Compare, Guide and Yours to play alone, and the bar steps from mark to mark.
 const result = byId<HTMLElement>("result");
 const summaryText = byId<HTMLParagraphElement>("summary");
+const saidHint = byId<HTMLSpanElement>("said-hint");
 const keyText = byId<HTMLParagraphElement>("key");
 const inKeyLine = byId<HTMLParagraphElement>("in-key-line");
 const inKeyBox = byId<HTMLInputElement>("in-key");
@@ -500,6 +501,7 @@ function drawSummary(judged: Judged | null): void {
     const button = Object.assign(document.createElement("button"), { type: "button", className: "said", textContent: endings });
     button.setAttribute("aria-controls", "why");
     button.setAttribute("aria-describedby", "said-hint");
+    saidHint.textContent = (judged?.endings?.length ?? 0) > 1 ? "Opens the first of them." : "Opens it.";
     button.setAttribute("aria-expanded", String(open === k));
     button.addEventListener("click", () => {
       if (open !== k) chooseSpot(k);
@@ -943,8 +945,8 @@ const measure = (el: HTMLElement, name: string) =>
 measure(bar, "--bar-h");
 measure(why, "--why-h");
 let loop: [number, number] | null = null;
-/** The neumes of the chant's melismas, and the chant they are of. */
-let neumes: { of: string; at: ReturnType<typeof melismaNeumes> } | null = null;
+/** The neumes of the chant's melismas and its syllables, and the chant they are of. */
+let neumes: { of: string; at: ReturnType<typeof melismaNeumes>; syllables: ReturnType<typeof syllableRuns> } | null = null;
 /** The pause between times round a loop, and in Compare between the guide and the take, in
  * pulses. */
 const BREATH = 2;
@@ -1079,17 +1081,17 @@ function tapScore(e: MouseEvent): void {
 /** The run a tap on note `i` chooses with `run` chosen (`tapLoop`). */
 function tapped(run: readonly [number, number] | null, i: number): [number, number] | null {
   const { notes, pauses } = score.timeline;
-  if (neumes?.of !== score.source) neumes = { of: score.source, at: melismaNeumes(notes, score.source, pauses) };
-  return tapLoop(run, i, pauses, notes.length, neumes.at);
+  if (neumes?.of !== score.source) neumes = { of: score.source, at: melismaNeumes(notes, score.source, pauses), syllables: syllableRuns(notes) };
+  return tapLoop(run, i, pauses, notes.length, neumes.at, neumes.syllables);
 }
 
-/** What a tap on note `i`'s band does (`tapped`), in words: chooses its phrase, or the run it
- * stretches or narrows the run chosen to, or lets the run go. */
+/** What a tap on note `i`'s band does (`tapped`), in words, from its note: chooses its phrase,
+ * or the run it stretches or narrows the run chosen to, or lets the run go. */
 function bandName(i: number): string {
   const run = tapped(loop, i);
-  if (!run) return "Let the run go";
   const [a, b] = phraseOf(i, score.timeline.pauses, score.timeline.notes.length);
-  return run[0] === a && run[1] === b ? `Choose the phrase of note ${i + 1}` : `Choose ${numbered(run[0], run[1]).toLowerCase()}`;
+  if (run && run[0] === a && run[1] === b) return `Choose the phrase of note ${i + 1}`;
+  return `Note ${i + 1}: ${run ? `choose ${numbered(run[0], run[1]).toLowerCase()}` : "let the run go"}`;
 }
 
 /** Chooses the phrase of note `i`, or stretches the run to it, narrows it or lets it go. */

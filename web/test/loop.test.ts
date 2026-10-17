@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { melismaNeumes, phraseOf, spanOf, tapLoop } from "../src/loop";
+import { melismaNeumes, phraseOf, spanOf, syllableRuns, tapLoop } from "../src/loop";
 
 // Ten notes: a breath before note 2, a half bar before note 4 and a full bar before note 7.
 const pauses = [
@@ -44,24 +44,44 @@ describe("melismaNeumes", () => {
     [3, 32, 34],
     [3, 34, 35],
     [4, 40, 41],
-  ].map(([syllable, sourceUtf16Start, sourceUtf16End]) => ({ syllable: syllable!, syllableText: "x", sourceUtf16Start: sourceUtf16Start!, sourceUtf16End: sourceUtf16End! }));
+  ].map(([syllable, sourceUtf16Start, sourceUtf16End]) => ({ syllable: syllable!, syllableText: "x", verse: 0, sourceUtf16Start: sourceUtf16Start!, sourceUtf16End: sourceUtf16End! }));
   it("groups a melisma's notes written together, apart at a space or a slash, and not a syllable of one neume", () => {
     expect(melismaNeumes(notes, source)).toEqual([[0, 1], [0, 1], [2, 3], [2, 3], [4, 7], [4, 7], [4, 7], [4, 7], [8, 8], null, null, null]);
   });
   it("parts a melisma's neumes at a division written within it", () => {
     // "(c4) Al(gh/kjjh,ji/hg) le(f) (::)": a quarter bar before note 6.
-    const notes = [8, 9, 11, 12, 13, 14, 16, 17, 19, 20, 26].map((at, i) => ({ syllable: i < 10 ? 1 : 2, syllableText: i < 10 ? "Al" : "le", sourceUtf16Start: at, sourceUtf16End: at + 1 }));
+    const notes = [8, 9, 11, 12, 13, 14, 16, 17, 19, 20, 26].map((at, i) => ({ syllable: i < 10 ? 1 : 2, syllableText: i < 10 ? "Al" : "le", verse: 0, sourceUtf16Start: at, sourceUtf16End: at + 1 }));
     const of = melismaNeumes(notes, "(c4) Al(gh/kjjh,ji/hg) le(f) (::)", [{ beforeNote: 6, kind: "quarter" }]);
     expect(of).toEqual([[0, 1], [0, 1], [2, 5], [2, 5], [2, 5], [2, 5], [6, 7], [6, 7], [8, 9], [8, 9], null]);
   });
-  it("takes a group with no words straight after a syllable's notes for its melisma written on", () => {
-    // "(c4) r(jhhgh)(fg'h) e(f) (::)"
-    const at: [number, number, number, string][] = [[1, 7, 8, "r"], [1, 8, 9, "r"], [1, 9, 10, "r"], [1, 10, 11, "r"], [1, 11, 12, "r"], [2, 14, 15, ""], [2, 15, 17, ""], [2, 17, 18, ""], [3, 22, 23, "e"]];
-    const notes = at.map(([syllable, sourceUtf16Start, sourceUtf16End, syllableText]) => ({ syllable, syllableText, sourceUtf16Start, sourceUtf16End }));
-    const of = melismaNeumes(notes, "(c4) r(jhhgh)(fg'h) e(f) (::)");
-    expect(of).toEqual([[0, 4], [0, 4], [0, 4], [0, 4], [0, 4], [5, 7], [5, 7], [5, 7], null]);
-    // Not after a division.
-    expect(melismaNeumes(notes, "(c4) r(jhhgh)(fg'h) e(f) (::)", [{ beforeNote: 5, kind: "quarter" }])).toEqual(Array(9).fill(null));
+  it("takes a group with no words after a syllable's notes in its verse for its melisma written on", () => {
+    // "(c4) r(jhhgh)(fg'h/ih) e(f) (::)"
+    const at: [number, number, number, string][] = [
+      [1, 7, 8, "r"],
+      [1, 8, 9, "r"],
+      [1, 9, 10, "r"],
+      [1, 10, 11, "r"],
+      [1, 11, 12, "r"],
+      [2, 14, 15, ""],
+      [2, 15, 17, ""],
+      [2, 17, 18, ""],
+      [2, 19, 20, ""],
+      [2, 20, 21, ""],
+      [3, 25, 26, "e"],
+    ];
+    const source = "(c4) r(jhhgh)(fg'h/ih) e(f) (::)";
+    const notes = (verse: (i: number) => number) => at.map(([syllable, sourceUtf16Start, sourceUtf16End, syllableText], i) => ({ syllable, syllableText, verse: verse(i), sourceUtf16Start, sourceUtf16End }));
+    const written = [[0, 4], [0, 4], [0, 4], [0, 4], [0, 4], [5, 7], [5, 7], [5, 7], [8, 9], [8, 9], null];
+    expect(melismaNeumes(notes(() => 0), source)).toEqual(written);
+    // After a breath too, but not in another verse.
+    expect(melismaNeumes(notes(() => 0), source, [{ beforeNote: 5, kind: "quarter" }])).toEqual(written);
+    expect(melismaNeumes(notes((i) => (i < 5 ? 0 : 1)), source)).toEqual([null, null, null, null, null, [5, 7], [5, 7], [5, 7], [8, 9], [8, 9], null]);
+  });
+});
+
+describe("syllableRuns", () => {
+  it("gives each note the notes sung on its syllable", () => {
+    expect(syllableRuns([1, 1, 2, 3, 3, 3].map((syllable) => ({ syllable })))).toEqual([[0, 1], [0, 1], [2, 2], [3, 5], [3, 5], [3, 5]]);
   });
 });
 
@@ -96,5 +116,7 @@ describe("tapLoop", () => {
     expect(tapLoop([2, 3], 5, pauses, 10, neumes)).toEqual([2, 6]);
     // A phrase stretches by phrases, as before.
     expect(tapLoop([0, 3], 5, pauses, 10, neumes)).toEqual([0, 6]);
+    // From a neume, a syllable of one neume is taken whole.
+    expect(tapLoop([6, 6], 8, pauses, 10, neumes, [[0, 0], [1, 1], [2, 3], [2, 3], [4, 6], [4, 6], [4, 6], [7, 8], [7, 8], [9, 9]])).toEqual([6, 8]);
   });
 });
