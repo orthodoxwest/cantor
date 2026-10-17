@@ -19,8 +19,9 @@
 //! The gates. Every suite, gated or not, must have no false marks, and be told the same when
 //! timed as the page times it (below).
 //! - `expert`: a good take is told nothing wrong. No marks; at least 95% of the notes of
-//!   0.3 s or more heard over the suite and 90% in every take (all but one in a take of fewer
-//!   than ten, as a take stopped short in its first phrase can be); 90% of all notes heard; a
+//!   0.3 s or more heard over the suite and 90% in every take (all but one in a take stopped
+//!   short with fewer than ten, as one stopped in its second phrase, judged on its first, can
+//!   be, its misses also missed sung whole: see the gates of stopping); 90% of all notes heard; a
 //!   steady reciting tone; no cadence called off pitch, and 80% of them judged; every take
 //!   judged.
 //! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
@@ -57,9 +58,14 @@
 //! yet, not that the singer was not heard); and no fault planted past the notes judged (sung in
 //! the phrase cut short, or never sung) is caught. When it is timed again as the page times it,
 //! it is judged each time through the note the page would read from its length on that timing.
-//! Real takes are stopped too (`real-takes-stopped`), halfway through the middle note of their
-//! first, second, middle and last phrases, and held to the expert gate and the same gates of
-//! stopping.
+//! It is held to the take sung whole too: judged alike on the notes judged, its key near the
+//! whole take's, and no note of 0.3 s or more heard sung whole lost stopped. Real takes are
+//! stopped too (`real-takes-stopped`), halfway through the middle note of their first, second,
+//! middle and last phrases, and held to the expert gate and the same gates of stopping; their
+//! `through` is read from the singer's own note times, not the page's pulses, as a real take
+//! sung whole is timed. Their first phrases are recited, so only `expert-stopped`'s first take
+//! holds a take stopped to the whole chant's phrase endings where the notes judged alone would
+//! be read as not recited.
 //!
 //! Every take stopped is compared with the take sung whole, judged on all of the chant: on the
 //! notes judged it must be judged alike, with the same outcome and marks there (a mark running
@@ -128,10 +134,13 @@ const HEARD_FLOOR: f32 = 0.95;
 const TAKE_HEARD_FLOOR: f32 = 0.9;
 
 /// How many of a take's `counted` notes (0.3 s or more) must be heard: [`TAKE_HEARD_FLOOR`] of
-/// them, or all but one of fewer than ten, as the one phrase judged of a take stopped short
-/// can be: a note the tracker misses sung whole too is a sixth of a first half-verse of six.
-fn take_floor(counted: usize) -> usize {
-    ((TAKE_HEARD_FLOOR * counted as f32).ceil() as usize).min(counted.saturating_sub(1))
+/// them, or, of a take `stopped` short, all but one of fewer than ten, as the one phrase judged
+/// of a take stopped in its second can be: a note the tracker misses sung whole too is a sixth of
+/// a first half-verse of six. No note the take sung whole heard may be lost stopped
+/// ([`StopMetrics::lost`]).
+fn take_floor(counted: usize, stopped: bool) -> usize {
+    let floor = (TAKE_HEARD_FLOOR * counted as f32).ceil() as usize;
+    if stopped { floor.min(counted.saturating_sub(1)) } else { floor }
 }
 const ALL_HEARD_FLOOR: f32 = 0.9;
 const RECALL_FLOOR: f32 = 0.95;
@@ -385,13 +394,13 @@ impl Timing {
                     ..*n
                 })
                 .collect();
-            let judged = if stopped {
-                through_heard(&moved, heard_s).map_or(0, |t| cantor_ear::finished(&moved, Some(t)))
+            // Judged by the page's own ear, through the note it would read from the take's length.
+            let through = if stopped { through_heard(&moved, heard_s) } else { None };
+            let again = if stopped && through.is_none() {
+                judge_part(&moved, 0, &score(&[], frames))
             } else {
-                moved.len()
+                cantor_ear::judge_notes(moved, frames, through).verdict
             };
-            // Its phrase endings the whole chant's, as the ear's.
-            let again = judge_part(&moved, judged, &score(&moved[..judged], frames));
             Retimed {
                 entry,
                 kept: told(&again) == told(verdict) && !contradicts(&again.cadences, &verdict.cadences),
@@ -587,6 +596,9 @@ struct StopMetrics {
     compared: u32,
     otherwise: u32,
     key_apart_cents: f32,
+    /// Notes of 0.3 s or more the take sung whole heard that it did not, stopped, among the
+    /// notes judged.
+    lost: u32,
 }
 
 impl StopMetrics {
@@ -606,6 +618,8 @@ impl StopMetrics {
         } else {
             self.compared += 1;
             self.otherwise += u32::from(judged_otherwise(v, &s.whole, n));
+            let lost = |i: &usize| take.notes[*i].dur_s >= COUNTED_MIN_S && v.relative[*i].is_none() && s.whole.relative[*i].is_some();
+            self.lost += (0..n.min(v.relative.len())).filter(lost).count() as u32;
             if let (Some(a), Some(b)) = (v.key_cents, s.whole.key_cents) {
                 self.key_apart_cents = self.key_apart_cents.max(fold(a - b).abs());
             }
@@ -678,7 +692,7 @@ impl Metrics {
             counted += take_counted;
             heard += take_heard;
             m.worst_take_heard = m.worst_take_heard.min(ratio(take_heard, take_counted));
-            m.takes_under_floor += u32::from(take_heard < take_floor(take_counted));
+            m.takes_under_floor += u32::from(take_heard < take_floor(take_counted, take.stop.is_some()));
             m.marks += v.marks.len() as u32;
             m.false_marks += v.marks.iter().filter(|mark| !deserved(mark, &take.planted)).count() as u32;
             for i in faults(&take.notes, &take.planted) {
@@ -834,6 +848,9 @@ impl Metrics {
         }
         if s.key_apart_cents > KEY_TOLERANCE {
             out.push(format!("a stopped take's key {:.0} cents from the whole take's", s.key_apart_cents));
+        }
+        if s.lost > 0 {
+            out.push(format!("{} notes heard sung whole not heard stopped", s.lost));
         }
         out
     }
@@ -1047,7 +1064,7 @@ struct TakeOutput<'a> {
 }
 
 /// The widths of the console's columns of takes stopped short, after the suite's name.
-const STOP_WIDTHS: [usize; 8] = [7, 10, 5, 9, 6, 6, 8, 9];
+const STOP_WIDTHS: [usize; 9] = [7, 10, 5, 9, 6, 6, 8, 9, 4];
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
 /// every take is also labelled by it and compared, outside the gates.
@@ -1216,6 +1233,7 @@ pub fn run(
                 s.cut_caught,
                 s.compared,
                 s.otherwise,
+                s.lost,
             ];
             let console: String = counts.iter().zip(STOP_WIDTHS).map(|(c, w)| format!(" {c:>w$}")).collect();
             stop_console.push_str(&format!("{name:<22}{console} {:>9.1}\n", s.key_apart_cents));
@@ -1263,7 +1281,7 @@ pub fn run(
              Unfinished: stopped before a phrase finished, so judged to nothing; told: of those, told anything. \
              Misjudged: judged to elsewhere, or a mark or cadence past it. Cut faults: planted past the notes judged \
              (caught: by a mark). Otherwise: judged otherwise than the take sung whole on the notes judged; \
-             key apart: the furthest the two keys were.";
+             lost: notes heard sung whole not heard stopped; key apart: the furthest the two keys were.";
         let heads = [
             "stopped",
             "unfinished",
@@ -1273,11 +1291,12 @@ pub fn run(
             "caught",
             "compared",
             "otherwise",
+            "lost",
         ];
         let heads: String = heads.iter().zip(STOP_WIDTHS).map(|(h, w)| format!(" {h:>w$}")).collect();
         println!("\n{note}\n{:<22}{heads} {:>9}\n{stop_console}", "suite", "key apart");
         md.push_str(&format!(
-            "\n{note}\n\n| suite | stopped | unfinished | told | misjudged | cut faults | caught | compared with the whole take | judged otherwise | key apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n{stop_md}"
+            "\n{note}\n\n| suite | stopped | unfinished | told | misjudged | cut faults | caught | compared with the whole take | judged otherwise | lost | key apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n{stop_md}"
         ));
     }
     if !oracle_md.is_empty() {
@@ -2071,15 +2090,35 @@ mod tests {
         assert_eq!(s.otherwise, 1);
         assert!((s.key_apart_cents - 80.0).abs() < 1e-3, "{}", s.key_apart_cents);
         assert_eq!(m.agreement_failures().len(), 2);
+
+        // Or a note heard sung whole lost stopped, however few it is of the notes judged.
+        let whole_take = whole(&chant, &cents);
+        let lost = stopped_as(&chant, &cents, 20, whole_take, |frames, through| {
+            let note = &chant[5];
+            let gap: Vec<Frame> = frames
+                .iter()
+                .filter(|f| f.t < note.start_s || f.t >= note.end_s())
+                .cloned()
+                .collect();
+            cantor_ear::judge_notes(chant.to_vec(), &gap, through)
+        });
+        assert!(lost.verdict.relative[5].is_none());
+        let m = Metrics::of(&[lost]);
+        assert_eq!(m.stopped.expect("stopped").lost, 1);
+        assert_eq!(m.agreement_failures(), ["1 notes heard sung whole not heard stopped"]);
     }
 
     #[test]
-    fn a_take_is_held_to_its_share_of_notes_heard_or_all_but_one_of_a_few() {
-        assert_eq!(take_floor(62), 56);
-        assert_eq!(take_floor(10), 9);
-        assert_eq!(take_floor(6), 5);
-        assert_eq!(take_floor(1), 0);
-        assert_eq!(take_floor(0), 0);
+    fn a_take_is_held_to_its_share_of_notes_heard_or_stopped_all_but_one_of_a_few() {
+        assert_eq!(take_floor(62, false), 56);
+        assert_eq!(take_floor(62, true), 56);
+        assert_eq!(take_floor(10, true), 9);
+        // A take sung whole of a few is held to the share; one stopped may miss one.
+        assert_eq!(take_floor(9, false), 9);
+        assert_eq!(take_floor(6, false), 6);
+        assert_eq!(take_floor(6, true), 5);
+        assert_eq!(take_floor(1, true), 0);
+        assert_eq!(take_floor(0, true), 0);
     }
 
     #[test]

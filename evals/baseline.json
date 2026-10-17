@@ -231,7 +231,8 @@
       "cut_caught": 0,
       "compared": 8,
       "otherwise": 0,
-      "key_apart_cents": 2.6237183
+      "key_apart_cents": 2.6237183,
+      "lost": 0
     }
   },
   "research-guide-key": {
@@ -382,7 +383,8 @@
       "cut_caught": 0,
       "compared": 5,
       "otherwise": 0,
-      "key_apart_cents": 0.0
+      "key_apart_cents": 0.0,
+      "lost": 0
     }
   },
   "student-verses": {

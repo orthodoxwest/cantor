@@ -299,9 +299,10 @@ pub extern "C" fn ear_entry(due_s: f32) -> i32 {
 }
 
 /// Scores and judges the heard take against the notes of the GABC in the byte buffer's first
-/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take, to the end of
-/// the phrase of note `through` when it is not negative (the take was stopped there): the
-/// length of the JSON left in the output buffer, or -1 with the error there.
+/// `gabc_len` bytes, at `pulse_s` a pulse, starting `offset_s` into the take; when `through` is
+/// not negative (the take was stopped with that note the last sung whole), only to the end of the
+/// last phrase finished there ([`finished`]): the length of the JSON left in the output buffer,
+/// or -1 with the error there.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through: i32) -> i32 {
@@ -431,6 +432,42 @@ mod tests {
             );
         }
         assert_eq!(finished(&[], Some(0)), 0);
+    }
+
+    #[test]
+    fn a_take_stopped_short_is_told_of_as_the_whole_chant_is() {
+        // A psalm whose first verse alone is too little recited to be read as recited: stopped
+        // in the second verse and judged on the first, its summary still speaks of the reciting
+        // tone, as of the take sung whole.
+        let gabc = "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then:(j.) *(:) praise(j) him(j) all(i) ye(j) na(h)tions.(g.) (::) \
+            Glo(j)ry(j) be(j) to(j) the(j) Fa(j)ther,(j) and(j) to(k) the(j) Son:(j.) *(:) world(j) with(j) end(j) a(j)men.(j) (::)";
+        let notes = notes_from_gabc(gabc, 0.5);
+        let end = notes.last().map_or(0.0, |n| n.start_s + n.dur_s);
+        let frames: Vec<Frame> = (0..(end / 0.01) as usize)
+            .map(|k| {
+                let t = k as f32 * 0.01;
+                let sung = notes.iter().find(|n| t >= n.start_s && t < n.start_s + n.dur_s);
+                Frame {
+                    t,
+                    midi: sung.map(|n| n.midi),
+                    clarity: if sung.is_some() { 0.95 } else { 0.0 },
+                    rms: if sung.is_some() { 0.1 } else { 0.0 },
+                    masked: false,
+                    quiet: sung.is_none(),
+                    other: None,
+                }
+            })
+            .collect();
+        let stopped = judge_notes(notes.clone(), &frames, Some(20));
+        assert_eq!(stopped.notes.len(), 14);
+        assert_eq!(stopped.summary, summary(&notes, &stopped.verdict));
+        assert!(stopped.summary[0].starts_with("Your reciting tone"), "{:?}", stopped.summary);
+        assert_ne!(
+            stopped.summary[0],
+            summary(&notes[..14], &stopped.verdict)[0],
+            "read from the notes judged alone"
+        );
+        assert_eq!(judge_notes(notes, &frames, None).summary[0], stopped.summary[0]);
     }
 
     #[test]

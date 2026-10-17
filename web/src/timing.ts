@@ -29,6 +29,16 @@ export function timed(notes: readonly TimelineNote[], pulse: number): Timed[] {
   });
 }
 
+/** The last note sung whole in a take stopped `heard` seconds in, its notes at `times` from
+ * `offset` seconds: the last of them, in order, ended by then; null when the first had not. As
+ * `cantor eval` reads it (eval.rs `through_heard`), so that its stopped takes are judged as the
+ * page judges them. */
+export function throughHeard(times: readonly Timed[], offset: number, heard: number): number | null {
+  let through = -1;
+  while (through + 1 < times.length && offset + times[through + 1]!.start + times[through + 1]!.duration <= heard) through++;
+  return through < 0 ? null : through;
+}
+
 /** The note sounding at `t` seconds, or the last one begun (in the pause after it); -1 before
  * the first. */
 export function noteAt(times: readonly Timed[], t: number): number {
