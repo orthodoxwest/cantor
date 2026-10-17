@@ -453,17 +453,19 @@ mod tests {
         assert_eq!(marked(&over(MarkKind::Verse, Some(200.0))), None);
         assert_eq!(marked(&over(MarkKind::VerseMissing, None)), None);
         // A mark on another note of the ending tells of it, at its level.
-        let beside = |cents: f32| Verdict {
+        let beside = |at: usize, cents: f32| Verdict {
             marks: vec![Mark {
                 kind: MarkKind::Note,
-                first: 2,
-                last: 2,
+                first: at,
+                last: at,
                 cents: Some(cents),
             }],
             ..verdict.clone()
         };
-        assert_eq!(marked(&beside(380.0)), Some(0));
-        assert_eq!(marked(&beside(-380.0)), None);
+        assert_eq!(marked(&beside(2, 380.0)), Some(0));
+        assert_eq!(marked(&beside(2, -380.0)), None);
+        // Not one off its notes, though at its level.
+        assert_eq!(marked(&beside(1, 380.0)), None);
         let at = |verse: f32, ending: f32| {
             let mut v = over(MarkKind::Verse, Some(verse));
             v.cadences[1].cents = Some(ending);
@@ -484,32 +486,41 @@ mod tests {
     }
     #[test]
     fn an_ending_at_the_level_of_a_mark_on_another_of_its_notes_is_told_by_it() {
-        // At a brisk pulse the ending's last note, a pulse long, counts toward the ending but is
-        // too short to be marked; the one before it, held longer, is.
+        // At a brisk pulse the note before the ending's last, a pulse long, counts toward the
+        // ending but is too short to be marked; the last, dotted, is.
         let gabc = "(c4) O(g) praise(h) the(j) Lord(j) all(j) ye(j) hea(k)then(j.) *(:) praise(j) him(j) all(j) ye(j) na(h)tions.(g.) (::)";
-        let notes = crate::notes_from_gabc(gabc, 0.38);
-        let heard = |index: usize, cents: f32| crate::score::NoteResult {
-            index,
-            expected_midi: notes[index].midi,
-            voiced_frames: 12,
-            masked_frames: 0,
-            quiet_frames: 0,
-            frames: 12,
-            spread_cents: Some(10.0),
-            cents: Some(cents),
-        };
-        let report = |a: f32, b: f32| crate::score::Report {
-            notes: (0..notes.len())
-                .map(|i| heard(i, [(12, a), (13, b)].iter().find(|(n, _)| *n == i).map_or(0.0, |p| p.1)))
-                .collect(),
-            heard_fraction: 1.0,
-            gross_error_rate: 0.0,
-            mean_abs_cents: 0.0,
-        };
-        for (a, b, want) in [(320.0, 300.0, Some(0)), (300.0, 320.0, Some(0)), (-320.0, 200.0, None)] {
-            let verdict = crate::judge::judge(&notes, &report(a, b));
+        let ending = |pulse: f32, a: f32, b: f32| {
+            let notes = crate::notes_from_gabc(gabc, pulse);
+            let heard = |index: usize, cents: f32| crate::score::NoteResult {
+                index,
+                expected_midi: notes[index].midi,
+                voiced_frames: 12,
+                masked_frames: 0,
+                quiet_frames: 0,
+                frames: 12,
+                spread_cents: Some(10.0),
+                cents: Some(cents),
+            };
+            let report = crate::score::Report {
+                notes: (0..notes.len())
+                    .map(|i| heard(i, [(12, a), (13, b)].iter().find(|(n, _)| *n == i).map_or(0.0, |p| p.1)))
+                    .collect(),
+                heard_fraction: 1.0,
+                gross_error_rate: 0.0,
+                mean_abs_cents: 0.0,
+            };
+            let verdict = crate::judge::judge(&notes, &report);
             let told = endings(&verdict);
-            assert_eq!((verdict.marks.len(), told.len(), told[0].mark), (1, 1, want), "{a} {b}");
-        }
+            assert_eq!(told.len(), 1, "{a} {b}");
+            (verdict.marks.len(), told[0].mark)
+        };
+        // The short note furthest off, at the level of the last note's mark; not at its level.
+        assert_eq!(ending(0.38, 320.0, 300.0), (1, Some(0)));
+        assert_eq!(ending(0.38, -320.0, 200.0), (1, None));
+        // The last note furthest off: its own mark.
+        assert_eq!(ending(0.38, 300.0, 320.0), (1, Some(0)));
+        // Both marked, slower: the mark of the note furthest off, though the other is at its
+        // level too.
+        assert_eq!(ending(0.5, 250.0, 300.0), (2, Some(1)));
     }
 }

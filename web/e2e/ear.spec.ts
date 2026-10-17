@@ -119,7 +119,7 @@ test("the page's ear hears a take as cantor eval does", async ({ page }, info) =
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   type Marked = { first: number; last: number };
   // The endings it counts off pitch are the cadences off pitch the summary tells of, each told of
-  // its note furthest off; a place with the marks unless a mark tells of that note already.
+  // its note furthest off; a place with the marks unless a mark on its notes tells of it already.
   type Told = { first: number; last: number; note: number; mark: number | null; words: string };
   type Off = { first: number; last: number; note: number | null; cents: number | null };
   const endings: Told[] = got.endings ?? [];
