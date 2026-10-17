@@ -7,10 +7,11 @@ import { escape, finds, highlight, kicker, library, chant as findChant, terms, t
 import { describePitch, noteName } from "./notes";
 import { drawMarks } from "./marks";
 import { SCALE, Score } from "./score";
-import { describeKey, drawRibbon, type Judged } from "./ribbon";
+import { drawRibbon, type Judged } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
+import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
 import { phraseOf, tapLoop } from "./loop";
 import { Replay } from "./replay";
@@ -149,6 +150,8 @@ let shown: Judged | null = null;
  * the guide was in their headphones. */
 let cutAt: number | null = null;
 let shownWorn = false;
+/** The Pitch the take shown was sung at, in semitones from the score's. */
+let shownPitch = 0;
 let open: number | null = null;
 
 /** What the core found of a take it could not judge, and what to try. */
@@ -157,6 +160,28 @@ function unheard(judged: Judged): string {
     return "The guide was louder than your voice, so too little of it was heard to judge the take. Use headphones, or untick Headphones so the guide gives only the opening notes.";
   const begin = shownWorn ? "with the guide" : "when the cursor appears";
   return `Too little of your voice was heard to judge the take. Sing nearer the microphone and a little louder, beginning ${begin}.`;
+}
+
+/** Where the singer started against the guide (`key` cents from the score, sung at `pitch`
+ * semitones), in words a beginner can act on: a take is judged in the singer's own key, so
+ * only a key away from the guide's is worth telling, with the Pitch that would meet it. */
+function keyLine(key: number, pitch: number): string {
+  // The key is folded into an octave either side of the score's do; so is its distance.
+  const from = ((((key - pitch * 100 + 600) % 1200) + 1200) % 1200) - 600;
+  const semis = Math.round(from / 100);
+  const about = Math.abs(from - semis * 100) >= 25 ? "about " : "";
+  if (semis === 0)
+    return about ? `You started close to the guide’s pitch, a little ${from > 0 ? "sharp" : "flat"}.` : "You started on the guide’s pitch.";
+  const n = Math.abs(semis);
+  let meet = pitch + semis;
+  if (meet > 7) meet -= 12;
+  if (meet < -7) meet += 12;
+  const label = [...pitchSelect.options].find((o) => Number(o.value) === meet)?.text;
+  return (
+    `You started ${about}${n} semitone${n === 1 ? "" : "s"} ${semis > 0 ? "above" : "below"} the guide. ` +
+    "That is fine: chant may be sung in any key that suits your voice, and each note is judged from the one you started in." +
+    (label ? ` To have the guide sing in your key, set Pitch to “${label}”.` : "")
+  );
 }
 
 /** The words sung on note `i`: its syllable, or for a note with none (a jubilus) the last
@@ -259,7 +284,7 @@ function drawResult(): void {
       drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, (i) => `Choose the phrase of note ${i + 1}`, underlay),
   );
   say(open === null ? "" : (judged.told[open] ?? ""));
-  keyText.textContent = `Your key: ${describeKey(key)}.`;
+  keyText.textContent = keyLine(key, shownPitch);
 }
 
 // A take shown may be sent, by a signed-in singer: the button gives a link to it.
@@ -349,6 +374,8 @@ function showResult(judged: Judged | null, cut: number | null = null, worn = fal
   if (judged && loop) setLoop(null);
   cutAt = judged ? cut : null;
   shownWorn = worn;
+  // Pitch cannot change during a take, so it is the take's.
+  shownPitch = judged ? Number(pitchSelect.value) : 0;
   open = null;
   toSend = null;
   sendLine.hidden = true;
@@ -550,12 +577,14 @@ function stopDrone(fade = true): void {
   if (!fade) Drone.cutAll();
   drone = null;
   droneButton.setAttribute("aria-pressed", "false");
+  letSleep("drone");
 }
 
 async function startDrone(): Promise<void> {
   if (!guide) return;
   const press = ++drones;
   droneButton.setAttribute("aria-pressed", "true");
+  stayAwake("drone");
   try {
     const ctx = await audioContext();
     if (press !== drones) return;
@@ -742,6 +771,7 @@ function stopPlay(): void {
   stopHear();
   guide?.stop();
   playButton.setAttribute("aria-pressed", "false");
+  letSleep("play");
 }
 
 /** Plays the chant, or the loop over and over, until it ends or is stopped. */
@@ -750,6 +780,7 @@ async function play(): Promise<void> {
   const run = ++plays;
   playing = run;
   playButton.setAttribute("aria-pressed", "true");
+  stayAwake("play");
   do {
     const started = await guide.play(loop ? { range: loop } : {});
     if (playing !== run) return;
@@ -940,6 +971,7 @@ async function takeScored(): Promise<void> {
   const going = () => taking && take === takes;
   taking = true;
   document.body.classList.add("taking");
+  stayAwake("take");
   timing = null;
   stopAsked = false;
   let shownNow = false;
@@ -1069,6 +1101,7 @@ function endTake(): void {
   taking = chanting = false;
   hurry = null;
   document.body.classList.remove("taking");
+  letSleep("take");
   cueing?.stop();
   cueing = null;
   playButton.disabled = noteButton.disabled = droneButton.disabled = takeButton.disabled = !guide;

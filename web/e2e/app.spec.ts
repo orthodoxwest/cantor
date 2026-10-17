@@ -392,6 +392,61 @@ test("your take plays back against the score with the cursor, and stops for Play
   await expect(page.locator("#hear")).toHaveAttribute("aria-pressed", "false");
 });
 
+test("the screen is kept on while the guide plays and through a take, and let go after", async ({ page }) => {
+  // The browser's lock, faked: whether one is held.
+  await page.addInitScript(() => {
+    const w = window as unknown as { held: number };
+    w.held = 0;
+    Object.defineProperty(navigator, "wakeLock", {
+      value: {
+        request: async () => {
+          w.held++;
+          let released = false;
+          return {
+            get released() {
+              return released;
+            },
+            release: async () => {
+              if (!released) w.held--;
+              released = true;
+            },
+          };
+        },
+      },
+    });
+  });
+  await open(page);
+  const held = () => page.evaluate(() => (window as unknown as { held: number }).held);
+  expect(await held()).toBe(0);
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect.poll(held).toBe(1);
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect.poll(held).toBe(0);
+  await page.getByRole("button", { name: "Sing a take" }).click();
+  await expect.poll(held).toBe(1);
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByRole("button", { name: "Sing a take" })).toBeEnabled();
+  await expect.poll(held).toBe(0);
+});
+
+test("the key a take was sung in is told against the guide's, with the Pitch that meets it", async ({ page }) => {
+  await open(page);
+  // The microphone's A4 over a chant on the A below do: the guide's pitch, an octave up.
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const gabc = "(c4) A(h) men.(h) (::)";
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(page.locator("#key")).toHaveText("You started on the guide’s pitch.");
+  // With the guide two semitones up, the same singer is two below it.
+  await page.getByLabel("Pitch").selectOption("2");
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(page.locator("#key")).toHaveText(
+    "You started 2 semitones below the guide. That is fine: chant may be sung in any key that suits your voice, and each note is judged from the one you started in. To have the guide sing in your key, set Pitch to “As written”.",
+  );
+});
+
 test("your take plays only the phrase chosen, from a moment before it", async ({ page }) => {
   await open(page);
   // Four seconds heard, judged as a chant of two phrases from 0.2 s.
