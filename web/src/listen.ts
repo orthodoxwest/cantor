@@ -71,6 +71,20 @@ class Ear {
     return (await this.ask<"judged">({ type: "judge", gabc, pulse, offset, through: through ?? -1 })).json;
   }
 
+  /** The key, in cents from the score, that the take judged `before` (its verdict and report,
+   * as JSON) was in at its notes `first` to `last`, for them to be sung again in; null when the
+   * take had none. */
+  async againKey(before: string, first: number, last: number): Promise<number | null> {
+    return (await this.ask<"key">({ type: "key", before, first, last })).key;
+  }
+
+  /** The last take judged as `gabc`'s notes `first` to `last` sung again in `key` cents, the
+   * first due `offset` seconds into the take at `pulse` seconds a pulse, beside the take whose
+   * verdict is `before` (as JSON); as JSON. */
+  async judgeAgain(gabc: string, before: string, pulse: number, offset: number, first: number, last: number, key: number): Promise<string> {
+    return (await this.ask<"judged">({ type: "judge-again", gabc, before, pulse, offset, first, last, key })).json;
+  }
+
   /** The last take heard as a WAV file, and its length in seconds. */
   async audio(): Promise<{ wav: ArrayBuffer; seconds: number }> {
     const { wav, seconds } = await this.ask<"audio">({ type: "audio" });
@@ -119,6 +133,20 @@ export class Listener {
     if (!this.ear || !this.heard) throw new Error("nothing heard");
     await this.heard;
     return this.ear.judge(gabc, pulse, offset, through);
+  }
+
+  /** The key a run of the take judged `before` is sung again in; see `Ear.againKey`. Asked of
+   * the ear that judged that take, so only once a take has been heard. */
+  async againKey(before: string, first: number, last: number): Promise<number | null> {
+    if (!this.ear) throw new Error("nothing heard");
+    return this.ear.againKey(before, first, last);
+  }
+
+  /** The last take judged as a run sung again, once it has been heard; see `Ear.judgeAgain`. */
+  async judgeAgain(gabc: string, before: string, pulse: number, offset: number, first: number, last: number, key: number): Promise<string> {
+    if (!this.ear || !this.heard) throw new Error("nothing heard");
+    await this.heard;
+    return this.ear.judgeAgain(gabc, before, pulse, offset, first, last, key);
   }
 
   /** The last take heard, as a file to send; see `Ear.audio`. */

@@ -10,6 +10,7 @@ declare global {
       following: boolean;
       chunks: Array<[number, number, number]>;
       pitch: number[];
+      cued: number[];
       drone: number | null;
       drones: number;
       centre: number | null;
@@ -22,6 +23,9 @@ declare global {
         | Promise<{ seconds: number; sampleRate: number; frames: number; onset: number | null; startedAt: number | null; busy: number; stopMs: number }>
         | undefined;
       listen: () => Promise<void>;
+      listenAgain: () => Promise<void>;
+      showAgain: (first: number, last: number, pulse: number, offset: number) => Promise<string | null>;
+      again: { run: [number, number]; key: number } | null;
       take: () => { due: number; sound: number | null; at: number } | null;
       practise: (gabc: string, pulse: number) => void;
       timed: (pulse: number) => Array<{ start: number; duration: number }>;

@@ -926,6 +926,269 @@ test("the takes kept are kept again once the browser has cleared them under the 
   expect(opened).toBe("opened");
 });
 
+test("beside a take, the phrase chosen is sung again in the key it was sung in, and drawn over the take", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  // The microphone's A4 over a chant whose A is on pitch and whose G is not.
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4500);
+  await page.evaluate(() => void window.__cantor.listen());
+  const whole = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const take = page.locator("#take");
+  const said = page.locator("#again-said");
+  const chosenText = page.locator("#chosen-text");
+  // With nothing chosen a take is of the whole chant; with a phrase chosen, of that phrase again.
+  await expect(take).toHaveText("Sing a take");
+  await page.getByRole("button", { name: "Choose the phrase of note 5", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await expect(take).toHaveText("Sing again");
+  // Without headphones it is given its first note, in the key the take was in there, and the
+  // cursor leads it; the take stays shown meanwhile.
+  await take.click();
+  await expect(page.locator("#status")).toHaveText("Listen to its first note.");
+  await expect(page.locator("#status")).toHaveText("Begin when the cursor appears.", { timeout: 10_000 });
+  await expect(page.locator("#result")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Compare" })).toBeDisabled();
+  await expect(take).toHaveText("Sing again", { timeout: 30_000 });
+  await expect(page.locator("#status")).toHaveText("");
+  const again = (await page.evaluate(() => window.__cantor.again))!;
+  expect(again.run).toEqual([2, 5]);
+  // The take's key there: it held its key throughout. The first note given was in it.
+  expect(Math.abs(again.key - whole.verdict.key_cents)).toBeLessThan(5);
+  const [cued, first] = await page.evaluate(() => [window.__cantor.cued, window.__cantor.sung[2]!.midi] as const);
+  expect(cued).toHaveLength(1);
+  expect(Math.abs(((((cued[0]! - first - again.key / 100 + 6) % 12) + 12) % 12) - 6)).toBeLessThan(0.2);
+  // It is told of beside the take, and drawn over it: its bands there, the take's dotted under them.
+  await expect(said).toBeVisible();
+  await expect(said).toHaveText(/^You sang “alleluia” again\. .+ Your take’s bars there are dotted under the new ones\.$/);
+  await expect(chosenText).toHaveText("Notes 3 to 6 · “al … ia” · sung again");
+  await expect(page.locator("#score .band-before-held")).toHaveCount(4);
+  for (const i of [2, 3, 4, 5]) await expect(page.locator(`[data-band="${i}"] .band-before-held`)).toHaveCount(1);
+  // Yours there plays it, not the take, whose sound is not decoded for it.
+  const hear = page.getByRole("button", { name: "Yours" });
+  const heard = async () => {
+    await hear.click();
+    await expect(hear).toHaveAttribute("aria-pressed", "true");
+    await expect(hear).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
+    return page.evaluate(() => window.__cantor.replayed);
+  };
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  expect(await heard()).toMatchObject({ visited: ids.slice(2, 6), decodes: 0 });
+  // A Stop before it is sung leaves it as it was.
+  await take.click();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.locator("#status")).toHaveText("Stopped before it began; your take is as it was.");
+  await expect(said).toBeVisible();
+  // With the whole chant chosen, a take is of the whole chant, and the run sung again stays
+  // drawn; Yours plays the take.
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
+  await expect(take).toHaveText("Sing a take");
+  await expect(page.locator("#score .band-before-held")).toHaveCount(4);
+  expect(await heard()).toMatchObject({ visited: ids, decodes: 1 });
+  // A new take lets it go.
+  await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await expect(said).toBeHidden();
+  expect(await page.evaluate(() => window.__cantor.again)).toBeNull();
+  await expect(page.locator("#score .band-before-held")).toHaveCount(6);
+});
+
+/** What a request to the ear to judge a run sung again is changed by, when `window.change` is set. */
+type Changing = { change?: (m: { offset: number; key: number }) => object };
+
+/** Lets a test change each request to the ear to judge a run sung again, to judge it where
+ * nothing was sung, or in another key. */
+async function changeAgain(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, ...rest: unknown[]) {
+      const { change } = window as unknown as Changing;
+      const asked = message as { type?: string; offset: number; key: number };
+      const sent = asked?.type === "judge-again" && change ? { ...asked, ...change(asked) } : message;
+      return (post as (this: Worker, ...args: unknown[]) => void).call(this, sent, ...rest);
+    };
+  });
+}
+
+test("a phrase sung again is led in the key the take was in there, and a run stopped or not heard leaves the take as it was", async ({ page }) => {
+  test.setTimeout(120_000);
+  await changeAgain(page);
+  await open(page);
+  // The microphone's A4 over a chant on B: a take a tone below the score throughout.
+  const gabc = "(c4) A(i) men(i) (:) al(i)le(i)lu(i)ia(i) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4500);
+  await page.evaluate(() => void window.__cantor.listen());
+  const whole = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  expect(Math.abs(whole.verdict.key_cents + 200)).toBeLessThan(20);
+  const take = page.locator("#take");
+  const status = page.locator("#status");
+  await page.getByRole("button", { name: "Choose the phrase of note 5", exact: true }).click();
+  // The guide leads the run in the take's key there, a tone below the score.
+  await take.click();
+  await expect(page.locator("#send")).toBeDisabled();
+  await expect(status).toHaveText("Begin when the cursor appears.", { timeout: 10_000 });
+  const moved = await page.evaluate(() => {
+    const { sung, played } = window.__cantor;
+    return played.midi.map((m, i) => m - sung[2 + i]!.midi);
+  });
+  expect(moved).toHaveLength(4);
+  /** Semitones `m` folded into an octave about zero. */
+  const fold = (m: number) => ((((m + 6) % 12) + 12) % 12) - 6;
+  for (const m of moved) expect(Math.abs(fold(m - whole.verdict.key_cents / 100))).toBeLessThan(0.2);
+  // So is its first note, given first without headphones: the phrase is all on its reciting tone.
+  const cued = await page.evaluate(() => window.__cantor.cued);
+  const sung = await page.evaluate(() => window.__cantor.sung[2]!.midi);
+  expect(cued).toHaveLength(1);
+  expect(Math.abs(fold(cued[0]! - sung - whole.verdict.key_cents / 100))).toBeLessThan(0.2);
+  // Stopped once it has begun, it is not judged.
+  await expect(status).toHaveText("", { timeout: 10_000 });
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(status).toHaveText("Stopped, so it is not judged; your take is as it was.");
+  await expect(take).toHaveText("Sing again");
+  expect(await page.evaluate(() => window.__cantor.again)).toBeNull();
+  await expect(page.locator("#again-said")).toBeHidden();
+  // Judged where nothing was sung, it is not heard, and says so.
+  await page.evaluate(() => {
+    (window as unknown as Changing).change = (m) => ({ offset: m.offset + 100 });
+  });
+  await take.click();
+  await expect(take).toHaveText("Stop");
+  await expect(take).toHaveText("Sing again", { timeout: 30_000 });
+  await expect(status).toHaveText(
+    "Too little of your voice was heard to judge “alleluia” sung again. Sing nearer the microphone and a little louder, beginning when the cursor appears.",
+  );
+  expect(await page.evaluate(() => window.__cantor.again)).toBeNull();
+  await expect(page.locator("#again-said")).toBeHidden();
+  await expect(page.locator("#send")).toBeEnabled();
+});
+
+test("a phrase sung again is drawn and told as the core judged it, its marks there in place of the take's", async ({ page }) => {
+  test.setTimeout(60_000);
+  await open(page);
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4500);
+  await page.evaluate(() => void window.__cantor.listen());
+  const whole = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  await page.evaluate(() => void window.__cantor.listenAgain());
+  await page.waitForTimeout(3000);
+  await page.evaluate(() => void window.__cantor.listenAgain());
+  const sung = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(2, 5, 0.5, 0.2)))!);
+  expect(sung.verdict.outcome).toBe("heard");
+  // The core's words, after the run's own.
+  await expect(page.locator("#again-said")).toHaveText(`You sang “alleluia” again. ${sung.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  // Its bands there, the take's elsewhere.
+  const drawn = await page.locator("[data-band]").evaluateAll((els) => els.map((el) => el.getAttribute("data-cents")));
+  const cents = (b: { cents: number | null }) => (b.cents === null ? "" : b.cents.toFixed(1));
+  expect(drawn).toEqual([...whole.ribbon.slice(0, 2).map(cents), ...sung.ribbon.map(cents)]);
+  // Its marks ringed there, and none of the take's that reached into it.
+  const ringed = await page.locator(".mark-ring").evaluateAll((els) => els.map((el) => Number((el as SVGElement).dataset.ring)));
+  const notesOf = (marks: Array<{ first: number; last: number }>) => marks.flatMap((m) => Array.from({ length: m.last - m.first + 1 }, (_, k) => m.first + k));
+  const kept = whole.verdict.marks.filter((m: { first: number; last: number }) => m.last < 2);
+  expect(ringed).toEqual(notesOf([...kept, ...sung.verdict.marks]));
+  // Another run sung again takes its place, and the take is shown there again, as the line says.
+  const amen = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(0, 1, 0.5, 0.2)))!);
+  await expect(page.locator("#again-said")).toHaveText(
+    `You sang “A men” again. ${amen.summary.join(" ")} Your take’s bars there are dotted under the new ones. Your take is shown again at “alleluia”, which you sang again before.`,
+  );
+  const redrawn = await page.locator("[data-band]").evaluateAll((els) => els.map((el) => el.getAttribute("data-cents")));
+  expect(redrawn).toEqual([...amen.ribbon.map(cents), ...whole.ribbon.slice(2).map(cents)]);
+  // Sung again once more there, the take is already shown at “alleluia”, so the line says no more.
+  const amen2 = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(0, 1, 0.5, 0.2)))!);
+  await expect(page.locator("#again-said")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  await expect(page.locator("#again-heard")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  // Sung again in the same words, a screen reader's hidden line is emptied a moment and filled
+  // again, so that they are heard; the line on the screen stays as it is, and the score where it
+  // was, scrolled with the line in view.
+  await page.evaluate(() => window.scrollTo(0, document.getElementById("again-said")!.getBoundingClientRect().top + window.scrollY - 120));
+  const heard = await page.evaluate(async () => {
+    const said = document.getElementById("again-said")!;
+    const hidden = document.getElementById("again-heard")!;
+    const top = () => document.getElementById("score")!.getBoundingClientRect().top;
+    const before = top();
+    const seen = { shown: [] as string[], heard: [] as string[], moved: 0 };
+    const watch = new MutationObserver(() => {
+      seen.shown.push(said.textContent ?? "");
+      seen.heard.push(hidden.textContent ?? "");
+      seen.moved = Math.max(seen.moved, Math.abs(top() - before));
+    });
+    for (const el of [said, hidden]) watch.observe(el, { childList: true, characterData: true, subtree: true });
+    await window.__cantor.showAgain(0, 1, 0.5, 0.2);
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+    watch.disconnect();
+    return { ...seen, moved: Math.max(seen.moved, Math.abs(top() - before)), now: hidden.textContent };
+  });
+  const words = `You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`;
+  expect(heard.heard).toEqual(["", words]);
+  expect(heard.shown.every((text) => text === words)).toBe(true);
+  expect(heard.now).toBe(words);
+  expect(heard.moved).toBeLessThan(1);
+  await expect(page.locator("#again-said")).toHaveText(words);
+  // A run sung again inside the last, the take is shown again only either side of it.
+  await page.evaluate(() => window.__cantor.showAgain(2, 5, 0.5, 0.2));
+  const inner = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(3, 4, 0.5, 0.2)))!);
+  await expect(page.locator("#again-said")).toHaveText(
+    `You sang notes 4 to 5 again. ${inner.summary.join(" ")} Your take’s bars there are dotted under the new ones. Your take is shown again at note 3 and note 6, which you sang again before.`,
+  );
+  const nested = await page.locator("[data-band]").evaluateAll((els) => els.map((el) => el.getAttribute("data-cents")));
+  expect(nested).toEqual([...whole.ribbon.slice(0, 3).map(cents), ...inner.ribbon.map(cents), ...whole.ribbon.slice(5).map(cents)]);
+});
+
+test("a phrase holding part of a mark of the take is sung again with the whole of it, said before it is sung, and Send still sends the take", async ({ page }) => {
+  test.setTimeout(120_000);
+  const sent: Buffer[] = [];
+  await page.route("**/api/me", (route) => route.fulfill({ json: { id: "singer", email: null } }));
+  await page.route("**/api/takes", (route) => {
+    sent.push(route.request().postDataBuffer()!);
+    return route.fulfill({ status: 201, json: { id: "A".repeat(32), url: `/take/${"A".repeat(32)}` } });
+  });
+  await open(page);
+  // The microphone's A4 over a chant whose first verse, on A, sets the key and whose second is
+  // all on G: that verse a tone sharp together, one mark over both its phrases.
+  const gabc = "(c4) A(h) men(h) a(h) men(h) (:) al(g)le(g) (;) lu(g)ia(g) (::)";
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [gabc] as const);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(6500);
+  await page.evaluate(() => void window.__cantor.listen());
+  const whole = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const));
+  const seconds = (await page.evaluate(() => window.__cantor.heard()))!.seconds;
+  expect(whole.verdict.marks).toMatchObject([{ kind: "verse", first: 4, last: 7 }]);
+  // Its second phrase chosen, the bar says Sing again sings the whole verse, before it is sung.
+  await page.getByRole("button", { name: "Choose the phrase of note 7", exact: true }).click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([6, 7]);
+  await expect(page.locator("#chosen-text")).toHaveText("Notes 7 to 8 · “lu … ia” · Sing again sings notes 5 to 8");
+  await expect(page.locator("#take")).toHaveAttribute(
+    "title",
+    "Sing again sings notes 5 to 8, to hold the whole of your take’s mark there, in the key you sang them in, to see them over your take",
+  );
+  const take = page.locator("#take");
+  await take.click();
+  await expect(page.locator("#status")).toHaveText("Notes 5 to 8, to hold the whole of your take’s mark there. Listen to its first note.");
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([4, 7]);
+  await expect(page.getByRole("button", { name: "Send to a director" })).toBeDisabled();
+  await expect(take).toHaveText("Sing again", { timeout: 30_000 });
+  expect((await page.evaluate(() => window.__cantor.again))!.run).toEqual([4, 7]);
+  // Send then sends the take: its audio and what was judged of it, not the run's.
+  await page.getByRole("button", { name: "Send to a director" }).click();
+  await expect(page.locator("#sent a")).toBeVisible();
+  expect(sent).toHaveLength(1);
+  const body = sent[0]!;
+  const at = body.indexOf("RIFF");
+  expect(body.readUInt32LE(at + 40) / 2 / body.readUInt32LE(at + 24)).toBeCloseTo(seconds, 1);
+  const json = JSON.parse(/name="take"\r\n\r\n(\{.*\})\r\n--/s.exec(body.toString("utf8"))![1]!);
+  expect(json.judged.ribbon).toEqual(whole.ribbon);
+  expect(json.judged.verdict.marks).toEqual(whole.verdict.marks);
+});
+
 test("beside a take of a long chant, the bar has a segment a phrase to go to it, by tap, keyboard or drag", async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 390, height: 600 });
