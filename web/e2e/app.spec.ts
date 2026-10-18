@@ -615,13 +615,16 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
       const el = document.activeElement as HTMLElement;
       return el.closest("#overview") ? { run: el.dataset.run, tab: el.tabIndex } : null;
     });
+  // Each read waits for the strip to be regrouped: the resize is answered after it resolves.
   await page.setViewportSize({ width: 240, height: 600 });
-  await expect.poll(async () => (await keyed())?.run).not.toBe("12-13");
-  const narrowed = (await keyed())!;
-  const [from, to] = narrowed.run!.split("-").map(Number);
+  await expect.poll(() => segments.count()).toBeLessThan(16);
+  const narrowed = await keyed();
+  expect(narrowed).not.toBeNull();
+  const [from, to] = narrowed!.run!.split("-").map(Number);
   expect(from! <= 12 && 12 <= to!).toBe(true);
-  expect(narrowed.tab).toBe(0);
+  expect(narrowed!.tab).toBe(0);
   await page.setViewportSize({ width: 390, height: 600 });
+  await expect(segments).toHaveCount(16);
   await expect(segments.nth(6)).toBeFocused();
   expect(await keyed()).toEqual({ run: "12-13", tab: 0 });
   await page.keyboard.press("Enter");
@@ -662,6 +665,37 @@ test("beside a take of a long chant, the bar has a segment a phrase to go to it,
   // Whole chant lets it go.
   await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   expect(await segments.evaluateAll((els) => els.filter((el) => el.hasAttribute("aria-current")).length)).toBe(0);
+  // A phrase chosen as the page scrolls through it to another is left in view: the scroll to the
+  // other goes no further. The first phrase from below the window to come well into view is
+  // chosen.
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  const passing = await page.evaluate(
+    () =>
+      new Promise<number | null>((resolve) => {
+        const segs = [...document.querySelectorAll<HTMLButtonElement>("#overview [data-run]")];
+        const within = (k: number, margin: number) => {
+          const b = document.querySelector(`#score [data-band="${2 * k}"]`)!.getBoundingClientRect();
+          return b.top >= margin && b.bottom <= document.querySelector(".bar")!.getBoundingClientRect().top - margin;
+        };
+        const below = segs.map((_, k) => k).filter((k) => k > 0 && k < 15 && !within(k, 0));
+        segs[15]!.click();
+        let frames = 0;
+        const step = () => {
+          const k = below.find((k) => within(k, 80));
+          if (k !== undefined) {
+            segs[k]!.click();
+            resolve(k);
+          } else if (++frames > 300) resolve(null);
+          else requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }),
+  );
+  expect(passing).not.toBeNull();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2 * passing!, 2 * passing! + 1]);
+  await page.waitForTimeout(1500);
+  expect(await clear(2 * passing!)).toBe(true);
+  await page.locator("#chosen").getByRole("button", { name: "Whole chant" }).click();
   // With no places, the bar grows as a phrase is first chosen, and the phrase is still brought
   // clear of it.
   const clean = gabc.replace("Kyrie(g)", "Kyrie(h)").replace("Deus(f)", "Deus(h)");

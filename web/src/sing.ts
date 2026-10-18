@@ -410,7 +410,9 @@ function reveal(els: ReadonlyArray<Element | null>, behavior: "smooth" | "auto")
   const bottom = Math.max(...boxes.map((b) => b.bottom));
   // The page's scroll padding keeps clear of the bar and the card at the foot.
   const clear = window.innerHeight - (parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) || 0);
-  if (top >= 0 && bottom <= clear) return;
+  // Already clear, the page stays where it is: a scroll still under way, to a place chosen
+  // before, is stopped, or it would carry this one out of view.
+  if (top >= 0 && bottom <= clear) return window.scrollBy({ top: 0, behavior: "instant" });
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const by = bottom - top <= clear ? (top + bottom) / 2 - clear / 2 : top - 8;
   window.scrollBy({ top: by, behavior: still ? "auto" : behavior });
