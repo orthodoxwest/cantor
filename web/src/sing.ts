@@ -151,8 +151,8 @@ const inKeyLine = byId<HTMLParagraphElement>("in-key-line");
 const inKeyBox = byId<HTMLInputElement>("in-key");
 const recordedText = byId<HTMLParagraphElement>("recorded");
 // A run of the take sung again: the core's words of it beside the take, and the same words for a
-// screen reader, filled anew for each run so that the same words are heard again without the
-// line moving the score.
+// screen reader (the line on the screen hidden from it, so they are read once), filled anew for
+// each run so that the same words are heard again without the line moving the score.
 const againText = byId<HTMLParagraphElement>("again-said");
 const againHeard = byId<HTMLParagraphElement>("again-heard");
 // The take before this one of the same chant, kept on the device, drawn dotted under it unless

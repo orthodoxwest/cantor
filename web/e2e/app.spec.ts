@@ -1103,6 +1103,7 @@ test("a phrase sung again is drawn and told as the core judged it, its marks the
   // Sung again once more there, the take is already shown at “alleluia”, so the line says no more.
   const amen2 = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(0, 1, 0.5, 0.2)))!);
   await expect(page.locator("#again-said")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  await expect(page.locator("#again-heard")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
   // Sung again in the same words, a screen reader's hidden line is emptied a moment and filled
   // again, so that they are heard; the line on the screen stays as it is, and the score where it
   // was, scrolled with the line in view.
