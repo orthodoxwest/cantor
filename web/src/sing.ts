@@ -18,6 +18,7 @@ import { Replay } from "./replay";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, throughHeard, timed, type Timed } from "./timing";
+import { anyKept, chantKey, forget, keep, type Kept, kept, notesOf, onNews, whenSung } from "./kept";
 
 void offerSignIn();
 
@@ -145,6 +146,29 @@ const keyText = byId<HTMLParagraphElement>("key");
 const inKeyLine = byId<HTMLParagraphElement>("in-key-line");
 const inKeyBox = byId<HTMLInputElement>("in-key");
 const recordedText = byId<HTMLParagraphElement>("recorded");
+// The take before this one of the same chant, kept on the device, drawn dotted under it unless
+// the singer turns it off; the foot of the page says takes are kept, and forgets them at a tap.
+const beforeLine = byId<HTMLParagraphElement>("before-line");
+const beforeBox = byId<HTMLInputElement>("before");
+const beforeWhen = byId<HTMLSpanElement>("before-when");
+const keptText = byId<HTMLParagraphElement>("kept");
+const keptSaid = byId<HTMLSpanElement>("kept-said");
+const forgottenText = byId<HTMLSpanElement>("forgotten");
+/** What the foot says once the takes kept are forgotten, here or in another tab. */
+const FORGOTTEN = "Forgotten: no take is kept on this device now.";
+/** How many times the takes kept have been forgotten, here or in another tab: a take kept read
+ * before the latest is not drawn. */
+let forgettings = 0;
+const forgetButton = byId<HTMLButtonElement>("forget");
+/** Where the singer's choice of whether to see the take before is remembered. */
+const BEFORE_KEY = "cantor.before";
+try {
+  beforeBox.checked = localStorage.getItem(BEFORE_KEY) !== "off";
+} catch {
+  // A browser that keeps nothing shows it.
+}
+/** The take kept before the take shown, while that take is shown. */
+let before: { of: Judged; take: Kept } | null = null;
 const readingText = byId<HTMLDetailsElement>("reading");
 const recording = found?.recording ?? [];
 const placesSection = byId<HTMLElement>("places");
@@ -506,6 +530,7 @@ function drawResult(): void {
     say("");
     readingText.hidden = true;
     recordedText.hidden = true;
+    beforeLine.hidden = true;
     inKeyLine.hidden = true;
     keyText.hidden = judged?.ribbon.length === 0;
     if (judged) keyText.textContent = unheard(judged);
@@ -517,13 +542,17 @@ function drawResult(): void {
   // The recording is of the chant as the library gave it, so not of another put on the page.
   const underlay = score.source === piece.gabc && recording.length === judged.ribbon.length ? recording : [];
   recordedText.hidden = !underlay.some((b) => b.trace.length > 0);
+  const was = before?.of === judged ? before.take : null;
+  beforeLine.hidden = !was;
+  if (was) beforeWhen.textContent = whenSung(was.at, Date.now());
+  const faint = was && beforeBox.checked ? was.bands : [];
   score.showStrips((timeline, room) => {
     strips = { places: places(timeline.notes), stripTop: room.stripTop };
     return (
       // The marks first, so that the keyboard reaches them before the bands; the playhead over
       // the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, bandName, underlay) +
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, bandName, underlay, faint) +
       playheadSvg()
     );
   });
@@ -562,6 +591,114 @@ function drawSummary(judged: Judged | null): void {
   }
   summaryText.hidden = !summaryText.textContent;
 }
+beforeBox.addEventListener("change", () => {
+  try {
+    localStorage.setItem(BEFORE_KEY, beforeBox.checked ? "on" : "off");
+  } catch {
+    // Remembered for this page only.
+  }
+  drawResult();
+});
+
+/** Whether `judged` is a take worth keeping, and drawing one kept under: one heard. */
+const keepable = (judged: Judged) => judged.verdict.key_cents !== null && judged.ribbon.length > 0;
+
+/** How long a take shown waits for the take kept before it, in seconds: the read begins with the
+ * take, so it is long done by then unless the browser's storage is not answering, and the take is
+ * not held up for it. */
+const KEPT_WAIT = 0.25;
+
+/** The take kept of `gabc` on the notes the page has now, or null when there is none or it could
+ * not be read; it never fails. Asked for as a take begins, so that it is found by the time the
+ * take is shown and drawn with it, and the score is laid out once. */
+async function findKept(gabc: string): Promise<Kept | null> {
+  const notes = notesOf(score.timeline.notes);
+  try {
+    return await kept(await chantKey(gabc), notes);
+  } catch {
+    // A browser that keeps nothing (a private window may not) shows no take before.
+    return null;
+  }
+}
+
+/** Sets the take before `judged` to what `finding` found, if it has within [`KEPT_WAIT`], and
+ * the takes kept have not been forgotten since it was asked for, when they had been forgotten
+ * `since` times; one found later is not drawn, as it would move the score drawn without it. */
+async function findBefore(judged: Judged, finding: Promise<Kept | null>, since: number): Promise<void> {
+  const was = await Promise.race([finding, wait(KEPT_WAIT).then(() => null)]);
+  before = was && keepable(judged) && forgettings === since ? { of: judged, take: was } : null;
+}
+
+/** Keeps the take just shown, `judged` against `gabc`, as the last of its chant on this device;
+ * a take not heard is not kept, nor replaces one. */
+async function keepShown(judged: Judged, gabc: string): Promise<void> {
+  if (!keepable(judged)) return;
+  const take = { at: Date.now(), notes: notesOf(score.timeline.notes), bands: judged.ribbon };
+  try {
+    await keep(await chantKey(gabc), take);
+    sayKept();
+  } catch {
+    // As above: nothing is kept.
+  }
+}
+
+/** The foot of the page says takes are kept, and offers to forget them. */
+function sayKept(): void {
+  keptText.hidden = keptSaid.hidden = false;
+  if (forgottenText.textContent) forgottenText.textContent = "";
+}
+
+/** The foot of the page says the takes kept are forgotten, in place of saying they are kept, and
+ * no take before is drawn. */
+function sayForgotten(): void {
+  forgettings++;
+  before = null;
+  keptSaid.hidden = true;
+  if (forgottenText.textContent !== FORGOTTEN) forgottenText.textContent = FORGOTTEN;
+}
+
+// Once any take is kept, the foot of the page says so.
+void anyKept().then(
+  (any) => {
+    if (any) sayKept();
+  },
+  () => {},
+);
+
+/** Does `change`, which may show or hide a line above the score, keeping `el` where it was on the
+ * screen, as a browser that anchors scrolling would. */
+function keeping(el: Element, change: () => void): void {
+  const at = el.getBoundingClientRect().top;
+  change();
+  const moved = el.getBoundingClientRect().top - at;
+  if (moved !== 0) window.scrollBy(0, moved);
+}
+
+forgetButton.addEventListener("click", () => {
+  void forget().then(
+    () =>
+      // The button stays under the finger, with the focus, as the line above the score goes.
+      keeping(forgetButton, () => {
+        sayForgotten();
+        drawResult();
+      }),
+    () => {
+      // Forgotten already, they still are; else the foot says so in place of saying they are kept.
+      if (forgottenText.textContent === FORGOTTEN) return;
+      keptSaid.hidden = true;
+      forgottenText.textContent = "Your takes could not be forgotten.";
+    },
+  );
+});
+// Forgotten in another tab, the take before is no longer drawn here either; kept in another,
+// the foot says so again.
+onNews((news) => {
+  if (news === "kept") return sayKept();
+  const drawn = before !== null;
+  sayForgotten();
+  if (drawn) steadily(drawResult);
+});
+
 // The guide sings anew from where it is next played; the take alone plays on.
 inKeyBox.addEventListener("change", () => {
   if (playing && playing.button !== hearButton) stopPlay();
@@ -1725,6 +1862,9 @@ async function takeScored(): Promise<void> {
   const take = ++takes;
   // A take that is no longer going leaves the page alone: whatever stopped it has seen to it.
   const going = () => taking && take === takes;
+  // The take kept before is read while this one is sung.
+  const finding = findKept(score.source);
+  const since = forgettings;
   taking = true;
   document.body.classList.add("taking");
   stayAwake("take");
@@ -1825,9 +1965,12 @@ async function takeScored(): Promise<void> {
     const json = await listener.judge(score.source, guide.pulse, offset, through);
     if (!going()) return;
     const judged = JSON.parse(json) as Judged;
+    await findBefore(judged, finding, since);
+    if (!going()) return;
     setStatus("");
     showResult(judged, cut, worn);
     offerSend({ gabc: score.source, pulse: guide.pulse, offset, judged });
+    void keepShown(judged, score.source);
     shownNow = true;
   } catch (error) {
     if (going()) setStatus(`The take failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1961,10 +2104,14 @@ if (test) {
         offerReplay(null);
         score.setChant(new Chant(gabc));
       }
+      const finding = findKept(gabc);
+      const since = forgettings;
       const json = await listener.judge(gabc, pulse, offset, through);
       const judged = JSON.parse(json) as Judged;
+      await findBefore(judged, finding, since);
       showResult(judged, through);
       offerSend({ gabc, pulse, offset, judged });
+      await keepShown(judged, gabc);
       return json;
     },
   };
