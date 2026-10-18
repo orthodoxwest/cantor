@@ -643,6 +643,9 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
   font-weight: 500;
   color: var(--muted);
   text-align: left;
+  /* "Termination" is wider than its column on the narrowest phones. */
+  hyphens: auto;
+  overflow-wrap: break-word;
 }
 .grid thead th:first-child {
   width: 32%;
@@ -687,7 +690,7 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
   background: var(--pressed);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
-/* Off pitch in the colour of a mark's ring, not heard clearly in amber, the rest muted. */
+/* Off pitch in the colour of a mark's ring, too little heard in amber, the rest muted. */
 .grid .off-pitch .said {
   font-weight: 500;
   color: #b8452f;
@@ -696,9 +699,18 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
 .grid .unclear .said {
   color: var(--unsure);
 }
+.grid .stopped .said,
 .grid .unsung .said,
-.grid .recited .said {
+.grid .no-ending .said {
   color: var(--muted);
+}
+/* An ending off pitch inside a part, under the part's own, in the colour of a mark's ring. */
+.grid .inner {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: #b8452f;
+  color: light-dark(#b8452f, #ef8a73);
 }
 .grid .was {
   display: block;

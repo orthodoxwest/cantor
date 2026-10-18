@@ -6,26 +6,24 @@ import type { Grid, GridCell, GridRow } from "./ribbon";
 
 /** The grid of a take with a run of it sung again, the run's grid `sung` in its place: each part
  * the run called (one it sang, not "unsung" in its grid) as the run called it, with the take's
- * cell there beside it as `was`; the rest the take's, and a verse the run reached that the take
- * did not (a take stopped short) as the run has it. */
+ * cell there beside it as `was`, unless neither had an ending to judge; the rest the take's. A
+ * run is sung only within what the take judged, so its verses are the take's. */
 export function gridWith(take: Grid | null | undefined, sung: Grid | null | undefined): Grid | null {
   if (!take || !sung) return take ?? null;
   const by = new Map(sung.rows.map((row) => [row.verse, row]));
   const columns = take.columns.map(({ part }) => sung.columns.findIndex((c) => c.part === part));
   const rows: GridRow[] = take.rows.map((row) => {
     const again = by.get(row.verse);
-    by.delete(row.verse);
     if (!again) return row;
     return {
       ...row,
       cells: row.cells.map((cell, c) => {
         const now = again.cells[columns[c]!] ?? null;
-        return now && now.called !== "unsung" ? { ...now, was: cell ?? undefined } : cell;
+        if (!now || now.called === "unsung") return cell;
+        return now.called === "no-ending" && cell?.called === "no-ending" ? cell : { ...now, was: cell ?? undefined };
       }),
     };
   });
-  rows.push(...by.values());
-  rows.sort((a, b) => a.first - b.first);
   return { ...take, rows };
 }
 
@@ -64,8 +62,8 @@ export function stepCell(rows: ReadonlyArray<{ cells: ReadonlyArray<GridCell | n
 }
 
 /** The opening words of a verse, `words` sung on it, as its row is headed: its first `count`
- * words, and an ellipsis if it has more. */
+ * words, and an ellipsis if it has more, kept on the line of the word before it. */
 export function opening(words: string, count = 3): string {
   const all = words.split(/\s+/).filter(Boolean);
-  return all.length > count ? `${all.slice(0, count).join(" ")} …` : all.join(" ");
+  return all.length > count ? `${all.slice(0, count).join(" ")}\u00a0…` : all.join(" ");
 }

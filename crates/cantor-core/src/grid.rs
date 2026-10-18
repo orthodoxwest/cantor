@@ -51,13 +51,28 @@ pub enum Called {
     OnPitch,
     /// Off pitch.
     OffPitch,
-    /// Not heard clearly enough to call either way.
+    /// Too little of it heard to call either way: its notes too short, or their frames at odds
+    /// ([`crate::judge::Cadence::cents`]).
     Unclear,
-    /// Not sung in what was judged: a take stopped before it, or a run sung again that does not
-    /// hold it.
+    /// Sung in part, a take stopped in it before its ending: not judged.
+    Stopped,
+    /// Not sung: a take stopped before it, or a run sung again that does not hold it.
     Unsung,
-    /// It ends on the reciting tone, so it has no ending to call ([`crate::judge::cadences`]).
-    Recited,
+    /// Sung, but the judge places no ending in it to call ([`crate::judge::cadences`]): one that
+    /// stays on the reciting tone, or whose syllables leave no recited note before its formula.
+    NoEnding,
+}
+
+/// An ending inside a part, before the one closing it (at a breath, or the first of two flexes),
+/// that the judge heard off pitch: over the notes `first..=last`, its note furthest off and how
+/// far, in cents from the key, and in words.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Inner {
+    pub first: usize,
+    pub last: usize,
+    pub note: Option<usize>,
+    pub cents: Option<f32>,
+    pub words: String,
 }
 
 /// One part of one verse.
@@ -75,6 +90,11 @@ pub struct Cell {
     pub cents: Option<f32>,
     /// How it was called, in words: "On pitch", "A semitone below".
     pub words: String,
+    /// The endings off pitch inside it, before the one closing it, in order: so a part whose own
+    /// ending was on pitch does not read as wholly on pitch while one of its earlier phrases
+    /// went off.
+    #[serde(default)]
+    pub inner: Vec<Inner>,
 }
 
 /// One psalm verse.
@@ -105,16 +125,19 @@ pub struct Grid {
     /// The parts the chant's verses have, in the order they are sung: a flex only where a verse
     /// has one.
     pub columns: Vec<Column>,
-    /// The verses any of `judged` falls in, in order.
+    /// The verses any of what was sung falls in, in order.
     pub rows: Vec<Row>,
 }
 
-/// The grid of `chant`'s psalm verses as `verdict` judged its notes `judged` (a take of the whole
-/// chant, a take stopped short, or a run sung again: the verdict's notes are the chant's, by
-/// index). A cell is called as its phrase ending is, the judge's cadence that closes the part;
-/// one whose ending the verdict does not hold was not sung in what was judged. None unless the
-/// verdict was heard and the chant is a recited one with at least [`GRID_VERSES`] psalm verses.
-pub fn grid(chant: &[Note], verdict: &Verdict, judged: Range<usize>) -> Option<Grid> {
+/// The grid of `chant`'s psalm verses as `verdict` judged its notes `judged`, of the notes `sung`
+/// (a take of the whole chant, both all its notes; a take stopped short, judged to the end of the
+/// last phrase finished and sung through the last note sung whole; a run sung again, both the
+/// run's: the verdict's notes are the chant's, by index). A row for each verse any of `sung`
+/// falls in. A cell is called as its phrase ending is, the judge's cadence that closes the part,
+/// with the endings inside it heard off pitch; one whose ending the verdict does not hold was
+/// stopped in, or not sung. None unless the verdict was heard and the chant is a recited one with
+/// at least [`GRID_VERSES`] psalm verses.
+pub fn grid(chant: &[Note], verdict: &Verdict, judged: Range<usize>, sung: Range<usize>) -> Option<Grid> {
     if verdict.outcome != Outcome::Heard || !recited(chant) {
         return None;
     }
@@ -137,7 +160,7 @@ pub fn grid(chant: &[Note], verdict: &Verdict, judged: Range<usize>) -> Option<G
     let rows = verses
         .iter()
         .enumerate()
-        .filter(|&(_, &(_, first, last))| first < judged.end && judged.start <= last)
+        .filter(|&(_, &(_, first, last))| first < sung.end && sung.start <= last)
         .map(|(k, &(verse, first, last))| Row {
             verse,
             number: k + 1,
@@ -148,7 +171,7 @@ pub fn grid(chant: &[Note], verdict: &Verdict, judged: Range<usize>) -> Option<G
                 .map(|&part| {
                     let first = (first..=last).find(|&i| chant[i].part == part)?;
                     let last = (first..=last).rev().find(|&i| chant[i].part == part)?;
-                    Some(cell(part, first, last, verdict, &cadences, &judged))
+                    Some(cell(part, first, last, verdict, &cadences, &judged, &sung))
                 })
                 .collect(),
         })
@@ -166,36 +189,60 @@ pub fn grid(chant: &[Note], verdict: &Verdict, judged: Range<usize>) -> Option<G
 }
 
 /// The cell of `part` over the notes `first..=last`, as `verdict` called the cadence of the
-/// chant's `cadences` that closes it; with none, ending on the reciting tone if sung in the notes
-/// `judged`.
-fn cell(part: Part, first: usize, last: usize, verdict: &Verdict, cadences: &[(usize, usize)], judged: &Range<usize>) -> Cell {
+/// chant's `cadences` that closes it, with those inside it it called off pitch; with none, one
+/// with no ending if it was all judged in the notes `judged`. One the verdict did not call was
+/// stopped in if any of it was `sung`, else not sung.
+fn cell(
+    part: Part,
+    first: usize,
+    last: usize,
+    verdict: &Verdict,
+    cadences: &[(usize, usize)],
+    judged: &Range<usize>,
+    sung: &Range<usize>,
+) -> Cell {
     let ending = cadences.iter().copied().find(|&(from, to)| to == last && first <= from);
-    let sung = judged.start <= first && last < judged.end;
-    let judged = verdict.cadences.iter().find(|c| c.last == last && first <= c.first);
-    let called = match (ending, judged.map(|c| c.on_pitch())) {
-        (None, _) if sung => Called::Recited,
-        (None, _) => Called::Unsung,
-        (Some(_), None) => Called::Unsung,
+    let all_judged = judged.start <= first && last < judged.end;
+    let some_sung = first < sung.end && sung.start <= last;
+    let called_as = verdict.cadences.iter().find(|c| c.last == last && first <= c.first);
+    let called = match (ending, called_as.map(|c| c.on_pitch())) {
+        (None, _) if all_judged => Called::NoEnding,
         (Some(_), Some(None)) => Called::Unclear,
         (Some(_), Some(Some(true))) => Called::OnPitch,
         (Some(_), Some(Some(false))) => Called::OffPitch,
+        _ if some_sung && !all_judged => Called::Stopped,
+        _ => Called::Unsung,
     };
-    let cents = judged.and_then(|c| c.cents);
+    let inner = verdict
+        .cadences
+        .iter()
+        .filter(|c| first <= c.first && c.last < last && c.on_pitch() == Some(false))
+        .map(|c| Inner {
+            first: c.first,
+            last: c.last,
+            note: c.note,
+            cents: c.cents,
+            words: format!("Earlier in it, {}", interval(c.cents.unwrap_or(0.0))),
+        })
+        .collect();
+    let cents = called_as.and_then(|c| c.cents);
     Cell {
         part,
         first,
         last,
         called,
         ending,
-        note: judged.and_then(|c| c.note),
+        note: called_as.and_then(|c| c.note),
         cents,
         words: match called {
             Called::OnPitch => "On pitch".to_string(),
             Called::OffPitch => capitalise(&interval(cents.unwrap_or(0.0))),
-            Called::Unclear => "Not heard clearly".to_string(),
+            Called::Unclear => "Too little heard to judge".to_string(),
+            Called::Stopped => "Stopped before its end".to_string(),
             Called::Unsung => "Not sung".to_string(),
-            Called::Recited => "Ends on the reciting tone".to_string(),
+            Called::NoEnding => "No ending to judge".to_string(),
         },
+        inner,
     }
 }
 
@@ -263,7 +310,7 @@ mod tests {
         let notes = crate::notes_from_gabc(PSALM, 0.5);
         assert_eq!(notes.len(), 43);
         let v = judge(&notes, &report(&flat_mediants()));
-        let grid = grid(&notes, &v, 0..notes.len()).unwrap();
+        let grid = grid(&notes, &v, 0..notes.len(), 0..notes.len()).unwrap();
         assert_eq!(
             grid.columns.iter().map(|c| (c.part, c.name.as_str())).collect::<Vec<_>>(),
             [(Part::Flex, "Flex"), (Part::Mediant, "Mediant"), (Part::Termination, "Termination")]
@@ -292,7 +339,7 @@ mod tests {
                 vec![
                     None,
                     Some((Part::Mediant, 32, 36, Called::OffPitch, below())),
-                    Some((Part::Termination, 37, 42, Called::Recited, "Ends on the reciting tone".to_string())),
+                    Some((Part::Termination, 37, 42, Called::NoEnding, "No ending to judge".to_string())),
                 ],
             ]
         );
@@ -315,20 +362,28 @@ mod tests {
         let mut cents = flat_mediants();
         cents[30] = None;
         let v = judge(&notes, &report(&cents));
-        let grid = grid(&notes, &v, 0..notes.len()).unwrap();
+        let grid = grid(&notes, &v, 0..notes.len(), 0..notes.len()).unwrap();
         let cell = grid.rows[1].cells[2].as_ref().unwrap();
         assert_eq!(
             (cell.called, cell.words.as_str(), cell.cents),
-            (Called::Unclear, "Not heard clearly", None)
+            (Called::Unclear, "Too little heard to judge", None)
         );
     }
 
     #[test]
-    fn a_take_stopped_short_has_the_verses_it_reached_and_its_parts_not_sung_said_so() {
+    fn a_take_stopped_short_has_the_verses_it_reached_and_says_which_parts_it_stopped_in() {
         let notes = crate::notes_from_gabc(PSALM, 0.5);
-        // Stopped after the second verse's mediant.
+        let stopped = || ("Stopped before its end".to_string(), Called::Stopped);
+        let unsung = || ("Not sung".to_string(), Called::Unsung);
+        let said = |grid: &Grid| -> Vec<Vec<Option<(String, Called)>>> {
+            cells(grid)
+                .into_iter()
+                .map(|r| r.into_iter().map(|c| c.map(|c| (c.4, c.3))).collect())
+                .collect()
+        };
+        // Stopped after the second verse's mediant: judged and sung to there.
         let v = judge_part(&notes, 26, &report(&flat_mediants()[..26]));
-        let reached = grid(&notes, &v, 0..26).unwrap();
+        let reached = grid(&notes, &v, 0..26, 0..26).unwrap();
         assert_eq!(
             reached.rows.iter().map(|r| (r.verse, r.number)).collect::<Vec<_>>(),
             [(0, 1), (1, 2)]
@@ -336,10 +391,82 @@ mod tests {
         let row = &cells(&reached)[1];
         assert_eq!(row[1].as_ref().map(|c| c.3), Some(Called::OffPitch));
         assert_eq!(row[2], Some((Part::Termination, 26, 31, Called::Unsung, "Not sung".to_string())));
-        // Stopped before a part that ends on the reciting tone, it is not sung either.
+        // Stopped partway through the second verse's termination, sung whole through note 28: it
+        // was stopped in, not left unsung.
+        let v = judge_part(&notes, 26, &report(&flat_mediants()[..26]));
+        assert_eq!(said(&grid(&notes, &v, 0..26, 0..29).unwrap())[1][2], Some(stopped()));
+        // Stopped in the third verse's mediant, which is judged not at all: the verse has a row,
+        // its mediant stopped in and its termination not sung.
+        let v = judge_part(&notes, 32, &report(&flat_mediants()[..32]));
+        let third = grid(&notes, &v, 0..32, 0..35).unwrap();
+        assert_eq!(third.rows.iter().map(|r| r.number).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(said(&third)[2], [None, Some(stopped()), Some(unsung())]);
+        // Stopped before a part with no ending, it is not sung either; stopped in it, stopped in.
         let v = judge_part(&notes, 37, &report(&flat_mediants()[..37]));
-        let short = grid(&notes, &v, 0..37).unwrap();
-        assert_eq!(short.rows[2].cells[2].as_ref().map(|c| c.called), Some(Called::Unsung));
+        assert_eq!(said(&grid(&notes, &v, 0..37, 0..37).unwrap())[2][2], Some(unsung()));
+        assert_eq!(said(&grid(&notes, &v, 0..37, 0..40).unwrap())[2][2], Some(stopped()));
+    }
+
+    #[test]
+    fn an_ending_off_pitch_inside_a_part_is_told_with_it() {
+        // A breath inside the first verse's mediant, and two flexes in the second verse: each
+        // part's earlier ending is its own phrase, closed before the part's.
+        let gabc = "(c4) a(h) b(h) c(h) d(g) (,) e(h) f(h) g(h) h(i) i(h) *(:) j(h) k(h) l(h) m(g) n(f) (:) \
+            a(h) b(h) c(h) d(g) †(,) e(h) f(h) g(h) h(g) †(,) i(h) j(h) k(h) l(i) m(h) *(:) n(h) o(h) p(h) q(g) r(f) (::)";
+        let notes = crate::notes_from_gabc(gabc, 0.5);
+        let cadences = crate::judge::cadences(&notes);
+        let mediant = (0..notes.len())
+            .filter(|&i| notes[i].verse == 0 && notes[i].part == Part::Mediant)
+            .max()
+            .unwrap();
+        let flex = (0..notes.len()).filter(|&i| notes[i].part == Part::Flex).max().unwrap();
+        // The ending at the breath, and at the first flex.
+        let breath = *cadences.iter().find(|&&(_, to)| to < mediant).unwrap();
+        let first_flex = *cadences
+            .iter()
+            .rev()
+            .find(|&&(from, to)| to < flex && notes[from].part == Part::Flex)
+            .unwrap();
+        let mut cents = vec![Some(0.0); notes.len()];
+        cents[breath.1] = Some(-200.0);
+        cents[first_flex.1] = Some(-200.0);
+        let v = judge(&notes, &report(&cents));
+        let grid = grid(&notes, &v, 0..notes.len(), 0..notes.len()).unwrap();
+        let inner = |r: usize, c: usize| -> (Called, Vec<(usize, usize, String)>) {
+            let cell = grid.rows[r].cells[c].as_ref().unwrap();
+            (cell.called, cell.inner.iter().map(|i| (i.first, i.last, i.words.clone())).collect())
+        };
+        let earlier = |(from, to): (usize, usize)| vec![(from, to, "Earlier in it, a whole tone below".to_string())];
+        // The part's own ending on pitch, its earlier one off and told with it.
+        assert_eq!(
+            grid.columns.iter().map(|c| c.part).collect::<Vec<_>>(),
+            [Part::Flex, Part::Mediant, Part::Termination]
+        );
+        assert_eq!(inner(0, 1), (Called::OnPitch, earlier(breath)));
+        assert_eq!(inner(1, 0), (Called::OnPitch, earlier(first_flex)));
+        assert_eq!(inner(1, 1), (Called::OnPitch, vec![]));
+        let noted = &grid.rows[0].cells[1].as_ref().unwrap().inner[0];
+        assert_eq!((noted.note, noted.cents), (Some(breath.1), Some(-200.0)));
+        // Every ending the verdict called off pitch is in a cell, its own or one inside it.
+        let off: Vec<(usize, usize)> = v
+            .cadences
+            .iter()
+            .filter(|c| c.on_pitch() == Some(false))
+            .map(|c| (c.first, c.last))
+            .collect();
+        let told: Vec<(usize, usize)> = grid
+            .rows
+            .iter()
+            .flat_map(|r| r.cells.iter().flatten())
+            .flat_map(|c| {
+                c.inner
+                    .iter()
+                    .map(|i| (i.first, i.last))
+                    .chain((c.called == Called::OffPitch).then(|| c.ending.unwrap()))
+            })
+            .collect();
+        assert_eq!(off, told);
+        assert_eq!(off.len(), 2, "{v:?}");
     }
 
     #[test]
@@ -348,7 +475,7 @@ mod tests {
         let take = judge(&notes, &report(&flat_mediants()));
         // The second verse's mediant sung again in tune.
         let v = judge_again(&notes, 19..26, &report(&[Some(0.0); 7]), 0.0, &take);
-        let grid = grid(&notes, &v, 19..26).unwrap();
+        let grid = grid(&notes, &v, 19..26, 19..26).unwrap();
         assert_eq!(
             cells(&grid),
             [vec![
@@ -364,19 +491,27 @@ mod tests {
     #[test]
     fn only_a_heard_psalm_of_two_verses_or_more_has_one() {
         let notes = crate::notes_from_gabc(PSALM, 0.5);
-        assert!(grid(&notes, &judge(&notes, &report(&[None; 43])), 0..43).is_none());
+        assert!(grid(&notes, &judge(&notes, &report(&[None; 43])), 0..43, 0..43).is_none());
         // A hymn is not recited; an introit's one psalm verse is no column to read down.
         let hymn = crate::notes_from_gabc(
             "(c4) Lu(f)cis(g) cre(h)a(g)tor(f) (;) op(g)ti(h)me(g) (:) qui(h) lu(i)cem(h) (::)",
             0.5,
         );
-        assert!(grid(&hymn, &judge(&hymn, &report(&vec![Some(0.0); hymn.len()])), 0..hymn.len()).is_none());
+        assert!(
+            grid(
+                &hymn,
+                &judge(&hymn, &report(&vec![Some(0.0); hymn.len()])),
+                0..hymn.len(),
+                0..hymn.len()
+            )
+            .is_none()
+        );
         let introit = crate::notes_from_gabc(
             "(c4) Ad(f) te(g) le(h)va(g)vi(f) (::) Vi(h)as(h) tu(h)as(h) Do(h)mi(i)ne(h) *(:) de(h)mon(h)stra(h) mi(h)hi(g) (::)",
             0.5,
         );
         let v = judge(&introit, &report(&vec![Some(0.0); introit.len()]));
         assert!(crate::judge::recited(&introit), "{introit:?}");
-        assert!(grid(&introit, &v, 0..introit.len()).is_none());
+        assert!(grid(&introit, &v, 0..introit.len(), 0..introit.len()).is_none());
     }
 }

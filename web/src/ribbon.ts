@@ -67,19 +67,31 @@ export interface Judged {
 export type Part = "whole" | "flex" | "mediant" | "termination";
 
 /** One part of one verse, as cantor-core's grid `Cell` serializes: its notes `first` to `last`,
- * its ending's notes as the judge placed them, how the judge called it and in words, and the note
- * of its ending furthest off and how far in cents, when called. `was`, drawn only, is the take's
- * cell where a run sung again called it anew (grid.ts `gridWith`). */
+ * its ending's notes as the judge placed them, how the judge called it and in words, the note of
+ * its ending furthest off and how far in cents, when called, and the endings off pitch inside it
+ * before its own (`inner`). `was`, drawn only, is the take's cell where a run sung again called
+ * it anew (grid.ts `gridWith`). */
 export interface GridCell {
   part: Part;
   first: number;
   last: number;
-  called: "on-pitch" | "off-pitch" | "unclear" | "unsung" | "recited";
+  called: "on-pitch" | "off-pitch" | "unclear" | "stopped" | "unsung" | "no-ending";
   ending: [number, number] | null;
   note: number | null;
   cents: number | null;
   words: string;
+  inner?: GridInner[];
   was?: GridCell;
+}
+
+/** An ending off pitch inside a part, before the part's own, as cantor-core's grid `Inner`
+ * serializes: its notes, its note furthest off and how far, and in words. */
+export interface GridInner {
+  first: number;
+  last: number;
+  note: number | null;
+  cents: number | null;
+  words: string;
 }
 
 /** One psalm verse, as cantor-core's grid `Row` serializes: the chant's verse, its place among

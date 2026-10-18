@@ -8,7 +8,7 @@ const cell = (part: GridCell["part"], first: number, last: number, called: GridC
   first,
   last,
   called,
-  ending: called === "recited" ? null : [last - 1, last],
+  ending: called === "no-ending" ? null : [last - 1, last],
   note: called === "on-pitch" || called === "off-pitch" ? last : null,
   cents: called === "off-pitch" ? -200 : called === "on-pitch" ? 10 : null,
   words,
@@ -28,7 +28,7 @@ const take: Grid = {
       number: 2,
       first: 6,
       last: 13,
-      cells: [cell("flex", 6, 7), cell("mediant", 8, 10, "off-pitch", "A whole tone below"), cell("termination", 11, 13, "recited", "Ends on the reciting tone")],
+      cells: [cell("flex", 6, 7), cell("mediant", 8, 10, "off-pitch", "A whole tone below"), cell("termination", 11, 13, "no-ending", "No ending to judge")],
     },
     { verse: 2, number: 3, first: 14, last: 19, cells: [null, cell("mediant", 14, 16, "off-pitch", "A whole tone below"), cell("termination", 17, 19)] },
   ],
@@ -62,12 +62,21 @@ describe("gridWith", () => {
     expect(gridWith(undefined, undefined)).toBeNull();
   });
 
-  it("adds a verse the run reached and the take did not, in order", () => {
+  it("keeps a part with no ending to judge as the take had it, sung again with none", () => {
+    const sung: Grid = {
+      columns,
+      rows: [{ ...take.rows[1]!, cells: [cell("flex", 6, 7, "unsung", "Not sung"), cell("mediant", 8, 10), cell("termination", 11, 13, "no-ending", "No ending to judge")] }],
+    };
+    const cells = gridWith(take, sung)!.rows[1]!.cells;
+    expect(cells[2]).toBe(take.rows[1]!.cells[2]);
+    expect(cells[1]!.was).toBe(take.rows[1]!.cells[1]);
+  });
+
+  it("has only the take's verses", () => {
+    // A run is sung only within what the take judged; were one past it, it is not drawn.
     const stopped: Grid = { columns, rows: take.rows.slice(0, 1) };
     const sung: Grid = { columns, rows: take.rows.slice(2) };
-    const grid = gridWith(stopped, sung)!;
-    expect(grid.rows.map((r) => r.number)).toEqual([1, 3]);
-    expect(grid.rows[1]).toBe(take.rows[2]);
+    expect(gridWith(stopped, sung)!.rows).toEqual(stopped.rows);
   });
 
   it("is the view's grid of a take with a run sung again", () => {
@@ -107,10 +116,10 @@ describe("stepCell", () => {
 });
 
 describe("opening", () => {
-  it("heads a verse with its first words", () => {
-    expect(opening("Have mercy upon me, O God")).toBe("Have mercy upon …");
+  it("heads a verse with its first words, the ellipsis kept with the last of them", () => {
+    expect(opening("Have mercy upon me, O God")).toBe("Have mercy upon\u00a0…");
     expect(opening("Wash me throughly")).toBe("Wash me throughly");
-    expect(opening("  Lo,  I was ", 2)).toBe("Lo, I …");
+    expect(opening("  Lo,  I was ", 2)).toBe("Lo, I\u00a0…");
     expect(opening("")).toBe("");
   });
 });

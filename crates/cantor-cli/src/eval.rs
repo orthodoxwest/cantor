@@ -788,7 +788,8 @@ fn told_otherwise(
 /// (where a take is never marked), save on a note the take's verse mark covers (sung again, the
 /// part of a verse the take marked is judged as a verse alone, so it may be marked note by note
 /// where the whole verse was not); other verse marks on a verse the run holds whole; or the
-/// cadences inside it placed or called otherwise (see [`contradicts`]).
+/// cadences inside it placed or called otherwise, off pitch the other way included (see
+/// [`contradicts`]).
 fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
     let in_verse = |i: usize| whole.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i));
     let noted = |v: &Verdict| -> Vec<usize> {

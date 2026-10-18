@@ -251,14 +251,21 @@ let spots: Spot[] = [];
 let saidAt: number | null = null;
 /** The place open, by index, or none. */
 let open: number | null = null;
+/** The ending a cell of the grid opened where no place among the spots is it: one off pitch that
+ * a mark not on its own note tells of already (a verse's, say), whose card is then the ending's
+ * own, so that it says what the cell does. Let go as any place opens or closes. */
+let cellOpen: Spot | null = null;
+/** The place whose card is open: one of the spots, or an ending a cell opened. */
+const openSpot = (): Spot | undefined => (open === null ? (cellOpen ?? undefined) : spots[open]);
 /** The place last opened, which the steps go on from while the run chosen holds it. */
 let lastOpen: number | null = null;
 
 /** Opens place `k`, or none; the step of another place stops, so that it does not play on under
  * a card that has moved on. */
 function setOpen(k: number | null): void {
-  if (k !== open && playing?.button === stepButton) stopPlay();
+  if ((k !== open || cellOpen) && playing?.button === stepButton) stopPlay();
   open = k;
+  cellOpen = null;
   if (k !== null) lastOpen = k;
 }
 
@@ -502,10 +509,10 @@ function drawGrid(view: Judged | null): void {
             button.type = "button";
             button.className = `cell ${part.called}`;
             Object.assign(button.dataset, { row: String(r), col: String(c), run: `${part.first}-${part.last}` });
-            button.append(span("said", part.words));
-            if (part.was) button.append(span("was", `Your take: ${part.was.words}`));
+            button.append(span("said", part.words), ...(part.inner ?? []).map((inner) => span("inner", inner.words)));
+            if (part.was) button.append(span("was", `Your take: ${told(part.was)}`));
             const name = grid!.columns[c]?.name ?? "";
-            button.setAttribute("aria-label", `${name} of verse ${row.number}: ${part.words}${part.was ? `. Your take: ${part.was.words}` : ""}`);
+            button.setAttribute("aria-label", `${name} of verse ${row.number}: ${told(part)}${part.was ? `. Your take: ${told(part.was)}` : ""}`);
             td.append(button);
             return td;
           }),
@@ -521,6 +528,9 @@ function drawGrid(view: Judged | null): void {
   rove();
 }
 
+/** What `cell` says: how its ending was called, and the endings off pitch inside it. */
+const told = (cell: GridCell) => [cell.words, ...(cell.inner ?? []).map((inner) => inner.words)].join(". ");
+
 /** Puts the grid's one tab stop on the cell the keyboard was last on, else the one holding the
  * run chosen, else the first. */
 function rove(): void {
@@ -529,32 +539,47 @@ function rove(): void {
   for (const b of buttons) b.tabIndex = b === stop ? 0 : -1;
 }
 
-/** The place among the spots that tells of `cell`'s ending off pitch: the ending, or the mark that
- * tells of it already; none for a cell called otherwise. */
-function spotOfCell(cell: GridCell): number | null {
-  if (cell.called !== "off-pitch" || !cell.ending) return null;
-  const [from, to] = cell.ending;
+/** The place that tells of the ending off pitch `cell` tells of (its own, or when its own was
+ * not, the first inside it) in the same words: the mark on that ending's own note when one is,
+ * else the ending, among the spots when no mark tells of it already, else on its own. None for a
+ * cell that tells of none. */
+function placeOfCell(cell: GridCell): number | Spot | null {
+  const [from, to] = cell.called === "off-pitch" && cell.ending ? cell.ending : cell.inner?.[0] ? [cell.inner[0].first, cell.inner[0].last] : [-1, -1];
   const ending = viewed?.endings?.find((e) => e.first === from && e.last === to);
   if (!ending) return null;
-  if (ending.mark !== null) return ending.mark;
-  const k = spots.findIndex((s) => !s.mark && s.first === from && s.last === to);
-  return k < 0 ? null : k;
+  const mark = ending.mark === null ? undefined : viewed?.verdict.marks[ending.mark];
+  if (mark?.kind === "note" && mark.first === ending.note) return ending.mark;
+  const k = ending.mark === null ? spots.findIndex((s) => !s.mark && s.first === from && s.last === to) : -1;
+  return k >= 0 ? k : { first: from, last: to, at: ending.note, words: ending.words, mark: null };
+}
+
+/** Opens `place`, one of the spots or an ending of its own, or none. */
+function openPlace(place: number | Spot | null): void {
+  setOpen(typeof place === "number" ? place : null);
+  if (place !== null && typeof place !== "number") cellOpen = place;
 }
 
 /** Chooses the part of a verse in cell `[r, c]` of the grid to play and sing again, opening the
- * place that tells of its ending off pitch if one does; the part chosen already is let go. */
+ * place that tells of its ending off pitch if one does; the part chosen already is let go. In a
+ * take, which nothing is chosen in, it opens that place or closes it. */
 function chooseCell(r: number, c: number): void {
   const cell = gridCell(r, c);
   if (!cell || !shown) return;
-  const k = spotOfCell(cell);
-  if (taking || !guide) {
-    if (k === null) return;
-    setOpen(k);
+  const place = placeOfCell(cell);
+  if (taking) {
+    if (place === null) return;
+    const opened = typeof place === "number" ? open === place : cellOpen?.first === place.first && cellOpen.last === place.last;
+    openPlace(opened ? null : place);
     return drawResult();
   }
   const chosen = loop !== null && loop[0] === cell.first && loop[1] === cell.last;
   stopPlay();
-  setLoop(chosen ? null : [cell.first, cell.last], chosen ? null : k);
+  if (chosen) return setLoop(null);
+  setLoop([cell.first, cell.last], typeof place === "number" ? place : null);
+  if (place !== null && typeof place !== "number") {
+    openPlace(place);
+    drawResult();
+  }
 }
 
 /** The cell of the grid a button is, by row and column. */
@@ -634,7 +659,7 @@ function say(text: string): void {
 /** The card of the place open, if one is: the core's words, and how the note they are of is
  * written from the one before, the step that Hear the step plays. */
 function drawCard(): void {
-  const spot = open === null ? undefined : spots[open];
+  const spot = openSpot();
   why.hidden = !spot;
   if (!spot) return say("");
   const kind = spot.mark ? "mark" : "ending";
@@ -1710,6 +1735,12 @@ unchooseButton.addEventListener("click", () => {
   setLoop(null);
 });
 unopenButton.addEventListener("click", () => {
+  if (open === null && cellOpen) {
+    // An ending a cell opened: the keyboard goes back to the cell.
+    setOpen(null);
+    drawResult();
+    return (runButton(gridAt) ?? nextButton).focus({ preventScroll: true });
+  }
   if (open === null) return;
   const k = open;
   setOpen(null);
@@ -2015,7 +2046,7 @@ toggle(repeatButton, () => {
 });
 // The step into the place open: the note before the one its words are of, and that one.
 toggle(stepButton, async () => {
-  const spot = open === null ? undefined : spots[open];
+  const spot = openSpot();
   if (spot && spot.at > 0) await compare([spot.at - 1, spot.at], stepButton);
 });
 

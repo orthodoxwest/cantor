@@ -143,10 +143,12 @@ pub fn finished(notes: &[Note], through: Option<usize>) -> usize {
 /// gates hold what the page is shown.
 pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize>) -> Judged {
     let judged = finished(&notes, through);
+    // Sung whole through `through`, though judged only to the end of the last phrase finished.
+    let sung = through.map_or(notes.len(), |i| i.saturating_add(1).clamp(judged, notes.len()));
     let report = score(&notes[..judged], frames);
     let verdict = judge_part(&notes, judged, &report);
     let summary = summary(&notes, &verdict);
-    let grid = grid(&notes, &verdict, 0..judged);
+    let grid = grid(&notes, &verdict, 0..judged, 0..sung);
     notes.truncate(judged);
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
@@ -205,7 +207,7 @@ pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_
         .collect();
     let told = told_again(&verdict, &notes);
     let endings = endings(&verdict);
-    let grid = grid(&notes, &verdict, run.clone());
+    let grid = grid(&notes, &verdict, run.clone(), run.clone());
     notes.truncate(run.end);
     notes.drain(..run.start);
     Judged {
@@ -734,12 +736,18 @@ mod tests {
             "read from the notes judged alone"
         );
         assert_eq!(judge_notes(notes.clone(), &frames, None).summary[0], stopped.summary[0]);
-        // Its grid is the core's of the verses judged: the first alone stopped, both sung whole.
+        // Its grid is the core's of the verses sung: stopped, the first judged and the second
+        // stopped in, sung whole through note 20; both judged, sung whole.
         let rows = |j: &Judged| j.grid.as_ref().map(|g| g.rows.iter().map(|r| r.verse).collect::<Vec<_>>());
-        assert_eq!(stopped.grid, grid(&notes, &stopped.verdict, 0..14));
-        assert_eq!(rows(&stopped), Some(vec![0]));
+        assert_eq!(stopped.grid, grid(&notes, &stopped.verdict, 0..14, 0..21));
+        assert_eq!(rows(&stopped), Some(vec![0, 1]));
+        let second = &stopped.grid.as_ref().unwrap().rows[1];
+        assert_eq!(
+            second.cells.iter().flatten().next().map(|c| c.called),
+            Some(cantor_core::Called::Stopped)
+        );
         let whole = judge_notes(notes.clone(), &frames, None);
-        assert_eq!(whole.grid, grid(&notes, &whole.verdict, 0..notes.len()));
+        assert_eq!(whole.grid, grid(&notes, &whole.verdict, 0..notes.len(), 0..notes.len()));
         assert_eq!(rows(&whole), Some(vec![0, 1]));
         // The second verse's mediant sung again: its grid is of that verse, with only the mediant
         // called, as the core lays out the run; its termination, which never leaves the tone, is
@@ -749,7 +757,7 @@ mod tests {
             report: whole.report.clone(),
         };
         let again = judge_again_notes(notes.clone(), 14..25, 0.0, &before, &frames);
-        assert_eq!(again.grid, grid(&notes, &again.verdict, 14..25));
+        assert_eq!(again.grid, grid(&notes, &again.verdict, 14..25, 14..25));
         let called: Vec<_> = again
             .grid
             .iter()

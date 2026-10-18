@@ -1197,7 +1197,7 @@ const PSALM =
   "(c4) O(f) praise(g) the(h) Lord(h) all(h) hea(i)then(h) *(:) praise(h) him(h) all(h) na(g)tions(f) (:) " +
   "For(h) his(h) mer(h)cy(g) †(,) is(h) e(h)ver(h) more(i) to(h)wards(h) us(h) *(:) and(h) the(h) truth(h) en(h)du(g)reth(f) (::)";
 
-type GridCell = { first: number; last: number; called: string; ending: [number, number] | null; words: string };
+type GridCell = { first: number; last: number; called: string; ending: [number, number] | null; words: string; inner: Array<{ words: string }> };
 type Grid = { columns: Array<{ name: string }>; rows: Array<{ number: number; cells: Array<GridCell | null> }> };
 
 test("beside a psalm sung to a tone, a row a verse and a column a part of the tone say in the core's words how each ended, and a cell chooses its part of the verse", async ({ page }) => {
@@ -1218,10 +1218,12 @@ test("beside a psalm sung to a tone, a row a verse and a column a part of the to
   const table = page.locator("#grid");
   await expect(table).toBeVisible();
   await expect(table.locator("thead th")).toHaveText(["Verse", "Flex", "Mediant", "Termination"]);
-  await expect(table.locator("tbody th")).toHaveText(["1 O praise the …", "2 For his mercy …"]);
-  // Each cell in the core's words, and none where the first verse has no flex.
+  await expect(table.locator("tbody th")).toHaveText(["1 O praise the\u00a0…", "2 For his mercy\u00a0…"]);
+  // Each cell in the core's words, an ending off pitch inside it with it, and none where the first
+  // verse has no flex.
   const said = () => table.locator("tbody tr").evaluateAll((rows) => rows.map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent ?? "")));
-  expect(await said()).toEqual(grid.rows.map((r) => r.cells.map((c) => c?.words ?? "")));
+  const told = (c: GridCell | null) => (c ? [c.words, ...c.inner.map((i) => i.words)].join("") : "");
+  expect(await said()).toEqual(grid.rows.map((r) => r.cells.map(told)));
   // It fits a phone.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   // Tapped, a cell chooses its part of the verse and opens the place that tells of its ending.
@@ -1230,8 +1232,11 @@ test("beside a psalm sung to a tone, a row a verse and a column a part of the to
   await mediant.click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([cell.first, cell.last]);
   await expect(mediant).toHaveAttribute("aria-pressed", "true");
-  const ending = whole.endings.find((e: { first: number; last: number }) => e.first === cell.ending![0] && e.last === cell.ending![1]);
-  await expect(page.locator("#why-words")).toHaveText(ending.mark === null ? ending.words : whole.told[ending.mark]);
+  // The words of the mark on its ending's note, if one is, else the ending's own.
+  type Ending = { first: number; last: number; note: number | null; mark: number | null; words: string };
+  const ending: Ending = whole.endings.find((e: Ending) => e.first === cell.ending![0] && e.last === cell.ending![1]);
+  const mark = ending.mark === null ? null : whole.verdict.marks[ending.mark];
+  await expect(page.locator("#why-words")).toHaveText(mark?.kind === "note" && mark.first === ending.note ? whole.told[ending.mark!] : ending.words);
   // Tapped again, it is let go.
   await mediant.click();
   expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
@@ -1273,7 +1278,7 @@ test("beside a psalm sung to a tone, a row a verse and a column a part of the to
   expect(now.called).not.toBe("unsung");
   const again = page.getByRole("button", { name: `Mediant of verse 2: ${now.words}. Your take: ${cell.words}`, exact: true });
   await expect(again).toHaveText(`${now.words}Your take: ${cell.words}`);
-  const words = grid.rows.map((r) => r.cells.map((c) => c?.words ?? ""));
+  const words = grid.rows.map((r) => r.cells.map(told));
   words[1]![1] = `${now.words}Your take: ${cell.words}`;
   expect(await said()).toEqual(words);
   // The keyboard is where it was.
