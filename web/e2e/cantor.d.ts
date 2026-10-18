@@ -16,6 +16,7 @@ declare global {
       centre: number | null;
       loop: [number, number] | null;
       replayed: { visited: number[]; playing: boolean; decodes: number };
+      recorded: { visited: number[]; playing: boolean; kept: boolean };
       played: { midi: number[]; plays: number };
       sung: Array<{ midi: number; start: number; duration: number }>;
       voice: "neutral" | "recorded" | "none";

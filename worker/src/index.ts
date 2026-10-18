@@ -34,8 +34,24 @@ app.get("/api/chants", async (c) => {
   return c.json(results);
 });
 
+/** Where a private chant's aligned recording is kept as sound, put there with its ribbon by the
+ * private content's seeding: FLAC, at the times its ribbon's bands are measured from. */
+const recordingKey = (slug: string) => `recordings/${slug}.flac`;
+
+/** A private chant's aligned recording, as stored, as its ribbon's bands: none when it is not a
+ * list of them, and the chant is then served without it. */
+function bandsOf(recording: string | null): unknown[] | null {
+  try {
+    const parsed = recording === null ? null : (JSON.parse(recording) as unknown);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // One chant with its GABC; a private one is not found by a stranger, and comes with its aligned
-// recording's ribbon when it has one.
+// recording's ribbon when it has one, and where the recording's sound is kept, where to hear it:
+// named for the sound as kept, so that a sound put again is not heard from a copy of the last.
 app.get("/api/chants/:slug", async (c) => {
   const slug = c.req.param("slug");
   const row = await c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM chants WHERE slug = ?`)
@@ -55,15 +71,48 @@ app.get("/api/chants/:slug", async (c) => {
     : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
   const { recording, ...chant } = hidden;
-  // A recording that is not a list of bands is left out, and the chant still served.
-  const parsed = (() => {
-    try {
-      return recording === null ? null : (JSON.parse(recording) as unknown);
-    } catch {
-      return null;
-    }
-  })();
-  return c.json(Array.isArray(parsed) ? { ...chant, recording: parsed } : chant);
+  const bands = bandsOf(recording);
+  if (!bands) return c.json(chant);
+  // Without its sound the ribbon is still drawn; a store that fails to answer is as without it.
+  const sound = await c.env.TAKES.head(recordingKey(slug)).catch(() => null);
+  const audio = sound && `/api/chants/${encodeURIComponent(slug)}/recording?v=${encodeURIComponent(sound.etag)}`;
+  return c.json({ ...chant, recording: bands, ...(audio ? { audio } : {}) });
+});
+
+// A private chant's aligned recording as sound, to a known caller, where its chant is served with
+// its ribbon (so not under a public chant of the same slug), and to the page's own fetch only:
+// another site's cannot tell a sound from none. A copy the caller has of it unchanged is kept.
+app.get("/api/chants/:slug/recording", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
+  c.header("Cross-Origin-Resource-Policy", "same-origin");
+  const slug = c.req.param("slug");
+  const known = await identity(c.req.raw.headers, c.env);
+  const shadowed = known && (await c.env.DB.prepare("SELECT 1 AS found FROM chants WHERE slug = ?").bind(slug).first());
+  const row =
+    known && !shadowed
+      ? await c.env.DB.prepare("SELECT recording FROM private_chants WHERE slug = ?").bind(slug).first<{ recording: string | null }>()
+      : null;
+  // Whether the caller's copy is the sound as kept is all that is asked of the store: one it
+  // cannot read is as none.
+  const copy = c.req.header("If-None-Match");
+  const key = recordingKey(slug);
+  const object =
+    row && bandsOf(row.recording)
+      ? await (copy ? c.env.TAKES.get(key, { onlyIf: new Headers({ "If-None-Match": copy }) }).catch(() => c.env.TAKES.get(key)) : c.env.TAKES.get(key))
+      : null;
+  if (!object) return c.json({ error: "not found" }, 404);
+  const headers = {
+    ETag: object.httpEtag,
+    "Cache-Control": "private, max-age=3600",
+    Vary: "Cookie, Cf-Access-Jwt-Assertion",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex",
+  };
+  // Without a body, the copy the caller has is the sound as kept.
+  if (!("body" in object)) return new Response(null, { status: 304, headers });
+  return new Response((object as R2ObjectBody).body, { headers: { ...headers, "Content-Type": "audio/flac", "Content-Length": String(object.size) } });
 });
 
 interface PointingRow {

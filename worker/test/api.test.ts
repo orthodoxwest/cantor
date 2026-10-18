@@ -57,6 +57,87 @@ describe("api", () => {
     await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
   });
 
+  it("says where to hear a private chant's recording once its sound is kept, and gives it to a known caller only", async () => {
+    const student = { "X-Dev-User": "student" };
+    const served = async (slug: string) => (await get(`/api/chants/${slug}`, student)).json<{ audio?: string }>();
+    expect(await served("private-sung")).not.toHaveProperty("audio");
+    expect((await get("/api/chants/private-sung/recording", student)).status).toBe(404);
+    const sound = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 1, 2, 3]);
+    const kept = await env.TAKES.put("recordings/private-sung.flac", sound);
+    // A chant with no recording is not heard by its sound alone, nor a public one.
+    await env.TAKES.put("recordings/private-test.flac", sound);
+    await env.TAKES.put("recordings/ubi-caritas.flac", sound);
+    try {
+      // Named for the sound as kept.
+      expect((await served("private-sung")).audio).toBe(`/api/chants/private-sung/recording?v=${kept!.etag}`);
+      expect(await served("private-test")).not.toHaveProperty("audio");
+      expect(await (await get("/api/chants/ubi-caritas")).json<object>()).not.toHaveProperty("audio");
+      const res = await get("/api/chants/private-sung/recording", student);
+      expect(res.status).toBe(200);
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(sound);
+      expect(res.headers.get("Content-Type")).toBe("audio/flac");
+      expect(res.headers.get("Content-Length")).toBe(String(sound.length));
+      expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
+      expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+      expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+      // A copy the caller has of it, unchanged, is kept, and none sent again.
+      const etag = res.headers.get("ETag")!;
+      const again = await get("/api/chants/private-sung/recording", { ...student, "If-None-Match": etag });
+      expect(again.status).toBe(304);
+      expect(await again.arrayBuffer()).toHaveProperty("byteLength", 0);
+      expect(again.headers.get("ETag")).toBe(etag);
+      // Asked only that: other conditions, or a copy not named as the store names one, get it all.
+      const conditions: Record<string, string>[] = [{ "If-Match": '"other"' }, { "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" }, { "If-None-Match": "unquoted" }];
+      for (const condition of conditions) {
+        const whole = await get("/api/chants/private-sung/recording", { ...student, ...condition });
+        expect(whole.status, JSON.stringify(condition)).toBe(200);
+        expect(new Uint8Array(await whole.arrayBuffer())).toEqual(sound);
+      }
+      // A stranger is turned away before anything is looked up.
+      const calls: string[] = [];
+      const counted = <T extends object>(name: string, target: T): T =>
+        new Proxy(target, {
+          get(t, prop) {
+            const value = Reflect.get(t, prop) as unknown;
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              calls.push(`${name}.${String(prop)}`);
+              return (value as (...a: unknown[]) => unknown).apply(t, args);
+            };
+          },
+        });
+      const watched = { ...env, DB: counted("DB", env.DB), TAKES: counted("TAKES", env.TAKES) } as Env;
+      expect((await get("/api/chants/private-sung/recording", undefined, watched)).status).toBe(404);
+      expect(calls).toEqual([]);
+      expect((await get("/api/chants/private-sung/recording", student, watched)).status).toBe(200);
+      expect(calls).toContain("TAKES.get");
+      for (const [path, headers] of [
+        ["/api/chants/private-sung/recording", undefined],
+        ["/api/chants/private-test/recording", student],
+        ["/api/chants/ubi-caritas/recording", student],
+        ["/api/chants/missing/recording", student],
+      ] as const) {
+        const hidden = await get(path, headers);
+        expect(hidden.status, path).toBe(404);
+        expect(hidden.headers.get("Cache-Control")).toBe("private, no-store");
+        expect(hidden.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+      }
+      // Heard only where its chant is served with its ribbon: not with a ribbon that is not one,
+      // nor under a public chant of the same slug, which is the one served.
+      await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-test'").bind('{"index":0}').run();
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(404);
+      await env.DB.prepare("UPDATE private_chants SET recording = (SELECT recording FROM private_chants WHERE slug = 'private-sung') WHERE slug = 'private-test'").run();
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(200);
+      await env.DB.prepare("INSERT INTO chants (slug, title, gabc) VALUES ('private-test', 'Shadow', '(c4) A(f) (::)')").run();
+      expect(await served("private-test")).not.toHaveProperty("audio");
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(404);
+    } finally {
+      await env.DB.prepare("DELETE FROM chants WHERE slug = 'private-test'").run();
+      await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
+      await env.TAKES.delete(["recordings/private-sung.flac", "recordings/private-test.flac", "recordings/ubi-caritas.flac"]);
+    }
+  });
+
   it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {
     const to = async (next: string) => (await get(`/signin?next=${encodeURIComponent(next)}`)).headers.get("Location");
     expect(await to("/library?q=light#lumen-gentium")).toBe("/library?q=light#lumen-gentium");
