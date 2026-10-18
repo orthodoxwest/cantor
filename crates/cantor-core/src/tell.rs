@@ -137,14 +137,17 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
 
 /// The notes `run` sung again (`after`, as [`crate::judge::judge_again`] judges them) beside the
 /// same notes in the take they were sung after (`before`), in a sentence or two: how many were in
-/// tune each time, then the marks on them, when they have or had any. A note is in tune, as the
-/// judge counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. None for a run not
-/// heard.
+/// tune each time, then which were marked, when any are or were. A note is in tune, as the judge
+/// counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. The marks are compared note
+/// by note, not counted: a run holding part of a verse the take marked whole is marked note by
+/// note, and sung as before is marked on the same notes. A take not heard is not compared with.
+/// None for a run not heard.
 pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String> {
     if after.outcome != Outcome::Heard || run.is_empty() {
         return Vec::new();
     }
     let n = run.len();
+    let marked = |v: &Verdict| -> Vec<usize> { run.clone().filter(|&i| v.marks.iter().any(|m| m.covers(i))).collect() };
     let tuned = |v: &Verdict| {
         run.clone()
             .filter(|&i| {
@@ -152,33 +155,24 @@ pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String
             })
             .count()
     };
-    let (was, now) = (if before.outcome == Outcome::Heard { tuned(before) } else { 0 }, tuned(after));
+    let now = (tuned(after), marked(after));
+    let was = (before.outcome == Outcome::Heard).then(|| (tuned(before), marked(before)));
     let mut out = vec![if n == 1 {
-        match (now, was) {
-            (1, 1) => "Its note was in tune, as before.",
+        match (now.0, was.as_ref().map(|w| w.0)) {
+            (1, None) => "Its note was in tune.",
+            (_, None) => "Its note was not in tune.",
+            (1, Some(1)) => "Its note was in tune, as before.",
             (1, _) => "Its note was in tune this time, where it was not before.",
-            (_, 1) => "Its note was not in tune this time, where it was before.",
+            (_, Some(1)) => "Its note was not in tune this time, where it was before.",
             _ => "Its note was not in tune, as before.",
         }
         .to_string()
     } else {
-        let these = match now {
-            k if k == n && n == 2 => "Both its notes were".to_string(),
-            k if k == n => format!("All {} of its notes were", number(n)),
-            0 => format!("None of its {} notes were", number(n)),
-            1 => format!("One of its {} notes was", number(n)),
-            k => format!("{} of its {} notes were", capitalise(&number(k)), number(n)),
-        };
-        let then = match was {
-            k if k == now => ", as before".to_string(),
-            0 => ", where none were before".to_string(),
-            2 if n == 2 => ", where both were before".to_string(),
-            1 => ", where one was before".to_string(),
-            k if k == n => ", where all were before".to_string(),
-            k => format!(", where {} were before", number(k)),
-        };
-        let again = if was == now { "" } else { " this time" };
-        format!("{these} in tune{again}{then}.")
+        match was.as_ref().map(|w| w.0) {
+            None => format!("{} in tune.", of_its(now.0, n, true)),
+            Some(w) if w == now.0 => format!("{} in tune, as before.", of_its(now.0, n, true)),
+            Some(w) => format!("{} in tune this time{}.", of_its(now.0, n, true), where_before(w, n)),
+        }
     }];
     let marks = |k: usize| {
         if k == 1 {
@@ -187,20 +181,62 @@ pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String
             format!("{} marks", number(k))
         }
     };
-    let had = before.marks.iter().filter(|m| m.first < run.end && m.last >= run.start).count();
-    let has = after.marks.len();
-    out.extend(match (had, has) {
-        (0, 0) => None,
-        (1, 0) => Some("Its mark is gone.".to_string()),
-        (_, 0) => Some(format!("Its {} are gone.", marks(had))),
-        (0, _) => Some(format!("It has {} now.", marks(has))),
-        _ => Some(format!(
-            "It has {} now, where it had {}.",
-            marks(has),
-            if had == 1 { "one".to_string() } else { number(had) }
+    let (a, b) = (&now.1, was.as_ref().map(|w| &w.1));
+    out.extend(match b {
+        _ if a.is_empty() && b.is_none_or(Vec::is_empty) => None,
+        None => Some(format!("It has {}.", marks(after.marks.len()))),
+        Some(_) if a.is_empty() => {
+            let had = before.marks.iter().filter(|m| m.first < run.end && m.last >= run.start).count();
+            Some(if had == 1 {
+                "Its mark is gone.".to_string()
+            } else {
+                format!("Its {} are gone.", marks(had))
+            })
+        }
+        Some(b) if b.is_empty() => Some(format!("It has {}.", marks(after.marks.len()))),
+        Some(b) if a == b => Some(if a.len() == 1 {
+            "It is marked on the same note as before.".to_string()
+        } else {
+            "It is marked on the same notes as before.".to_string()
+        }),
+        Some(b) if a.len() == b.len() => Some(format!(
+            "{} marked this time, but not {} as before.",
+            of_its(a.len(), n, false),
+            if a.len() == 1 { "the same one" } else { "the same ones" }
+        )),
+        Some(b) => Some(format!(
+            "{} marked this time{}.",
+            of_its(a.len(), n, false),
+            where_before(b.len(), n)
         )),
     });
     out
+}
+
+/// "All four of its notes were", "One of its four notes is": `k` of a run of `n` notes, with
+/// the verb in the past or the present.
+fn of_its(k: usize, n: usize, past: bool) -> String {
+    let (one, many) = if past { ("was", "were") } else { ("is", "are") };
+    match k {
+        _ if k == n && n == 2 => format!("Both its notes {many}"),
+        _ if k == n => format!("All {} of its notes {many}", number(n)),
+        0 if n == 2 => format!("Neither of its notes {one}"),
+        0 => format!("None of its {} notes {many}", number(n)),
+        1 => format!("One of its {} notes {one}", number(n)),
+        _ => format!("{} of its {} notes {many}", capitalise(&number(k)), number(n)),
+    }
+}
+
+/// ", where two were before": how many of a run of `n` notes were so in the take before.
+fn where_before(k: usize, n: usize) -> String {
+    match k {
+        0 if n == 2 => ", where neither was before".to_string(),
+        0 => ", where none were before".to_string(),
+        _ if k == n && n == 2 => ", where both were before".to_string(),
+        _ if k == n => ", where all were before".to_string(),
+        1 => ", where one was before".to_string(),
+        _ => format!(", where {} were before", number(k)),
+    }
 }
 
 /// `sentence` begun with "But", as a contrast with the one before it.
@@ -596,12 +632,13 @@ mod tests {
         assert_eq!(ending(0.5, 250.0, 300.0), (2, Some(1)));
     }
 
-    /// A verdict on `cents` of eight notes, two phrases of four, judged whole (`run` None) or as
-    /// a run sung again in the key 0.
+    /// A verdict on `cents` of eight notes, two verses of a phrase of four, judged whole (`run`
+    /// None) or as a run sung again in the key 0.
     fn judged(cents: &[Option<f32>], run: Option<std::ops::Range<usize>>) -> Verdict {
         let notes: Vec<Note> = (0..8)
             .map(|i| Note {
                 phrase: (i / 4) as u32,
+                verse: (i / 4) as u32,
                 ..Note::new(60.0, 0.6 * i as f32, 0.5)
             })
             .collect();
@@ -650,14 +687,21 @@ mod tests {
             again(&before, &after([0.0, 200.0, -60.0, 0.0]), 4..8),
             [
                 "Two of its four notes were in tune, as before.",
-                "It has one mark now, where it had one."
+                "It is marked on the same note as before."
             ]
         );
         assert_eq!(
             again(&before, &after([300.0, 0.0, -200.0, 0.0]), 4..8),
             [
                 "Two of its four notes were in tune, as before.",
-                "It has two marks now, where it had one."
+                "Two of its four notes are marked this time, where one was before."
+            ]
+        );
+        assert_eq!(
+            again(&before, &after([0.0, 0.0, -200.0, 0.0]), 4..8),
+            [
+                "Three of its four notes were in tune this time, where two were before.",
+                "One of its four notes is marked this time, but not the same one as before."
             ]
         );
         assert_eq!(
@@ -673,6 +717,13 @@ mod tests {
             ["Both its notes were in tune this time, where one was before."]
         );
         assert_eq!(
+            again(&before, &judged(&[Some(300.0), Some(300.0)], Some(6..8)), 6..8),
+            [
+                "Neither of its notes was in tune this time, where one was before.",
+                "It has two marks."
+            ]
+        );
+        assert_eq!(
             again(&before, &judged(&[Some(0.0)], Some(5..6)), 5..6),
             ["Its note was in tune this time, where it was not before.", "Its mark is gone."]
         );
@@ -685,6 +736,44 @@ mod tests {
     }
 
     #[test]
+    fn a_verse_the_take_marked_sung_again_in_part_as_before_is_marked_where_it_was() {
+        // The take marks the second verse once, a whole tone high; three of its notes sung again
+        // so are marked a note at a time, as the judge marks part of a verse.
+        let before = judged(&[[Some(0.0); 4], [Some(200.0); 4]].concat(), None);
+        assert_eq!(
+            before.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(),
+            [(MarkKind::Verse, 4, 7)]
+        );
+        let after = judged(&[Some(200.0); 3], Some(5..8));
+        assert_eq!(after.marks.len(), 3);
+        assert_eq!(
+            again(&before, &after, 5..8),
+            [
+                "None of its three notes were in tune, as before.",
+                "It is marked on the same notes as before."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_sung_again_after_a_take_not_heard_is_told_alone() {
+        let before = judged(&[None; 8], None);
+        assert_ne!(before.outcome, Outcome::Heard);
+        assert_eq!(
+            again(&before, &judged(&[Some(0.0); 4], Some(4..8)), 4..8),
+            ["All four of its notes were in tune."]
+        );
+        assert_eq!(
+            again(&before, &judged(&[Some(0.0), Some(300.0), Some(0.0), Some(0.0)], Some(4..8)), 4..8),
+            ["Three of its four notes were in tune.", "It has one mark."]
+        );
+        assert_eq!(
+            again(&before, &judged(&[Some(300.0)], Some(5..6)), 5..6),
+            ["Its note was not in tune.", "It has one mark."]
+        );
+    }
+
+    #[test]
     fn a_first_phrase_sung_again_may_be_marked_where_the_take_could_not_be() {
         let mut cents = [Some(0.0); 8];
         cents[1] = Some(300.0);
@@ -694,7 +783,7 @@ mod tests {
         assert_eq!(after.marks.len(), 1);
         assert_eq!(
             again(&before, &after, 0..4),
-            ["Three of its four notes were in tune, as before.", "It has one mark now."]
+            ["Three of its four notes were in tune, as before.", "It has one mark."]
         );
     }
 }

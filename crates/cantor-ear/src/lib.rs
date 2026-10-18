@@ -176,7 +176,7 @@ pub fn judge_again_gabc(
     for n in &mut notes {
         n.start_s += offset_s - at;
     }
-    judge_again_notes(notes, run.0..run.1 + 1, key_cents, before, frames)
+    judge_again_notes(notes, run.0..run.1.saturating_add(1), key_cents, before, frames)
 }
 
 /// The chant's `notes`, timed on the take's clock, of which those of `run` were sung again,
@@ -376,10 +376,11 @@ pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through:
 
 /// Scores and judges the heard take as the notes `first..=last` of a chant sung again, in
 /// `key_cents`, beside the take of the whole chant they were sung after: the byte buffer holds
-/// the chant's GABC in its first `gabc_len` bytes, then that take's verdict as JSON in the next
-/// `before_len`; the notes are at `pulse_s` a pulse, the first due `offset_s` into the take
-/// ([`judge_again_gabc`]). The length of the JSON left in the output buffer, or -1 with the
-/// error there.
+/// the chant's GABC in its first `gabc_len` bytes, then that take as JSON (a [`Before`], as
+/// [`ear_again_key`] reads it) in the next `before_len`; the notes are at `pulse_s` a pulse, the
+/// first due `offset_s` into the take ([`judge_again_gabc`]). The length of the JSON left in the
+/// output buffer, or -1 with the error there: for no key to judge in (NaN, as
+/// [`ear_again_key`] gives for a take with none), or notes not of the chant.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_judge_again(
@@ -394,22 +395,26 @@ pub extern "C" fn ear_judge_again(
     let (gabc, before) = BYTES.with(|b| {
         let b = b.borrow();
         let split = (gabc_len as usize).min(b.len());
-        let end = (split + before_len as usize).min(b.len());
+        let end = split.saturating_add(before_len as usize).min(b.len());
         (
             String::from_utf8_lossy(&b[..split]).into_owned(),
-            serde_json::from_slice::<Verdict>(&b[split..end]),
+            serde_json::from_slice::<Before>(&b[split..end]),
         )
     });
+    let len = notes_from_gabc(&gabc, pulse_s).len();
+    let (first, last) = (first as usize, last as usize);
     let json = match before {
         Err(e) => Err(format!("the take before could not be read: {e}")),
+        Ok(_) if !key_cents.is_finite() => Err("no key to judge the notes sung again in".to_string()),
+        Ok(_) if first > last || last >= len => Err(format!("notes {first} to {last} are not of the chant's {len}")),
         Ok(before) => TAKE.with(|t| match t.borrow().as_ref() {
             Some(Take::Heard(heard)) => serde_json::to_string(&judge_again_gabc(
                 &gabc,
                 pulse_s,
                 offset_s,
-                (first as usize, (last as usize).max(first as usize)),
+                (first, last),
                 key_cents,
-                &before,
+                &before.verdict,
                 &heard.frames,
             ))
             .map_err(|e| e.to_string()),
@@ -428,16 +433,18 @@ pub struct Before {
 
 /// The key the take in the byte buffer's first `len` bytes (a [`Before`], as JSON) was in at its
 /// notes `first..=last`, in cents, for them to be sung again in, and judged in by
-/// [`ear_judge_again`] ([`key_at`]); NaN when it had none, or could not be read.
+/// [`ear_judge_again`] ([`key_at`]); NaN when it had none, could not be read, or the notes are
+/// not of its chant.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn ear_again_key(len: u32, first: u32, last: u32) -> f32 {
     BYTES.with(|b| {
         let b = b.borrow();
-        let run = first as usize..(last as usize).max(first as usize) + 1;
+        let (first, last) = (first as usize, last as usize);
         serde_json::from_slice::<Before>(&b[..(len as usize).min(b.len())])
             .ok()
-            .and_then(|before| key_at(&before.verdict, &before.report, run))
+            .filter(|before| first <= last && last < before.verdict.relative.len())
+            .and_then(|before| key_at(&before.verdict, &before.report, first..last + 1))
             .unwrap_or(f32::NAN)
     })
 }
@@ -522,8 +529,9 @@ mod tests {
         assert_eq!(ear_stop(), -1, "a take stops once");
         assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0, -1), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
-        // Its notes 1 to 3 sung again are judged as the core judges them, in the key the take
-        // was in there, read from the take's verdict and report, and beside its verdict.
+        // Its notes 1 to 3 sung again are judged as the ear's own judge_again_gabc judges them,
+        // in the key the core reads the take was in there, from the take's verdict and report;
+        // the same take is handed to both.
         let judged = judge_gabc(gabc, 0.5, 1.0, &whole, None);
         let before = format!(
             "{{\"verdict\":{},\"report\":{}}}",
@@ -535,13 +543,23 @@ mod tests {
         let key = ear_again_key(before.len() as u32, 1, 3);
         assert_eq!(key, key_at(&judged.verdict, &judged.report, 1..4).expect("a key"));
         assert!(ear_again_key(3, 1, 3).is_nan(), "a take that cannot be read has no key");
-        let verdict = serde_json::to_string(&judged.verdict).unwrap();
-        let both = [bytes, verdict.as_bytes()].concat();
-        ear_bytes(both.len() as u32);
-        BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
+        assert!(
+            ear_again_key(before.len() as u32, 3, 1).is_nan(),
+            "nor notes that end before they begin"
+        );
+        assert!(ear_again_key(before.len() as u32, 1, u32::MAX).is_nan(), "nor notes past its chant");
+        let both = [bytes, before.as_bytes()].concat();
         // The take's own frames, its note 1 due where it was in the take.
         let offset = 1.0 + notes_from_gabc(gabc, 0.5)[1].start_s;
-        let n = ear_judge_again(bytes.len() as u32, verdict.len() as u32, 0.5, offset, 1, 3, key);
+        let again_with = |first, last, key| {
+            ear_bytes(both.len() as u32);
+            BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
+            ear_judge_again(bytes.len() as u32, before.len() as u32, 0.5, offset, first, last, key)
+        };
+        for (first, last, key) in [(1, 3, f32::NAN), (3, 1, key), (1, u32::MAX, key), (1, 99, key)] {
+            assert_eq!(again_with(first, last, key), -1, "{first} to {last} in {key}");
+        }
+        let n = again_with(1, 3, key);
         let again = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
         assert_eq!(n as usize, again.len());
         let want = judge_again_gabc(gabc, 0.5, offset, (1, 3), key, &judged.verdict, &whole);
@@ -550,6 +568,8 @@ mod tests {
         assert_eq!((want.notes.len(), want.ribbon.len(), want.ribbon[0].index), (3, 3, 1));
         assert!(!want.summary.is_empty());
         // The take before cut short cannot be read.
+        ear_bytes(both.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
         assert_eq!(ear_judge_again(bytes.len() as u32, 3, 0.5, offset, 1, 3, key), -1);
     }
 

@@ -88,12 +88,16 @@
 //! moved along its drift line), and compared with the take: no mark it does not deserve; no run
 //! the take heard enough of to judge left unheard; and, where the two are judged alike, the same
 //! note marks past the first phrase, verse marks on a verse the run holds whole, and its
-//! cadences placed and called alike. Sung again in a key given, a first phrase may be marked
-//! where a take never is: under the student and wrong gates the faults planted there are
-//! caught as the take's are. Every suite is gated on it; how far a note's error sung again lies
-//! from its error in the take is held to the baseline, and a table counts what each suite's runs
-//! sung again were judged. Not covered: a run heard in a take of its own, with its own loudness
-//! floor and the guide's cue before it.
+//! cadences placed and called alike. A fault planted in a run that the take caught must be
+//! caught sung again too, a verse the take marked whole included, wherever the run's frames
+//! agree on the note as a mark on a note alone needs. Sung again in a key given, a
+//! first phrase may be marked where a take never is: under the student and wrong gates the
+//! faults planted there are caught as a take's are, so `student-notes` and
+//! `control-wrong-singer` plant one there, flat and sharp. Every suite is gated on it; how
+//! many faults the runs hold is fixed, and how far a note's error sung again lies from its error
+//! in the take is held, by the baseline, and a table counts what each suite's runs sung again
+//! were judged. Not covered: a run heard in a take of its own, with its own loudness floor and
+//! the guide's cue before it.
 //!
 //! The app's guide plays in the singer's key. The `guide-key` suites play it in another: at
 //! -12 dB or quieter an expert is told nothing wrong by either ear; louder, both ears still
@@ -236,7 +240,9 @@ struct RealTake {
     /// `[start, end]` in seconds for each note of the chant, in order.
     notes: Vec<[f32; 2]>,
     /// Notes the singer is known to have sung off the score (the takes' README says why), as a
-    /// synthetic take's faults are planted, so that a mark on one is deserved.
+    /// synthetic take's faults are planted, so that a mark on one sung again is deserved. The take
+    /// sung whole is still held to the expert gate, no mark at all, so a note named here is one a
+    /// take is not marked on: in its first phrase, where the key is read.
     #[serde(default)]
     off: Vec<Off>,
 }
@@ -644,8 +650,14 @@ struct AgainMetrics {
     apart_cents: f32,
     /// Marks on runs sung again that were not deserved (see [`deserved`]).
     false_marks: u32,
-    /// Faults planted in a first phrase, which a take is never marked in but a run sung again,
-    /// in a key given, may be; and those caught.
+    /// Faults planted in runs sung again and heard, as a take's are counted but in a first phrase
+    /// too (see [`fault`]); those caught by a mark; and those the take caught and the run did
+    /// not, though its frames agreed on the note, as a mark on a note alone needs.
+    faults: u32,
+    caught: u32,
+    dropped: u32,
+    /// Of those, the faults in a first phrase, which a take is never marked in but a run sung
+    /// again, in a key given, may be; and those caught.
     first_faults: u32,
     first_caught: u32,
 }
@@ -671,11 +683,18 @@ impl AgainMetrics {
                 continue;
             }
             self.false_marks += v.marks.iter().filter(|m| !deserved(m, &take.planted)).count() as u32;
-            for i in run.clone().filter(|&i| take.notes[i].phrase == 0) {
-                let p = &take.planted[i];
-                if !p.silent && fold(p.cents).abs() >= FLAGRANT_CENTS && take.notes[i].dur_s >= FLAGRANT_MIN_S {
+            for i in run.clone().filter(|&i| fault(&take.notes, &take.planted, i)) {
+                let caught = u32::from(v.marks.iter().any(|m| catches(m, i, &take.planted[i])));
+                let before = take.verdict.marks.iter().any(|m| catches(m, i, &take.planted[i]));
+                // A note its frames do not agree on is not marked alone, as part of a verse sung
+                // again is; the take may have marked it with its verse.
+                let heard = again.report.notes.get(i - run.start).is_some_and(cantor_core::judge::agreed);
+                self.faults += 1;
+                self.caught += caught;
+                self.dropped += u32::from(before && heard && caught == 0);
+                if take.notes[i].phrase == 0 {
                     self.first_faults += 1;
-                    self.first_caught += u32::from(v.marks.iter().any(|m| catches(m, i, p)));
+                    self.first_caught += caught;
                 }
             }
             self.otherwise += u32::from(again_otherwise(&take.notes, v, &take.verdict, run.clone()));
@@ -1007,6 +1026,10 @@ impl Metrics {
             a.otherwise == 0,
             format!("{} of {} runs sung again judged otherwise than in the take", a.otherwise, a.runs),
         );
+        need(
+            a.dropped == 0,
+            format!("{} faults the take caught not caught sung again", a.dropped),
+        );
         if matches!(gate, Gate::Student | Gate::Wrong) && a.first_faults > 0 {
             let recall = a.first_caught as f32 / a.first_faults as f32;
             need(
@@ -1179,6 +1202,7 @@ impl Metrics {
         let again = |m: &Metrics| m.again.unwrap_or_default();
         let (now, was) = (again(self), again(base));
         check("runs sung again", now.runs as f32, was.runs as f32, now.runs != was.runs);
+        check("faults sung again", now.faults as f32, was.faults as f32, now.faults != was.faults);
         check(
             "faults in a first phrase sung again",
             now.first_faults as f32,
@@ -1199,18 +1223,23 @@ impl Metrics {
     }
 }
 
-/// The notes a mark must catch: planted at least [`FLAGRANT_CENTS`] off (octave-agnostic),
-/// long enough and past the first phrase, or in a verse planted silent throughout.
+/// The notes a mark on a take must catch: its [`fault`]s past the first phrase, where the key
+/// is read.
 fn faults<'a>(notes: &'a [Note], planted: &'a [Planted]) -> impl Iterator<Item = usize> + 'a {
-    (0..notes.len()).filter(move |&i| {
-        let p = &planted[i];
-        if p.silent {
-            let verse: Vec<usize> = (0..notes.len()).filter(|&j| notes[j].verse == notes[i].verse).collect();
-            verse.len() >= 3 && verse.iter().all(|&j| planted[j].silent)
-        } else {
-            fold(p.cents).abs() >= FLAGRANT_CENTS && notes[i].dur_s >= FLAGRANT_MIN_S && notes[i].phrase > 0
-        }
-    })
+    (0..notes.len()).filter(move |&i| notes[i].phrase > 0 && fault(notes, planted, i))
+}
+
+/// Whether note `i` is a fault a mark must catch, given the key: planted at least
+/// [`FLAGRANT_CENTS`] off (octave-agnostic) and long enough, or in a verse planted silent
+/// throughout. A run sung again, in a key given, must catch it in a first phrase too.
+fn fault(notes: &[Note], planted: &[Planted], i: usize) -> bool {
+    let p = &planted[i];
+    if p.silent {
+        let verse: Vec<usize> = (0..notes.len()).filter(|&j| notes[j].verse == notes[i].verse).collect();
+        verse.len() >= 3 && verse.iter().all(|&j| planted[j].silent)
+    } else {
+        fold(p.cents).abs() >= FLAGRANT_CENTS && notes[i].dur_s >= FLAGRANT_MIN_S
+    }
 }
 
 /// Whether `mark` catches the fault planted on note `i`.
@@ -1267,7 +1296,7 @@ struct TakeOutput<'a> {
 /// The widths of the console's columns of takes stopped short, after the suite's name.
 const STOP_WIDTHS: [usize; 9] = [7, 10, 5, 9, 6, 6, 8, 9, 4];
 /// The widths of the columns of the table of runs sung again, after the suite's name.
-const AGAIN_WIDTHS: [usize; 6] = [5, 7, 9, 5, 6, 6];
+const AGAIN_WIDTHS: [usize; 9] = [5, 7, 9, 5, 6, 6, 7, 6, 6];
 
 /// Runs the gates, or with `only`, just the named suite, drawing its takes. With an oracle,
 /// every take is also labelled by it and compared, outside the gates.
@@ -1447,7 +1476,17 @@ pub fn run(
             stop_md.push_str(&format!("| {name} |{cells} {:.1} |\n", s.key_apart_cents));
         }
         if let Some(a) = metrics.again {
-            let counts = [a.runs, a.unheard, a.otherwise, a.false_marks, a.first_faults, a.first_caught];
+            let counts = [
+                a.runs,
+                a.unheard,
+                a.otherwise,
+                a.false_marks,
+                a.faults,
+                a.caught,
+                a.dropped,
+                a.first_faults,
+                a.first_caught,
+            ];
             let console: String = counts.iter().zip(AGAIN_WIDTHS).map(|(c, w)| format!(" {c:>w$}")).collect();
             again_console.push_str(&format!("{name:<22}{console} {:>6.1}\n", a.apart_cents));
             let cells: String = counts.iter().map(|c| format!(" {c} |")).collect();
@@ -1516,13 +1555,24 @@ pub fn run(
         let note = "Runs sung again: the first, second, middle and last phrases of every take heard whole, heard again \
              from the take's own sound and judged in the key the take was in there. Unheard: not heard again though \
              the take heard enough of them. Otherwise: judged otherwise than in the take where the two are judged alike. \
-             False: marks not deserved. First faults: planted in a first phrase, which only a run sung again is marked \
-             in (caught: by a mark). Apart: the furthest a note's error sung again was from its error in the take.";
-        let heads = ["runs", "unheard", "otherwise", "false", "first", "caught"];
+             False: marks not deserved. Faults: planted in the runs heard again, in a first phrase too (caught: by a \
+             mark; dropped: caught by the take, not the run). First: of those, in a first phrase, which only a run sung \
+             again is marked in. Apart: the furthest a note's error sung again was from its error in the take.";
+        let heads = [
+            "runs",
+            "unheard",
+            "otherwise",
+            "false",
+            "faults",
+            "caught",
+            "dropped",
+            "first",
+            "caught",
+        ];
         let heads: String = heads.iter().zip(AGAIN_WIDTHS).map(|(h, w)| format!(" {h:>w$}")).collect();
         println!("\n{note}\n{:<22}{heads} {:>6}\n{again_console}", "suite", "apart");
         md.push_str(&format!(
-            "\n{note}\n\n| suite | runs | unheard | judged otherwise | false marks | first-phrase faults | caught | apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|\n{again_md}"
+            "\n{note}\n\n| suite | runs | unheard | judged otherwise | false marks | faults | caught | dropped | first-phrase faults | caught | apart (cents) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n{again_md}"
         ));
     }
     if !oracle_md.is_empty() {

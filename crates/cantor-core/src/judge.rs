@@ -9,6 +9,10 @@
 //! and its frames agree; a verse is marked when most of it is off together (a verse a tone
 //! high), or when it was silent throughout. A verse that was loud but not pitched (a clash
 //! with the guide, a noisy room) is not marked. Smaller errors are left to the trace.
+//!
+//! A run of the chant sung again after a take ([`judge_again`]) is judged in the key the take
+//! was in there, given, with no drift: so a note of its first phrase may be marked too, and a
+//! verse only when the run holds the whole of it.
 
 use std::ops::Range;
 
@@ -120,7 +124,7 @@ impl Cadence {
 pub struct Verdict {
     pub outcome: Outcome,
     /// The key the singer started in, in cents from the score's (do at middle C), folded
-    /// into `-600.0..600.0`, when heard.
+    /// into `-600.0..600.0`, when heard; of a run sung again, the key it was judged in.
     pub key_cents: Option<f32>,
     /// How far the reciting tone moved from the first heard note to the last, in cents: a
     /// robust line through the notes' errors.
@@ -141,6 +145,20 @@ impl Verdict {
     /// The take has no fault to report: heard, steady and unmarked.
     pub fn clean(&self) -> bool {
         self.outcome == Outcome::Heard && self.steady && self.marks.is_empty()
+    }
+
+    /// The verdict on `len` notes not judged, for `outcome`: nothing heard of them.
+    fn silent(outcome: Outcome, len: usize) -> Verdict {
+        Verdict {
+            outcome,
+            key_cents: None,
+            drift_cents: 0.0,
+            steady: true,
+            marks: Vec::new(),
+            relative: vec![None; len],
+            in_tune: 0,
+            cadences: Vec::new(),
+        }
     }
 
     /// The verdict on notes from `first` on, with its notes indexed as among `len`: those before
@@ -166,7 +184,8 @@ impl Verdict {
     }
 
     /// The verdict on the notes `run` alone, indexed from its first, as [`judge_again`] judged
-    /// them.
+    /// them: their marks, cadences and errors, its outcome, key, drift and count in tune as they
+    /// were (of the whole take, for a take's verdict).
     pub fn within(&self, run: Range<usize>) -> Verdict {
         let inside = |first: usize, last: usize| first >= run.start && last < run.end;
         Verdict {
@@ -218,9 +237,16 @@ pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
 /// only when the run holds the whole of it, and a run that holds part of one is judged note by
 /// note. The verdict's notes are the chant's, by index, those outside the run not heard; `report`
 /// scores the run's alone, from its first. A report that does not match them is not heard.
+///
+/// A key that is not a number (no key to sing it in) leaves the run not heard; a run that ends
+/// before it begins is empty.
 pub fn judge_again(chant: &[Note], run: Range<usize>, report: &Report, key_cents: f32) -> Verdict {
-    let run = run.start.min(chant.len())..run.end.min(chant.len());
-    judge_run(chant, run.clone(), report, Some(key_cents)).placed(run.start, chant.len())
+    let start = run.start.min(chant.len());
+    let run = start..run.end.clamp(start, chant.len());
+    if !key_cents.is_finite() {
+        return Verdict::silent(Outcome::NotHeard, chant.len());
+    }
+    judge_run(chant, run.clone(), report, Some(fold(key_cents))).placed(run.start, chant.len())
 }
 
 /// The key the take judged `verdict` (scored as `report`) was in at its notes `run`, for the run to
@@ -241,24 +267,15 @@ pub fn key_at(verdict: &Verdict, report: &Report, run: Range<usize>) -> Option<f
             }
         })
         .collect();
-    moved.sort_by(f32::total_cmp);
-    Some(fold(key + moved.get(moved.len() / 2).copied().unwrap_or(0.0)))
+    let line = if moved.is_empty() { 0.0 } else { median(&mut moved) };
+    Some(fold(key + line))
 }
 
 /// Judges a scored take of `chant`'s notes `run`, indexed from the run's first: in `key` when it
 /// is given (see [`judge_again`]), else in the key the take starts in, following its drift.
 fn judge_run(chant: &[Note], run: Range<usize>, report: &Report, key: Option<f32>) -> Verdict {
     let notes = &chant[run.clone()];
-    let silent = |outcome| Verdict {
-        outcome,
-        key_cents: None,
-        drift_cents: 0.0,
-        steady: true,
-        marks: Vec::new(),
-        relative: vec![None; notes.len()],
-        in_tune: 0,
-        cadences: Vec::new(),
-    };
+    let silent = |outcome| Verdict::silent(outcome, notes.len());
     let results = &report.notes;
     if results.len() != notes.len() || results.iter().enumerate().any(|(i, r)| r.index != i) {
         return silent(Outcome::NotHeard);
@@ -423,8 +440,9 @@ fn cadence_cents(errors: impl Iterator<Item = (usize, Option<f32>)>) -> Option<(
     (worst.1.abs() >= CADENCE_CENTS || errors.iter().all(|(_, e)| e.is_some())).then_some(worst)
 }
 
-/// Whether a note's frames agree on its pitch: enough of them, close together.
-fn agreed(r: &NoteResult) -> bool {
+/// Whether a note's frames agree on its pitch: enough of them, close together, as a note marked
+/// alone needs.
+pub fn agreed(r: &NoteResult) -> bool {
     r.voiced_frames >= MARK_MIN_FRAMES && r.spread_cents.is_some_and(|s| s < MARK_MAX_SPREAD)
 }
 
@@ -843,9 +861,35 @@ mod tests {
 
     #[test]
     fn sung_again_a_note_of_the_first_phrase_may_be_marked() {
-        // The key is not found there, but given.
+        // The key is not found there, but given: sharp or flat.
         let v = judge_again(&notes(), 0..3, &report(&[Some(0.0), Some(300.0), Some(0.0)]), 0.0);
         assert_eq!(v.marks.iter().map(|m| m.first).collect::<Vec<_>>(), [1]);
+        let v = judge_again(&notes(), 0..3, &report(&[Some(0.0), Some(0.0), Some(-200.0)]), 0.0);
+        assert_eq!(v.marks.iter().map(|m| (m.first, m.cents)).collect::<Vec<_>>(), [(2, Some(-200.0))]);
+    }
+
+    #[test]
+    fn a_run_sung_again_does_not_drift_from_the_key_given() {
+        // Rising steadily, each note is its own error from the key, none put down to a drift.
+        let v = judge_again(&notes(), 5..9, &report(&[Some(0.0), Some(30.0), Some(60.0), Some(90.0)]), 0.0);
+        assert_eq!((v.drift_cents, v.steady), (0.0, true));
+        assert_eq!(v.relative[5..9], [Some(0.0), Some(30.0), Some(60.0), Some(90.0)]);
+    }
+
+    #[test]
+    fn a_run_sung_again_in_no_key_is_not_heard_and_a_key_given_is_folded() {
+        let r = report(&[Some(0.0), Some(0.0), Some(0.0)]);
+        for key in [f32::NAN, f32::INFINITY] {
+            let v = judge_again(&notes(), 3..6, &r, key);
+            assert_eq!((v.outcome, v.key_cents, v.relative.len()), (Outcome::NotHeard, None, 10));
+        }
+        // A key given past a tritone is folded, as the judge's own is.
+        let v = judge_again(&notes(), 3..6, &report(&[Some(-500.0); 3]), 1900.0);
+        assert_eq!(v.key_cents, Some(-500.0));
+        assert!(v.marks.is_empty());
+        // A run that ends before it begins is empty, and not heard.
+        let v = judge_again(&notes(), Range { start: 6, end: 3 }, &r, 0.0);
+        assert_eq!((v.outcome, v.relative.len()), (Outcome::NotHeard, 10));
     }
 
     #[test]

@@ -34,14 +34,14 @@
     "takes_under_floor": 0,
     "heard_all": 0.9965398,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.8454285,
+    "tracking_cents": 7.853994,
     "gross_error_rate": 0.0034722222,
     "marks": 16,
     "false_marks": 0,
     "faults": 38,
     "recall": 1.0,
     "false_in_tune": 0,
-    "key_error_cents": 8.168396,
+    "key_error_cents": 8.044067,
     "summary_errors": 0,
     "cadences": 28,
     "cadences_judged": 28,
@@ -52,16 +52,19 @@
     "timed_late": 0,
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
-    "in_tune": 211,
-    "agreement": 0.9909732,
+    "in_tune": 209,
+    "agreement": 0.99069375,
     "again": {
       "runs": 16,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 0.46887207,
+      "apart_cents": 0.5097656,
       "false_marks": 0,
-      "first_faults": 0,
-      "first_caught": 0
+      "faults": 15,
+      "caught": 15,
+      "dropped": 0,
+      "first_faults": 2,
+      "first_caught": 2
     }
   },
   "expert-bleed": {
@@ -97,6 +100,9 @@
       "otherwise": 0,
       "apart_cents": 0.46820068,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -134,6 +140,9 @@
       "otherwise": 0,
       "apart_cents": 1.1437378,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -171,6 +180,9 @@
       "otherwise": 0,
       "apart_cents": 0.4104004,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -206,8 +218,11 @@
       "runs": 22,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 2.4821777,
+      "apart_cents": 2.3048096,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -243,8 +258,11 @@
       "runs": 22,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 1.1750488,
+      "apart_cents": 1.0772095,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -322,6 +340,9 @@
       "otherwise": 0,
       "apart_cents": 0.28881836,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -359,6 +380,9 @@
       "otherwise": 0,
       "apart_cents": 1.5338745,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -396,6 +420,9 @@
       "otherwise": 0,
       "apart_cents": 1.1176147,
       "false_marks": 0,
+      "faults": 18,
+      "caught": 17,
+      "dropped": 0,
       "first_faults": 1,
       "first_caught": 1
     }
@@ -407,7 +434,7 @@
     "takes_under_floor": 0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.0798507,
+    "tracking_cents": 7.079186,
     "gross_error_rate": 0.0,
     "marks": 29,
     "false_marks": 0,
@@ -425,16 +452,19 @@
     "timed_late": 0,
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
-    "in_tune": 255,
+    "in_tune": 254,
     "agreement": 0.99294484,
     "again": {
       "runs": 16,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 1.5447388,
+      "apart_cents": 1.4160156,
       "false_marks": 0,
-      "first_faults": 1,
-      "first_caught": 1
+      "faults": 19,
+      "caught": 19,
+      "dropped": 0,
+      "first_faults": 2,
+      "first_caught": 2
     }
   },
   "student-stopped": {
@@ -510,6 +540,9 @@
       "otherwise": 0,
       "apart_cents": 24.273682,
       "false_marks": 0,
+      "faults": 5,
+      "caught": 5,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -547,6 +580,9 @@
       "otherwise": 0,
       "apart_cents": 0.0,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -582,8 +618,11 @@
       "runs": 4,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 4.4902344,
+      "apart_cents": 4.116089,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
@@ -619,8 +658,11 @@
       "runs": 4,
       "unheard": 0,
       "otherwise": 0,
-      "apart_cents": 0.1743164,
+      "apart_cents": 0.15979004,
       "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
       "first_faults": 0,
       "first_caught": 0
     }
