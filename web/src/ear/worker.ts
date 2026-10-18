@@ -19,6 +19,8 @@ interface Exports {
   ear_onset(): number;
   ear_entry(due: number): number;
   ear_judge(gabcLen: number, pulse: number, offset: number, through: number): number;
+  ear_again_key(len: number, first: number, last: number): number;
+  ear_judge_again(gabcLen: number, beforeLen: number, pulse: number, offset: number, first: number, last: number, key: number): number;
 }
 
 /** A tracked frame: its centre in seconds of the audio context's clock, the pitch heard (as a
@@ -39,6 +41,8 @@ export type ToEar =
   | { type: "start"; id: number; sampleRate: number; audio: MessagePort }
   | { type: "entry"; id: number; due: number }
   | { type: "judge"; id: number; gabc: string; pulse: number; offset: number; through: number }
+  | { type: "key"; id: number; before: string; first: number; last: number }
+  | { type: "judge-again"; id: number; gabc: string; before: string; pulse: number; offset: number; first: number; last: number; key: number }
   | { type: "audio"; id: number };
 
 /** When a take's first note starts, in seconds of the take, as cantor-core's entry.rs times
@@ -58,7 +62,8 @@ export type Block = { t: number; samples: Float32Array } | { end: true };
  * rate, frame count, first loud sample in seconds from its start, its first sample's time on
  * the audio clock (null when none came), the share of its length spent
  * hearing it as it came, and the milliseconds spent finishing it); then, when asked, when its
- * first note starts, and the take judged. Each answer, or the error in its place, carries the `id` of the request it answers. */
+ * first note starts, and the take judged, whole or as a run sung again; and, for a run to be
+ * sung again, the key it is sung in. Each answer, or the error in its place, carries the `id` of the request it answers. */
 export type FromEar =
   | { type: "frames"; frames: Frame[] }
   | {
@@ -74,6 +79,7 @@ export type FromEar =
     }
   | { type: "entry"; id: number; entry: Entry }
   | { type: "judged"; id: number; json: string }
+  | { type: "key"; id: number; key: number | null }
   | { type: "audio"; id: number; wav: ArrayBuffer; seconds: number }
   | { type: "error"; id: number; message: string };
 
@@ -113,6 +119,14 @@ const post = (message: FromEar) => scope.postMessage(message);
 function output(ear: Exports, len = ear.ear_output_len()): string {
   const at = ear.ear_output();
   return new TextDecoder().decode(new Uint8Array(ear.memory.buffer, at, len));
+}
+
+/** Puts `text` in the ear's byte buffer, and returns its length there in bytes. */
+function bytes(ear: Exports, text: string): number {
+  const encoded = new TextEncoder().encode(text);
+  const at = ear.ear_bytes(encoded.length);
+  new Uint8Array(ear.memory.buffer, at, encoded.length).set(encoded);
+  return encoded.length;
 }
 
 function check(ear: Exports, result: number): number {
@@ -227,11 +241,21 @@ scope.onmessage = async (e: MessageEvent<ToEar>) => {
       }
       const { wav } = takeFile(samples, sampleRate);
       scope.postMessage({ type: "audio", id: message.id, wav, seconds: pushed / sampleRate }, [wav]);
-    } else {
+    } else if (message.type === "key") {
+      const before = bytes(ear, message.before);
+      const key = ear.ear_again_key(before, message.first, message.last);
+      post({ type: "key", id: message.id, key: Number.isNaN(key) ? null : key });
+    } else if (message.type === "judge-again") {
       const gabc = new TextEncoder().encode(message.gabc);
-      const at = ear.ear_bytes(gabc.length);
+      const before = new TextEncoder().encode(message.before);
+      const at = ear.ear_bytes(gabc.length + before.length);
       new Uint8Array(ear.memory.buffer, at, gabc.length).set(gabc);
-      const len = check(ear, ear.ear_judge(gabc.length, message.pulse, message.offset, message.through));
+      new Uint8Array(ear.memory.buffer, at + gabc.length, before.length).set(before);
+      const { pulse, offset, first, last, key } = message;
+      const len = check(ear, ear.ear_judge_again(gabc.length, before.length, pulse, offset, first, last, key));
+      post({ type: "judged", id: message.id, json: output(ear, len) });
+    } else {
+      const len = check(ear, ear.ear_judge(bytes(ear, message.gabc), message.pulse, message.offset, message.through));
       post({ type: "judged", id: message.id, json: output(ear, len) });
     }
   } catch (error) {

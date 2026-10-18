@@ -289,9 +289,12 @@ test("a scored take is timed to the chant and judged as cantor eval judged it", 
   expect(told.startsWith(want.summary[0])).toBe(true);
   if (!borderline(want)) expect(told).toEqual(want.summary.join(" "));
   else expect(told).toMatch(/endings?( heard clearly)? (was|were|went)|heard clearly, and it (was|went)/);
-  // The next take clears this one's view, and Stop ends it.
+  // The next take clears this one's view, and Stop ends it. With a mark's phrase chosen the
+  // button sings that phrase again, so the whole chant is chosen first.
   await page.locator('[data-mark="0"]').click();
   await expect(page.locator("#why")).toBeVisible();
+  await expect(page.locator("#take")).toHaveText("Sing again");
+  await page.getByRole("button", { name: "Whole chant" }).click();
   await take.click();
   await expect(page.locator("#why")).toBeHidden();
   await expect(page.locator(".mark-ring")).toHaveCount(0);
