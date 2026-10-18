@@ -666,7 +666,11 @@ function say(text: string): void {
 function drawCard(): void {
   const spot = openSpot();
   why.hidden = !spot;
-  if (!spot) return say("");
+  if (!spot) {
+    // Closed, it covers nothing: a place brought into view at once need not keep clear of it.
+    document.documentElement.style.setProperty("--why-h", "0px");
+    return say("");
+  }
   const kind = spot.mark ? "mark" : "ending";
   why.setAttribute("aria-label", `The ${kind} open`);
   labelButton(unopenButton, `Close the ${kind}`);

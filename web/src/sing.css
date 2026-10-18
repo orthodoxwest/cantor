@@ -661,7 +661,7 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
     padding-right: 0;
   }
 }
-@media (max-width: 339px) {
+@media (max-width: 329px) {
   .grid thead th:first-child {
     width: 28%;
   }
