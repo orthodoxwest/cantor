@@ -342,7 +342,7 @@ fn but(sentence: &str) -> String {
 
 /// "about a whole tone above", "a semitone below": how far `cents` (folded to the nearest
 /// octave) is, in the steps a singer names.
-fn interval(cents: f32) -> String {
+pub(crate) fn interval(cents: f32) -> String {
     let cents = fold(cents);
     let way = if cents >= 0.0 { "above" } else { "below" };
     match steps(cents.abs()) {
@@ -409,7 +409,7 @@ fn amount(k: usize, n: usize) -> String {
     if n < WORDS.len() { number(k) } else { k.to_string() }
 }
 
-fn capitalise(word: &str) -> String {
+pub(crate) fn capitalise(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }

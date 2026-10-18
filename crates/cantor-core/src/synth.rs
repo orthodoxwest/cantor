@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::grid::Part;
 use crate::midi_to_hz;
 use crate::room;
 
@@ -24,6 +25,9 @@ pub struct Note {
     /// The phrase: advances after every bar, mediant and flex.
     #[serde(default)]
     pub phrase: u32,
+    /// Where it falls in a psalm verse sung to a tone.
+    #[serde(default)]
+    pub part: Part,
     /// The vowel the syllable is sung on, when known.
     #[serde(default)]
     pub vowel: Option<char>,

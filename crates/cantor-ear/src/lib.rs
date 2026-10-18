@@ -9,8 +9,8 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, key_at, notes_from_gabc, ribbon,
-    score, summary, told, told_again,
+    Band, Ending, Frame, Grid, Listening, Note, Report, Verdict, again, endings, entry, grid, judge_again, judge_part, key_at,
+    notes_from_gabc, ribbon, score, summary, told, told_again,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::{Deserialize, Serialize};
@@ -105,6 +105,9 @@ pub struct Judged {
     pub summary: Vec<String>,
     /// The phrase endings the second sentence tells of as off pitch, each in words.
     pub endings: Vec<Ending>,
+    /// A psalm sung to a tone, verse by verse ([`grid`]): the verses judged, each part's ending as
+    /// called. None for any other chant, and for a take not heard.
+    pub grid: Option<Grid>,
 }
 
 /// The notes of `gabc` at `pulse_s` a pulse, the first `offset_s` into the take, scored and
@@ -143,6 +146,7 @@ pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize
     let report = score(&notes[..judged], frames);
     let verdict = judge_part(&notes, judged, &report);
     let summary = summary(&notes, &verdict);
+    let grid = grid(&notes, &verdict, 0..judged);
     notes.truncate(judged);
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
@@ -155,6 +159,7 @@ pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize
         told,
         summary,
         endings,
+        grid,
     }
 }
 
@@ -181,7 +186,7 @@ pub fn judge_again_gabc(
 
 /// The chant's `notes`, timed on the take's clock, of which those of `run` were sung again,
 /// scored and judged on its `frames` in `key_cents` ([`judge_again`]): its notes are the run's,
-/// its report theirs from the run's first, while its verdict, bands and endings are of the
+/// its report theirs from the run's first, while its verdict, bands, endings and grid are of the
 /// chant's notes by index, so that they are drawn and told where the take's are. Its summary
 /// tells of the run beside the take it was sung after, `before` ([`again`]).
 pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_cents: f32, before: &Before, frames: &[Frame]) -> Judged {
@@ -200,6 +205,7 @@ pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_
         .collect();
     let told = told_again(&verdict, &notes);
     let endings = endings(&verdict);
+    let grid = grid(&notes, &verdict, run.clone());
     notes.truncate(run.end);
     notes.drain(..run.start);
     Judged {
@@ -210,6 +216,7 @@ pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_
         told,
         summary,
         endings,
+        grid,
     }
 }
 
@@ -537,6 +544,7 @@ mod tests {
         assert_eq!(ear_stop(), -1, "a take stops once");
         assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0, -1), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
+        assert!(json.contains("\"grid\":null"), "a chant not a psalm has no grid");
         // Its notes 1 to 3 sung again are judged as the ear's own judge_again_gabc judges them,
         // in the key the core reads the take was in there, from the take's verdict and report;
         // the same take is handed to both. The take is told of as sung a tone sharp on its note
@@ -725,7 +733,38 @@ mod tests {
             summary(&notes[..14], &stopped.verdict)[0],
             "read from the notes judged alone"
         );
-        assert_eq!(judge_notes(notes, &frames, None).summary[0], stopped.summary[0]);
+        assert_eq!(judge_notes(notes.clone(), &frames, None).summary[0], stopped.summary[0]);
+        // Its grid is the core's of the verses judged: the first alone stopped, both sung whole.
+        let rows = |j: &Judged| j.grid.as_ref().map(|g| g.rows.iter().map(|r| r.verse).collect::<Vec<_>>());
+        assert_eq!(stopped.grid, grid(&notes, &stopped.verdict, 0..14));
+        assert_eq!(rows(&stopped), Some(vec![0]));
+        let whole = judge_notes(notes.clone(), &frames, None);
+        assert_eq!(whole.grid, grid(&notes, &whole.verdict, 0..notes.len()));
+        assert_eq!(rows(&whole), Some(vec![0, 1]));
+        // The second verse's mediant sung again: its grid is of that verse, with only the mediant
+        // called, as the core lays out the run; its termination, which never leaves the tone, is
+        // not sung in it.
+        let before = Before {
+            verdict: whole.verdict.clone(),
+            report: whole.report.clone(),
+        };
+        let again = judge_again_notes(notes.clone(), 14..25, 0.0, &before, &frames);
+        assert_eq!(again.grid, grid(&notes, &again.verdict, 14..25));
+        let called: Vec<_> = again
+            .grid
+            .iter()
+            .flat_map(|g| &g.rows)
+            .flat_map(|r| &r.cells)
+            .flatten()
+            .map(|c| (c.part, c.called))
+            .collect();
+        assert_eq!(
+            called,
+            [
+                (cantor_core::Part::Mediant, cantor_core::Called::OnPitch),
+                (cantor_core::Part::Termination, cantor_core::Called::Unsung)
+            ]
+        );
     }
 
     #[test]
