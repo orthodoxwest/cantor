@@ -543,6 +543,389 @@ test("while your take plays back, a playhead crosses the bands, and a band tappe
   await expect(playhead).toHaveAttribute("visibility", "hidden");
 });
 
+test("your last take of a chant is kept on the device and drawn dotted under the next, unless turned off or forgotten", async ({ page }) => {
+  // Two takes, one each side of the page opened again.
+  test.setTimeout(90_000);
+  // Every take is sung at noon, today.
+  await page.clock.setFixedTime(new Date(2026, 9, 17, 12, 0));
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  // Six notes at half a second, heard throughout.
+  const sing = async () => {
+    await page.evaluate(() => void window.__cantor.listen());
+    await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+    await page.waitForTimeout(4500);
+    await page.evaluate(() => void window.__cantor.listen());
+  };
+  const show = (offset = 0.2, through: number | null = null) =>
+    page.evaluate(([g, o, t]) => window.__cantor.show(g, 0.5, o, t), [gabc, offset, through] as const);
+  /** Changes the takes kept, in the page `on`. */
+  const change = (what: string, on = page) =>
+    on.evaluate(
+      (what) =>
+        new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("cantor");
+          request.onsuccess = () => {
+            const tx = request.result.transaction("takes", "readwrite");
+            const store = tx.objectStore("takes");
+            if (what === "other notes") {
+              const all = store.getAll();
+              all.onsuccess = () => all.result.forEach((t) => store.put({ ...t, notes: "0 0 0 0 0 0" }));
+            } else {
+              // Thirty other chants, all sung after this one (the clock set back since).
+              for (let i = 1; i <= 30; i++) store.put({ chant: `old-${i}`, at: 4e12 + i, notes: "", bands: [] });
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            request.result.close();
+          };
+        }),
+      what,
+    );
+  const line = page.locator("#before-line");
+  const faint = page.locator("#score .band-before-held");
+  const kept = page.locator("#kept");
+  // What the foot says, as read: that takes are kept, or in its place that they are forgotten.
+  const said = page.locator("#kept-said:visible, #forgotten:not(:empty)");
+  const KEPT_SAID = "Your last take of each chant is kept on this device, its bars and not its sound, to show under your next take of it.";
+  const FORGOTTEN = "Forgotten: no take is kept on this device now.";
+  const forget = page.getByRole("button", { name: "Forget them" });
+  /** The takes kept, each first made `sharper` cents sharper throughout. */
+  const takes = (sharper = 0) =>
+    page.evaluate(
+      (sharper) =>
+        new Promise<Array<{ chant: string; bands: Array<{ cents: number | null; trace: Float32Array }> }>>((resolve, reject) => {
+          const request = indexedDB.open("cantor");
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const tx = request.result.transaction("takes", "readwrite");
+            const store = tx.objectStore("takes");
+            const all = store.getAll();
+            all.onsuccess = () => {
+              if (sharper === 0) return;
+              for (const take of all.result) {
+                for (const b of take.bands) {
+                  if (b.cents !== null) b.cents += sharper;
+                  for (let i = 1; i < b.trace.length; i += 2) b.trace[i] += sharper;
+                }
+                store.put(take);
+              }
+            };
+            tx.oncomplete = () => resolve(all.result);
+            tx.onerror = () => reject(tx.error);
+            request.result.close();
+          };
+        }),
+      sharper,
+    );
+  await open(page);
+  await expect(kept).toBeHidden();
+  await sing();
+  await show();
+  // The first take of it has none before it; the foot of the page says it is kept.
+  await expect(line).toBeHidden();
+  await expect(faint).toHaveCount(0);
+  await expect(kept).toBeVisible();
+  // The take kept sung 40 cents sharper, so that it is told from the take shown.
+  const SHARPER = 40;
+  const sharper = (await takes(SHARPER)).map((t) => t.bands.map((b) => b.cents));
+  // A take not heard is not kept, nor replaces the take kept, nor shows it.
+  await show(60);
+  await expect(line).toBeHidden();
+  expect((await takes()).map((t) => t.bands.map((b) => b.cents))).toEqual(sharper);
+  // Shown again, the take before it is drawn under it, a bar and a trace on each note heard,
+  // each bar where the take kept held it: sharper, so above the singer's, by as much on every note.
+  // It is drawn with the take: the line above the score is shown whenever the bands are drawn, so
+  // the score is laid out once and does not move.
+  const draws = await page.evaluate(async ([g]) => {
+    const score = document.getElementById("score")!;
+    const line = document.getElementById("before-line")!;
+    const seen: Array<[boolean, number]> = [];
+    const watching = new MutationObserver(() => {
+      if (score.querySelector(".band-held")) seen.push([line.hidden, Math.round(score.getBoundingClientRect().top + scrollY)]);
+    });
+    watching.observe(score, { subtree: true, childList: true });
+    await window.__cantor.show(g, 0.5, 0.2);
+    watching.disconnect();
+    return seen;
+  }, [gabc] as const);
+  expect(draws.length).toBeGreaterThan(0);
+  expect(draws.every(([hidden]) => !hidden)).toBe(true);
+  expect(new Set(draws.map(([, top]) => top)).size).toBe(1);
+  await expect(line).toBeVisible();
+  await expect(line).toHaveText(/^\s*Your take sung today at 12:00\sPM, dotted$/);
+  const heard = await page.locator("#score .band-held").count();
+  expect(heard).toBe(6);
+  await expect(faint).toHaveCount(heard);
+  await expect(page.locator("#score .band-before")).toHaveCount(await page.locator("#score .band-trace").count());
+  const above = await page.locator("#score g[data-band]").evaluateAll((bands) =>
+    bands.map((g) => Number(g.querySelector(".band-held")!.getAttribute("y1")) - Number(g.querySelector(".band-before-held")!.getAttribute("y1"))),
+  );
+  expect(above).toHaveLength(6);
+  expect(above[0]!).toBeGreaterThan(1);
+  for (const by of above) expect(by).toBeCloseTo(above[0]!, 1);
+  // A take stopped short does not replace a fuller one: the next whole take still has it under
+  // every note.
+  await show(0.2, 2);
+  await expect(faint).toHaveCount(2);
+  await show();
+  await expect(faint).toHaveCount(heard);
+  // A take kept when the chant was read as other notes is not drawn on these, and any take
+  // replaces it, a stopped one too.
+  await change("other notes");
+  await show(0.2, 2);
+  await expect(line).toBeHidden();
+  expect((await takes()).map((t) => t.bands.length)).toEqual([2]);
+  await show();
+  await expect(faint).toHaveCount(2);
+  // Turned off, it goes, and stays off on the page opened again; the take is still kept, and the
+  // foot of the page says so before any take.
+  await page.locator("#before").uncheck();
+  await expect(faint).toHaveCount(0);
+  await expect(line).toBeVisible();
+  await open(page);
+  await expect(kept).toBeVisible();
+  await expect(page.locator("#before")).not.toBeChecked();
+  await sing();
+  await show();
+  await expect(line).toBeVisible();
+  await expect(faint).toHaveCount(0);
+  await page.locator("#before").check();
+  await expect(faint).toHaveCount(heard);
+  // Past the most chants kept, the one sung longest ago goes, but never the one just kept, even
+  // when the clock has been set back since the others were.
+  const chant = (await takes())[0]!.chant;
+  await change("thirty more");
+  expect(await takes()).toHaveLength(31);
+  await show();
+  const left = (await takes()).map((t) => t.chant);
+  expect(left).toHaveLength(30);
+  expect(left).toContain(chant);
+  expect(left).not.toContain("old-1");
+  expect(left).toContain("old-2");
+  // Forgotten, there is none before the next, and the foot says so; the button keeps the focus,
+  // and is there still, where it was on the screen as the line above the score goes.
+  await expect(said).toHaveText(KEPT_SAID);
+  await page.setViewportSize({ width: 390, height: 500 });
+  await page.evaluate(() => {
+    document.documentElement.style.overflowAnchor = "none";
+    window.scrollTo({ top: document.documentElement.scrollHeight - innerHeight - 100, behavior: "instant" });
+  });
+  await forget.evaluate((el) => (el as HTMLButtonElement).focus({ preventScroll: true }));
+  const at = await forget.evaluate((el) => el.getBoundingClientRect().top);
+  await page.keyboard.press("Enter");
+  await expect(said).toHaveText(FORGOTTEN);
+  await expect(line).toBeHidden();
+  expect(Math.abs((await forget.evaluate((el) => el.getBoundingClientRect().top)) - at)).toBeLessThan(1);
+  await expect(forget).toBeFocused();
+  await expect(line).toBeHidden();
+  await expect(faint).toHaveCount(0);
+  expect(await takes()).toEqual([]);
+  await show();
+  await expect(line).toBeHidden();
+  await expect(forget).toBeVisible();
+  await expect(said).toHaveText(KEPT_SAID);
+  await show();
+  await expect(line).toBeVisible();
+  // A Forget that fails says so in place of the statement, and the take before stays drawn.
+  const refuse = (refused: boolean) =>
+    page.evaluate((refused) => {
+      const proto = IDBObjectStore.prototype as IDBObjectStore & { cleared?: IDBObjectStore["clear"] };
+      proto.cleared ??= proto.clear;
+      proto.clear = refused
+        ? () => {
+            throw new DOMException("Refused", "UnknownError");
+          }
+        : proto.cleared;
+    }, refused);
+  await refuse(true);
+  await forget.click();
+  await expect(said).toHaveText("Your takes could not be forgotten.");
+  await expect(line).toBeVisible();
+  await refuse(false);
+  // Forgotten in another tab, the take before goes here too, the score where it was on the
+  // screen; kept here again, that tab says so.
+  const other = await page.context().newPage();
+  await open(other);
+  const otherSaid = other.locator("#kept-said:visible, #forgotten:not(:empty)");
+  await page.evaluate(() => window.scrollTo({ top: 150, behavior: "instant" }));
+  const scoreAt = await page.locator("#score").evaluate((el) => el.getBoundingClientRect().top);
+  await other.getByRole("button", { name: "Forget them" }).click();
+  await expect(otherSaid).toHaveText(FORGOTTEN);
+  await expect(line).toBeHidden();
+  await expect(faint).toHaveCount(0);
+  await expect(said).toHaveText(FORGOTTEN);
+  expect(Math.abs((await page.locator("#score").evaluate((el) => el.getBoundingClientRect().top)) - scoreAt)).toBeLessThan(1);
+  // Forgotten already, a Forget that fails leaves them forgotten.
+  await refuse(true);
+  await forget.click();
+  await expect(said).toHaveText(FORGOTTEN);
+  await refuse(false);
+  await show();
+  await expect(otherSaid).toHaveText(KEPT_SAID);
+  await other.close();
+});
+
+test("a take is shown whatever the browser's storage does: an open that never answers holds nothing up", async ({ page }) => {
+  test.setTimeout(60_000);
+  // The page's opens of its takes never answer, as Safari 14.1's did on a first load.
+  await page.addInitScript(() => {
+    const open = IDBFactory.prototype.open;
+    IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+      return name === "cantor" ? ({} as IDBOpenDBRequest) : open.call(this, name, version);
+    };
+  });
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await open(page);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4500);
+  await page.evaluate(() => void window.__cantor.listen());
+  for (let take = 0; take < 2; take++) {
+    // Drawn at once, with no take before it: well inside the time the page gives its storage to
+    // open, never mind forever.
+    const drawn = await page.evaluate(async ([g]) => {
+      const score = document.getElementById("score")!;
+      const asked = performance.now();
+      const shown = window.__cantor.show(g, 0.5, 0.2);
+      const at = await new Promise<number>((resolve) => {
+        const watching = new MutationObserver(() => {
+          if (!score.querySelector(".band-held")) return;
+          watching.disconnect();
+          resolve(performance.now() - asked);
+        });
+        watching.observe(score, { subtree: true, childList: true });
+      });
+      await shown;
+      return at;
+    }, [gabc] as const);
+    expect(drawn).toBeLessThan(1000);
+    await expect(page.locator("#score .band-held")).toHaveCount(6);
+    await expect(page.locator("#before-line")).toBeHidden();
+  }
+  await expect(page.locator("#kept")).toBeHidden();
+});
+
+test("a take sung is shown at once, however long the take kept before it takes to be read", async ({ page }) => {
+  test.setTimeout(60_000);
+  // Every change to and read of the takes kept is answered twenty seconds late.
+  await page.addInitScript(() => {
+    const transaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase["transaction"]>) {
+      const tx = transaction.apply(this, args);
+      if (this.name !== "cantor") return tx;
+      let late: IDBTransaction["oncomplete"] = null;
+      Object.defineProperty(tx, "oncomplete", {
+        get: () => late,
+        set: (then: IDBTransaction["oncomplete"]) => {
+          late = then;
+          tx.addEventListener("complete", (e) => setTimeout(() => then?.call(tx, e), 20_000));
+        },
+      });
+      return tx;
+    };
+  });
+  await open(page);
+  await page.evaluate(() => window.__cantor.practise("(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)", 0.5));
+  // From when the take is listened back to until its bands are drawn.
+  const drawn = page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        let back = 0;
+        const watching = new MutationObserver(() => {
+          if (!back && document.getElementById("status")!.textContent === "Listening back to your take…") back = performance.now();
+          if (!back || !document.querySelector("#score .band-held")) return;
+          watching.disconnect();
+          resolve(performance.now() - back);
+        });
+        watching.observe(document.body, { subtree: true, childList: true, characterData: true });
+      }),
+  );
+  await page.getByRole("button", { name: "Sing a take" }).click();
+  expect(await drawn).toBeLessThan(1000);
+  await expect(page.locator("#key")).toHaveText(/^You started /);
+  await expect(page.locator("#before-line")).toBeHidden();
+});
+
+test("a take forgotten while another is sung, here or in another tab, is not drawn under it", async ({ page }) => {
+  test.setTimeout(120_000);
+  const FORGOTTEN = "Forgotten: no take is kept on this device now.";
+  await open(page);
+  await page.evaluate(() => window.__cantor.practise("(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)", 0.5));
+  const take = page.getByRole("button", { name: "Sing a take" });
+  const line = page.locator("#before-line");
+  const faint = page.locator("#score .band-before-held");
+  /** A whole take through the button, with `during` done while it is sung. */
+  const sung = async (during: () => Promise<void> = async () => {}) => {
+    await take.click();
+    await expect(page.locator("body")).toHaveClass(/taking/);
+    await during();
+    await expect(take).toBeEnabled({ timeout: 30_000 });
+    await expect(page.locator("#result")).toBeVisible();
+    await expect(page.locator("#key")).toHaveText(/^You started /);
+  };
+  await sung();
+  await expect(page.locator("#kept")).toBeVisible();
+  await sung();
+  await expect(line).toBeVisible();
+  await expect(faint).toHaveCount(6);
+  // Forgotten here while the next is sung: the take read as it began is not drawn.
+  await sung(async () => {
+    await page.locator("#forget").evaluate((el) => (el as HTMLButtonElement).click());
+    await expect(page.locator("#forgotten")).toHaveText(FORGOTTEN);
+    await expect(page.locator("body")).toHaveClass(/\btaking\b/);
+  });
+  await expect(line).toBeHidden();
+  await expect(faint).toHaveCount(0);
+  // That take kept, and forgotten in another tab while the next is sung here.
+  const other = await page.context().newPage();
+  await open(other);
+  await page.bringToFront();
+  await sung(async () => {
+    await other.getByRole("button", { name: "Forget them" }).click();
+    await expect(page.locator("#forgotten")).toHaveText(FORGOTTEN);
+    await expect(page.locator("body")).toHaveClass(/\btaking\b/);
+  });
+  await expect(line).toBeHidden();
+  await expect(faint).toHaveCount(0);
+  await other.close();
+});
+
+test("the takes kept are kept again once the browser has cleared them under the open page", async ({ page }) => {
+  test.setTimeout(60_000);
+  const gabc = "(c4) A(h) men(h) (:) al(g)le(h)lu(h)ia(g) (::)";
+  await open(page);
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(4500);
+  await page.evaluate(() => void window.__cantor.listen());
+  const show = () => page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [gabc] as const);
+  await show();
+  await expect(page.locator("#kept")).toBeVisible();
+  // Site data cleared while the page is open closes its connection.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Storage.clearDataForOrigin", { origin: new URL(page.url()).origin, storageTypes: "indexeddb" });
+  await show();
+  await expect(page.locator("#before-line")).toBeHidden();
+  await show();
+  await expect(page.locator("#before-line")).toBeVisible();
+  await page.getByRole("button", { name: "Forget them" }).click();
+  await expect(page.locator("#forgotten")).toHaveText("Forgotten: no take is kept on this device now.");
+  // A later build opening them anew is not held up by the open page, which lets them go.
+  const opened = await page.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        const request = indexedDB.open("cantor", 2);
+        request.onblocked = () => resolve("blocked");
+        request.onerror = () => resolve("error");
+        request.onsuccess = () => {
+          request.result.close();
+          resolve("opened");
+        };
+      }),
+  );
+  expect(opened).toBe("opened");
+});
+
 test("beside a take of a long chant, the bar has a segment a phrase to go to it, by tap, keyboard or drag", async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 390, height: 600 });

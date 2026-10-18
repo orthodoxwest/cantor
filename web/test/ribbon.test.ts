@@ -188,6 +188,35 @@ describe("ribbon", () => {
     expect(xs(drawRibbon(notes, bands, () => 0, 0, null, undefined, half), "band-recorded")).toEqual(xs(svg, "band-trace"));
   });
 
+  it("draws the take before this one dotted under the singer's, its bars and trace, re-based alike", () => {
+    const notes = [note(100, 0), note(130, 0)];
+    const bands = [
+      { index: 0, from_s: 0, to_s: 1, cents: 50, trace: [[0.2, 50], [0.6, 50]] as Array<[number, number]> },
+      { index: 1, from_s: 1, to_s: 2, cents: 10, trace: [[1.2, 10]] as Array<[number, number]> },
+    ];
+    // Sung at its own pace, and not heard on the second note.
+    const before = [
+      { index: 0, from_s: 3, to_s: 5, cents: -40, trace: [[3, -40], [5, -40]] as Array<[number, number]> },
+      { index: 1, from_s: 5, to_s: 6, cents: null, trace: [] },
+    ];
+    const held = (svg: string, cls: string) => [...svg.matchAll(new RegExp(`<line class="${cls}" [^>]*y1="([^"]*)"`, "g"))].map((m) => Number(m[1]));
+    const svg = drawRibbon(notes, bands, () => 0, 0, null, undefined, [], before);
+    // Under the singer's trace and bars, in the same band.
+    expect(svg.indexOf("band-before")).toBeLessThan(svg.indexOf("band-trace"));
+    expect(svg.indexOf("band-before-held")).toBeLessThan(svg.indexOf("band-held"));
+    expect(svg.match(/class="band-before"/g)).toHaveLength(1);
+    expect(held(svg, "band-before-held")).toEqual([Number(yOf(-40, 0).toFixed(1))]);
+    // Across the band the singer's is drawn in, whatever its times.
+    expect(svg).toMatch(/<polyline class="band-before" points="88\.0,[^ ]+ 113\.0,/);
+    // Re-based on the first note, each by its own value there.
+    const rebased = drawRibbon(notes, bands, () => 0, 50, 0, undefined, [], before);
+    expect(held(rebased, "band-before-held")).toEqual([Number(yOf(0, 0).toFixed(1))]);
+    expect(held(rebased, "band-held")).toEqual([yOf(0, 0), yOf(-40, 0)].map((y) => Number(y.toFixed(1))));
+    // Nothing of it with none, or re-based on a note it has no value for.
+    expect(drawRibbon(notes, bands, () => 0)).not.toContain("band-before");
+    expect(drawRibbon(notes, bands, () => 0, 10, 1, undefined, [], before)).not.toContain("band-before");
+  });
+
   it("names the key as a transposition", () => {
     expect(describeKey(-303.4)).toBe("3 semitones down, 3 cents flat");
     expect(describeKey(100)).toBe("1 semitone up");

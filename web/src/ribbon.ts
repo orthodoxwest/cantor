@@ -8,9 +8,10 @@
 // against the targets, which reach past the bars' ends, and a slide into a note or away from it
 // shows beside the bar. Where the chant has an aligned recording, its trace is drawn
 // under the singer's, each measured from its own key, so the two compare as sung, wherever each
-// was pitched. The ribbon itself draws no
-// verdict: no zone of what counts as in tune, no colours; the core's marks are drawn by
-// marks.ts, on the notes in the engraving.
+// was pitched; the singer's take of it before this one, kept on the device (kept.ts), is drawn
+// faintly under theirs, its bars and trace alike. The ribbon itself draws no verdict: no zone
+// of what counts as in tune, no colours; the core's marks are drawn by marks.ts, on the notes
+// in the engraving.
 import type { TimelineNote } from "neuma";
 import type { Mark } from "./marks";
 
@@ -133,7 +134,9 @@ const f = (x: number) => x.toFixed(1);
  * of notes pressed together. A heard band is a button to re-base on it; given `choose`, every
  * band is a button named by it instead, the first pressed (else the first band) the one tab
  * stop among them. Given `recorded`, the bands of a recording of the same notes, each note's
- * recorded trace is drawn under the singer's, re-based on the same note. */
+ * recorded trace is drawn under the singer's, re-based on the same note; given `before`, the
+ * singer's take before this one of the same notes, its trace and held bars are drawn faintly
+ * under them, re-based alike. */
 export function drawRibbon(
   notes: readonly TimelineNote[],
   bands: readonly Band[],
@@ -142,6 +145,7 @@ export function drawRibbon(
   baseIndex: number | readonly [number, number] | null = null,
   choose?: (index: number) => string,
   recorded: readonly Band[] = [],
+  before: readonly Band[] = [],
 ): string {
   const at = places(notes);
   // Re-based on a note the recording has no value for, the recording has no base to be drawn
@@ -153,6 +157,8 @@ export function drawRibbon(
   const inRun = (index: number) => first !== null && last !== null && index >= first && index <= last;
   const stop = bands.find((b) => inRun(b.index))?.index ?? bands[0]?.index;
   const sung = new Map(recordedBase === null ? [] : recorded.map((b) => [b.index, b]));
+  const beforeBase = typeof baseIndex === "number" ? (before.find((b) => b.index === baseIndex)?.cents ?? null) : 0;
+  const was = new Map(beforeBase === null ? [] : before.map((b) => [b.index, b]));
   const out: string[] = [];
   for (const band of bands) {
     const p = at[band.index];
@@ -191,25 +197,29 @@ export function drawRibbon(
       const points = b.trace.map(([t, c]) => `${f(x(t))},${f(yOf(c - by, top))}`).join(" ");
       out.push(`<polyline class="${cls}" points="${points}"/>`);
     };
-    trace(sung.get(band.index), recordedBase ?? 0, "band-recorded");
-    trace(band, base, "band-trace");
-    if (heard) {
-      const y = f(yOf(band.cents! - base, top));
+    const held = (b: Band | undefined, by: number, cls: string) => {
+      if (!b || b.cents === null) return;
+      const y = f(yOf(b.cents - by, top));
       // Over the part it was read from, inset within the target, so that the target shows either
       // side even under a note on pitch, and neighbours' bars do not meet, save where a neume's
       // narrow bands overlap.
       const inset = Math.min(4, w / 4);
       const [lo, hi] = [p.left + inset, p.right - inset];
-      const x = xOf(band);
-      let [x1, x2] = x ? [Math.max(lo, x(band.from_s)), Math.min(hi, x(band.to_s))] : [lo, hi];
+      const x = xOf(b);
+      let [x1, x2] = x ? [Math.max(lo, x(b.from_s)), Math.min(hi, x(b.to_s))] : [lo, hi];
       // No shorter than a dot in a neume's narrow band.
       const least = Math.min(HELD, hi - lo);
       if (x2 - x1 < least) {
         const mid = Math.min(Math.max((x1 + x2) / 2, lo + least / 2), hi - least / 2);
         [x1, x2] = [mid - least / 2, mid + least / 2];
       }
-      out.push(`<line class="band-held" x1="${f(x1)}" x2="${f(x2)}" y1="${y}" y2="${y}"/>`);
-    }
+      out.push(`<line class="${cls}" x1="${f(x1)}" x2="${f(x2)}" y1="${y}" y2="${y}"/>`);
+    };
+    trace(sung.get(band.index), recordedBase ?? 0, "band-recorded");
+    trace(was.get(band.index), beforeBase ?? 0, "band-before");
+    held(was.get(band.index), beforeBase ?? 0, "band-before-held");
+    trace(band, base, "band-trace");
+    held(band, base, "band-held");
     out.push("</g>");
   }
   return out.join("");

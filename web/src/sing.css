@@ -161,13 +161,26 @@ main:has(#result:not([hidden])) #loop {
 .reading p {
   margin-top: 0;
 }
-/* Whether the guide sings in the singer's key beside the take. */
+/* Whether the guide sings in the singer's key beside the take, and whether the take before is
+   drawn under it: a box beside its words, never squeezed by them. */
 .in-key label {
   display: inline-flex;
   gap: 0.5rem;
   align-items: center;
   min-height: var(--tap);
   color: var(--text);
+}
+.in-key input {
+  flex: none;
+}
+/* The take before's words may take two lines on a phone: its box beside the first. */
+.in-key.before label {
+  align-items: first baseline;
+  padding-block: 0.15rem;
+}
+/* When a take was sung, never broken across lines. */
+#before-when {
+  white-space: nowrap;
 }
 /* The mark open or the run chosen beside a take, between the steps to the mark before and after,
    over the bar's buttons that play it. */
@@ -180,6 +193,12 @@ main:has(#result:not([hidden])) #loop {
   color: var(--muted);
   font-size: 0.95rem;
   line-height: 1.3;
+}
+/* What is kept on the device, at the foot of the page, where saying so moves nothing. */
+.kept {
+  margin-top: 2rem;
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 /* The foot of the page, and what is scrolled to, clear the bar however tall it is (--bar-h,
    measured in sing.ts). */
@@ -325,6 +344,24 @@ main {
   stroke-opacity: 0.55;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+/* The take before this one, kept on the device (kept.ts): the singer's own colour, dotted and
+   fainter, so that it reads as theirs and as what was, apart from the grey of the note and of a
+   recording, and not as a line to read. */
+.ribbon .band-before {
+  fill: none;
+  stroke: var(--trace);
+  stroke-width: 1;
+  stroke-opacity: 0.5;
+  stroke-dasharray: 1 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.ribbon .band-before-held {
+  stroke: var(--trace);
+  stroke-width: 2;
+  stroke-opacity: 0.5;
+  stroke-dasharray: 2 2;
 }
 /* The pitch each note was held at, the ribbon's line to read. */
 .ribbon .band-held {
