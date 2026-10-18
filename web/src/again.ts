@@ -1,5 +1,6 @@
 // A run of a take sung again, drawn over the take: the run sung, the take as it is then drawn,
 // and where the take's own sentence of endings is among its places.
+import { gridWith } from "./grid";
 import type { Judged } from "./ribbon";
 
 /** Notes `first` to `last`. */
@@ -48,10 +49,11 @@ export function outside(last: readonly [number, number], [a, b]: readonly [numbe
   return parts.filter(([x, y]) => x <= y);
 }
 
-/** The take `take` with notes `run` of it sung again, judged `sung` (its marks, endings and bands
- * of the chant's notes by index), in their place: the run's bands, marks and endings where the
- * take's were (the take's that reach into the run go), each mark with its words and each ending
- * with the mark that tells of it, in the order sung; the rest is the take's. */
+/** The take `take` with notes `run` of it sung again, judged `sung` (its marks, endings, bands and
+ * grid of the chant's notes by index), in their place: the run's bands, marks and endings where
+ * the take's were (the take's that reach into the run go), each mark with its words and each
+ * ending with the mark that tells of it, in the order sung, and the parts of verses the run called
+ * where the take's were ([`gridWith`]); the rest is the take's. */
 export function viewOf(take: Judged, [a, b]: readonly [number, number], sung: Judged): Judged {
   const reaches = ({ first, last }: Span) => last >= a && first <= b;
   const marks = [
@@ -73,6 +75,7 @@ export function viewOf(take: Judged, [a, b]: readonly [number, number], sung: Ju
     told: marks.map((m) => m.words),
     endings,
     ribbon: take.ribbon.map((band) => bands.get(band.index) ?? band),
+    grid: gridWith(take.grid, sung.grid),
   };
 }
 

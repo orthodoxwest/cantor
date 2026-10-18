@@ -1084,6 +1084,9 @@ test("a phrase sung again is drawn and told as the core judged it, its marks the
   expect(sung.verdict.outcome).toBe("heard");
   // The core's words, after the run's own.
   await expect(page.locator("#again-said")).toHaveText(`You sang “alleluia” again. ${sung.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  // A chant not a psalm has no verse-by-verse table.
+  expect(whole.grid).toBeNull();
+  await expect(page.locator("#grid")).toBeHidden();
   // Its bands there, the take's elsewhere.
   const drawn = await page.locator("[data-band]").evaluateAll((els) => els.map((el) => el.getAttribute("data-cents")));
   const cents = (b: { cents: number | null }) => (b.cents === null ? "" : b.cents.toFixed(1));
@@ -1187,6 +1190,94 @@ test("a phrase holding part of a mark of the take is sung again with the whole o
   const json = JSON.parse(/name="take"\r\n\r\n(\{.*\})\r\n--/s.exec(body.toString("utf8"))![1]!);
   expect(json.judged.ribbon).toEqual(whole.ribbon);
   expect(json.judged.verdict.marks).toEqual(whole.verdict.marks);
+});
+
+/** Two verses of a psalm on a tone recited on A: the first with no flex, the second with one. */
+const PSALM =
+  "(c4) O(f) praise(g) the(h) Lord(h) all(h) hea(i)then(h) *(:) praise(h) him(h) all(h) na(g)tions(f) (:) " +
+  "For(h) his(h) mer(h)cy(g) †(,) is(h) e(h)ver(h) more(i) to(h)wards(h) us(h) *(:) and(h) the(h) truth(h) en(h)du(g)reth(f) (::)";
+
+type GridCell = { first: number; last: number; called: string; ending: [number, number] | null; words: string };
+type Grid = { columns: Array<{ name: string }>; rows: Array<{ number: number; cells: Array<GridCell | null> }> };
+
+test("beside a psalm sung to a tone, a row a verse and a column a part of the tone say in the core's words how each ended, and a cell chooses its part of the verse", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 390, height: 800 });
+  await open(page);
+  await page.evaluate(([g]) => window.__cantor.practise(g, 0.5), [PSALM] as const);
+  // The microphone's A4 throughout: on the reciting tone, so every ending off it is off pitch.
+  await page.evaluate(() => void window.__cantor.listen());
+  await expect.poll(() => page.evaluate(() => window.__cantor.frames.length)).toBeGreaterThan(0);
+  await page.waitForTimeout(24000);
+  await page.evaluate(() => void window.__cantor.listen());
+  const whole = JSON.parse(await page.evaluate(([g]) => window.__cantor.show(g, 0.5, 0.2), [PSALM] as const));
+  const grid: Grid = whole.grid;
+  expect(grid.columns.map((c) => c.name)).toEqual(["Flex", "Mediant", "Termination"]);
+  const cells = grid.rows.flatMap((r) => r.cells);
+  expect(cells.map((c) => c?.called ?? null)).toEqual([null, ...Array(5).fill("off-pitch")]);
+  const table = page.locator("#grid");
+  await expect(table).toBeVisible();
+  await expect(table.locator("thead th")).toHaveText(["Verse", "Flex", "Mediant", "Termination"]);
+  await expect(table.locator("tbody th")).toHaveText(["1 O praise the …", "2 For his mercy …"]);
+  // Each cell in the core's words, and none where the first verse has no flex.
+  const said = () => table.locator("tbody tr").evaluateAll((rows) => rows.map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent ?? "")));
+  expect(await said()).toEqual(grid.rows.map((r) => r.cells.map((c) => c?.words ?? "")));
+  // It fits a phone.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // Tapped, a cell chooses its part of the verse and opens the place that tells of its ending.
+  const cell = grid.rows[1]!.cells[1]!;
+  const mediant = page.getByRole("button", { name: `Mediant of verse 2: ${cell.words}`, exact: true });
+  await mediant.click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([cell.first, cell.last]);
+  await expect(mediant).toHaveAttribute("aria-pressed", "true");
+  const ending = whole.endings.find((e: { first: number; last: number }) => e.first === cell.ending![0] && e.last === cell.ending![1]);
+  await expect(page.locator("#why-words")).toHaveText(ending.mark === null ? ending.words : whole.told[ending.mark]);
+  // Tapped again, it is let go.
+  await mediant.click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();
+  await expect(mediant).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#why")).toBeHidden();
+  // One tab stop among the cells, where the keyboard was; the arrows go along a row and down a
+  // column, past the first verse's want of a flex, and Home and End to a row's ends.
+  const at = (verse: number, part: string) => {
+    const c = grid.rows[verse - 1]!.cells[["Flex", "Mediant", "Termination"].indexOf(part)]!;
+    return page.getByRole("button", { name: `${part} of verse ${verse}: ${c.words}`, exact: true });
+  };
+  const stops = () => table.locator('button[tabindex="0"]').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+  await mediant.focus();
+  for (const [key, verse, part] of [
+    ["ArrowUp", 1, "Mediant"],
+    ["ArrowLeft", 1, "Mediant"],
+    ["ArrowUp", 1, "Mediant"],
+    ["ArrowDown", 2, "Mediant"],
+    ["ArrowLeft", 2, "Flex"],
+    ["ArrowUp", 2, "Flex"],
+    ["End", 2, "Termination"],
+    ["ArrowDown", 2, "Termination"],
+    ["Home", 2, "Flex"],
+  ] as const) {
+    await page.keyboard.press(key);
+    await expect(at(verse, part), `${key} to ${part} of verse ${verse}`).toBeFocused();
+    expect(await stops()).toEqual([await at(verse, part).getAttribute("aria-label")]);
+  }
+  await page.keyboard.press("Enter");
+  const flex = grid.rows[1]!.cells[0]!;
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([flex.first, flex.last]);
+  await expect(at(2, "Flex")).toBeFocused();
+  // The mediant sung again: its cell says how it went, beside how the take went; the rest is the take's.
+  await page.evaluate(() => void window.__cantor.listenAgain());
+  await page.waitForTimeout(6000);
+  await page.evaluate(() => void window.__cantor.listenAgain());
+  const sung = JSON.parse((await page.evaluate(([a, b]) => window.__cantor.showAgain(a, b, 0.5, 0.2), [cell.first, cell.last] as const))!);
+  const now = (sung.grid as Grid).rows.find((r) => r.number === 2)!.cells[1]!;
+  expect(now.called).not.toBe("unsung");
+  const again = page.getByRole("button", { name: `Mediant of verse 2: ${now.words}. Your take: ${cell.words}`, exact: true });
+  await expect(again).toHaveText(`${now.words}Your take: ${cell.words}`);
+  const words = grid.rows.map((r) => r.cells.map((c) => c?.words ?? ""));
+  words[1]![1] = `${now.words}Your take: ${cell.words}`;
+  expect(await said()).toEqual(words);
+  // The keyboard is where it was.
+  await expect(at(2, "Flex")).toBeFocused();
 });
 
 test("beside a take of a long chant, the bar has a segment a phrase to go to it, by tap, keyboard or drag", async ({ page }) => {
