@@ -7,7 +7,7 @@ import { escape, finds, highlight, kicker, library, chant as findChant, terms, t
 import { describePitch, noteName } from "./notes";
 import { drawMarks, type Mark } from "./marks";
 import { SCALE, Score } from "./score";
-import { drawRibbon, type Judged } from "./ribbon";
+import { across, drawRibbon, type Judged, places, type Place, secondAt, span, STRIP } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
@@ -396,17 +396,26 @@ function spotOnScore(k: number): Element | null {
  * the top. */
 function bringIntoView(k: number): void {
   const spot = spots[k];
-  const els = [spotOnScore(k), spot ? score.host.querySelector(`[data-band="${spot.at}"]`) : null];
+  reveal([spotOnScore(k), spot ? score.host.querySelector(`[data-band="${spot.at}"]`) : null], "smooth");
+}
+
+/** Scrolls `els` together to the middle of what the bar and the card leave of the window, unless
+ * they are already clear of them; where they do not fit, their top goes to the top. */
+function reveal(els: ReadonlyArray<Element | null>, behavior: "smooth" | "auto"): void {
   const boxes = els.flatMap((el) => (el ? [el.getBoundingClientRect()] : []));
   if (boxes.length === 0) return;
+  // The bar may have grown with what was just drawn in it, before its observer has run.
+  document.documentElement.style.setProperty("--bar-h", `${bar.getBoundingClientRect().height}px`);
   const top = Math.min(...boxes.map((b) => b.top));
   const bottom = Math.max(...boxes.map((b) => b.bottom));
   // The page's scroll padding keeps clear of the bar and the card at the foot.
   const clear = window.innerHeight - (parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) || 0);
-  if (top >= 0 && bottom <= clear) return;
+  // Already clear, the page stays where it is: a scroll still under way, to a place chosen
+  // before, is stopped, or it would carry this one out of view.
+  if (top >= 0 && bottom <= clear) return window.scrollBy({ top: 0, behavior: "instant" });
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const by = bottom - top <= clear ? (top + bottom) / 2 - clear / 2 : top - 8;
-  window.scrollBy({ top: by, behavior: still ? "auto" : "smooth" });
+  window.scrollBy({ top: by, behavior: still ? "auto" : behavior });
 }
 
 /** Shows `text` as the core's words for the place open, announcing it only when it changes. */
@@ -437,6 +446,42 @@ function drawCard(): void {
   // Measured now, not when the observer next runs, so that a ring brought into view at once
   // keeps clear of it.
   document.documentElement.style.setProperty("--why-h", `${why.getBoundingClientRect().height}px`);
+}
+
+/** Where the bands of the take shown lie, as last drawn. */
+let strips: { places: Place[]; stripTop: (line: number) => number } | null = null;
+/** Where the take is as it plays back: the note it is in (null in a pause, or outside what it
+ * plays), and how many seconds into it; null while it is not playing. */
+let heardAt: { note: number | null; t: number } | null = null;
+
+/** The playhead's place: across the band of the note the take is in, where in the note it is;
+ * none outside the notes, in a pause, or past where the take was judged. */
+function playheadAt(): { x: number; top: number } | null {
+  const band = heardAt?.note == null ? undefined : shown?.ribbon[heardAt.note];
+  const p = band && strips?.places[band.index];
+  if (!heardAt || !band || !p || !strips) return null;
+  return { x: across(p, band, heardAt.t), top: strips.stripTop(p.line) };
+}
+
+/** The playhead as it is drawn among the strips. */
+function playheadSvg(): string {
+  const at = playheadAt();
+  const [x, top] = at ? [at.x.toFixed(1), at.top] : ["0", 0];
+  return `<line class="playhead" visibility="${at ? "visible" : "hidden"}" x1="${x}" x2="${x}" y1="${top + 2}" y2="${top + STRIP - 2}"/>`;
+}
+
+/** Moves the playhead to where the take is. */
+function drawPlayhead(): void {
+  const line = score.host.querySelector<SVGLineElement>(".playhead");
+  const at = playheadAt();
+  if (!line) return;
+  line.setAttribute("visibility", at ? "visible" : "hidden");
+  if (!at) return;
+  const x = at.x.toFixed(1);
+  line.setAttribute("x1", x);
+  line.setAttribute("x2", x);
+  line.setAttribute("y1", String(at.top + 2));
+  line.setAttribute("y2", String(at.top + STRIP - 2));
 }
 
 function drawResult(): void {
@@ -472,13 +517,19 @@ function drawResult(): void {
   // The recording is of the chant as the library gave it, so not of another put on the page.
   const underlay = score.source === piece.gabc && recording.length === judged.ribbon.length ? recording : [];
   recordedText.hidden = !underlay.some((b) => b.trace.length > 0);
-  score.showStrips(
-    (timeline, room) =>
-      // The marks first, so that the keyboard reaches them before the bands.
+  score.showStrips((timeline, room) => {
+    strips = { places: places(timeline.notes), stripTop: room.stripTop };
+    return (
+      // The marks first, so that the keyboard reaches them before the bands; the playhead over
+      // the bands.
       drawMarks(timeline.notes, judged.verdict.marks, room.shift, open) +
-      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, bandName, underlay),
-  );
+      drawRibbon(timeline.notes, judged.ribbon, room.stripTop, 0, loop, bandName, underlay) +
+      playheadSvg()
+    );
+  });
   drawCard();
+  // Now that the strips are drawn, the score is as tall as it will be.
+  drawOverview();
   keyText.textContent = keyLine(key, shownPitch);
 }
 
@@ -629,8 +680,9 @@ function steadily(change: () => void): void {
 }
 
 // Tapping a mark opens its card and chooses the phrase it is in; tapping it again closes the card.
-// Tapping a note's band chooses its phrase, as tapping the note does.
-function tap(target: EventTarget | null, keyboard: boolean): boolean {
+// Tapping a note's band chooses its phrase, as tapping the note does; while the take plays back,
+// a band of a note it plays tapped plays it from there instead.
+function tap(target: EventTarget | null, keyboard: boolean, clientX?: number): boolean {
   if (!shown) return false;
   const el = target as Element | null;
   const mark = el?.closest<SVGGElement>("[data-mark]");
@@ -642,6 +694,7 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
     again = `[data-mark="${k}"]`;
   } else if (band && !taking) {
     const index = Number(band.dataset.band);
+    if (seek(index, band, keyboard ? undefined : clientX)) return true;
     steadily(() => choose(index));
     again = `[data-band="${index}"]`;
   } else {
@@ -654,8 +707,25 @@ function tap(target: EventTarget | null, keyboard: boolean): boolean {
   return true;
 }
 score.host.addEventListener("click", (e) => {
-  if (!tap(e.target, false)) tapScore(e);
+  if (!tap(e.target, false, e.clientX)) tapScore(e);
 });
+
+/** While the take plays back, plays it on from note `index`, if it plays it: from the moment
+ * at `clientX` across the note's band `band`, or with none (a keyboard) from the note's start.
+ * False when the take is not playing that note. */
+function seek(index: number, band: Element, clientX: number | undefined): boolean {
+  const notes = replay.notes;
+  const heard = shown?.ribbon[index];
+  const p = strips?.places[index];
+  if (!replay.playing || !notes || index < notes[0] || index > notes[1] || !heard || !p) return false;
+  const hit = band.querySelector(".band-hit")?.getBoundingClientRect();
+  const t =
+    clientX !== undefined && hit && hit.width > 0
+      ? secondAt(p, heard, p.left + ((clientX - hit.left) / hit.width) * (p.right - p.left))
+      : span(heard)[0];
+  replay.seek(t);
+  return true;
+}
 score.host.addEventListener("keydown", (e) => {
   if ((e.key === "Enter" || e.key === " ") && tap(e.target, true)) return e.preventDefault();
   // The arrows move along the bands, one tab stop among them.
@@ -983,6 +1053,7 @@ function setLoop(next: [number, number] | null, mark: number | null = null): voi
  * among the endings, in the order sung; or the run chosen; or the whole chant and how many of
  * each it has; with the steps to the place before and after. */
 function drawChosen(): void {
+  drawOverview();
   chosenLine.hidden = !shown || taking || (!loop && spots.length === 0);
   if (chosenLine.hidden || !shown) return;
   // Kept in its place while there is no run to let go, so that the steps do not move under a
@@ -1019,6 +1090,224 @@ function drawChosen(): void {
   // Announced only when it changes.
   if (chosenText.textContent !== text) chosenText.textContent = text;
 }
+
+// A long chant's phrases in the bar beside a take, to go to one at a tap, or along them in a drag.
+const overview = byId<HTMLDivElement>("overview");
+/** The note the keyboard was put on in the strip, the first of the segment it was put on, kept
+ * while the segments it goes to as the strip is made again hold it. */
+let keyboardNote: number | null = null;
+const within = ([a, b]: readonly [number, number], i: number) => a <= i && i <= b;
+overview.addEventListener("focusin", (e) => {
+  const run = e.target instanceof HTMLButtonElement ? runOfSegment(e.target) : null;
+  if (run && (keyboardNote === null || !within(run, keyboardNote))) keyboardNote = run[0];
+});
+/** The fewest phrases a chant has for the overview to be drawn. */
+const OVERVIEW_PHRASES = 3;
+/** The narrowest a segment is drawn, in CSS pixels: past as many as fit, each is of several
+ * phrases together. */
+const SEGMENT_PX = 12;
+/** The take, the chant and the runs the overview's segments were made for. */
+let overviewOf: { judged: Judged; source: string; runs: string } | null = null;
+
+/** The chant's phrases, from division to division (loop.ts `phraseOf`). */
+function phrases(): Array<[number, number]> {
+  const { notes, pauses } = score.timeline;
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < notes.length; ) {
+    const run = phraseOf(i, pauses, notes.length);
+    out.push(run);
+    i = run[1] + 1;
+  }
+  return out;
+}
+
+/** The runs of the overview's segments, across `width` pixels with `gap` between them: a
+ * phrase each, or where more phrases than fit, as many segments as fit, the phrases shared
+ * among them as evenly as they go. */
+function segmentRuns(all: ReadonlyArray<[number, number]>, width: number, gap: number): Array<[number, number]> {
+  const fit = Math.max(1, Math.floor((width + gap) / (SEGMENT_PX + gap)));
+  const count = Math.min(all.length, fit);
+  const out: Array<[number, number]> = [];
+  for (let k = 0; k < count; k++) {
+    const [from, to] = [Math.floor((k * all.length) / count), Math.floor(((k + 1) * all.length) / count) - 1];
+    out.push([all[from]![0], all[to]![1]]);
+  }
+  return out;
+}
+
+/** The overview, beside a heard take of a chant of [`OVERVIEW_PHRASES`] phrases or more whose
+ * score is taller than the window, while no card is open (the card is of one place; the strip is
+ * to go elsewhere): a segment a phrase (or a few, where they would not all fit), as wide as its
+ * notes are many, named by its words and ticked at the note each place the core tells of is
+ * shown at; those in the run chosen current. The one tab stop is the segment with the keyboard,
+ * else the first current one, else the first. Made again only for another take, chant or width,
+ * and then the keyboard goes to the segment of the run it was on. */
+function drawOverview(): void {
+  const all = shown && !taking && shown.verdict.key_cents !== null && why.hidden ? phrases() : [];
+  overview.hidden = all.length < OVERVIEW_PHRASES || score.host.getBoundingClientRect().height <= window.innerHeight;
+  if (overview.hidden || !shown) {
+    overviewOf = null;
+    return overview.replaceChildren();
+  }
+  const focused = segments().find((b) => b === document.activeElement);
+  const focusedRun = focused ? runOfSegment(focused) : null;
+  // The keyboard goes to the segment with the note it was put on, so that a narrower strip and a
+  // wider one again bring it back where it was.
+  const keyboardAt = focusedRun && keyboardNote !== null && within(focusedRun, keyboardNote) ? keyboardNote : focusedRun?.[0];
+  const runs = segmentRuns(all, overview.clientWidth, parseFloat(getComputedStyle(overview).columnGap) || 0);
+  const made = runs.map(([a, b]) => `${a}-${b}`).join(" ");
+  if (overviewOf?.judged !== shown || overviewOf.source !== score.source || overviewOf.runs !== made) {
+    overviewOf = { judged: shown, source: score.source, runs: made };
+    const phraseAt = new Map(all.map(([a], n) => [a, n + 1]));
+    const lastAt = new Map(all.map(([, b], n) => [b, n + 1]));
+    overview.replaceChildren(
+      ...runs.map(([a, b]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.run = `${a}-${b}`;
+        button.style.flexGrow = String(b - a + 1);
+        button.style.minWidth = `${SEGMENT_PX}px`;
+        const words = wordsOf(a, b);
+        const [first, last] = [phraseAt.get(a)!, lastAt.get(b)!];
+        const ks = sungOrder(spots).filter((k) => spots[k]!.at >= a && spots[k]!.at <= b);
+        const name = first === last ? `Phrase ${first}` : `Phrases ${first} to ${last}`;
+        button.setAttribute("aria-label", `${name}${words ? `, “${words}”` : ""}${ks.length ? `, ${counted(ks)}` : ""}`);
+        button.title = words;
+        button.append(words);
+        for (const k of ks) {
+          const tick = Object.assign(document.createElement("span"), { className: spots[k]!.mark ? "tick" : "tick ending" });
+          tick.style.left = `${(((spots[k]!.at - a + 0.5) / (b - a + 1)) * 100).toFixed(1)}%`;
+          button.append(tick);
+        }
+        return button;
+      }),
+    );
+  }
+  const buttons = segments();
+  const over = (button: HTMLButtonElement, [a, b]: readonly [number, number]) => {
+    const [c, d] = runOfSegment(button);
+    return a <= d && b >= c;
+  };
+  const current = buttons.map((button) => loop !== null && over(button, loop));
+  const keyboard = keyboardAt === undefined ? -1 : buttons.findIndex((button) => within(runOfSegment(button), keyboardAt));
+  const stop = keyboard >= 0 ? keyboard : Math.max(current.indexOf(true), 0);
+  buttons.forEach((button, i) => {
+    if (current[i]) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+    button.tabIndex = i === stop ? 0 : -1;
+  });
+  if (focusedRun && buttons[stop] !== document.activeElement) buttons[stop]?.focus({ preventScroll: true });
+}
+// Whether the score is taller than the window changes as either does; the strip shown or hidden
+// changes the bar, measured after it.
+window.addEventListener("resize", () => drawOverview());
+new ResizeObserver(() => requestAnimationFrame(() => drawOverview())).observe(score.host);
+
+/** The overview's segments, in order. */
+function segments(): HTMLButtonElement[] {
+  return [...overview.querySelectorAll<HTMLButtonElement>("[data-run]")];
+}
+
+/** The run of phrases segment `button` of the overview stands for. */
+function runOfSegment(button: HTMLElement): [number, number] {
+  const [a, b] = button.dataset.run!.split("-").map(Number);
+  return [a!, b!];
+}
+
+/** Brings the start of segment `button`'s run into view. */
+function revealSegment(button: HTMLElement, behavior: "smooth" | "auto"): void {
+  const [a] = runOfSegment(button);
+  const note = score.timeline.notes[a];
+  reveal([note ? (score.ink(note.id)[0] ?? null) : null, score.host.querySelector(`[data-band="${a}"]`)], behavior);
+}
+
+/** Chooses the run of segment `button`, unless it is chosen already, and brings its start into
+ * view. */
+function goTo(button: HTMLElement, behavior: "smooth" | "auto"): void {
+  if (taking || !guide) return;
+  const [a, b] = runOfSegment(button);
+  if (!loop || loop[0] !== a || loop[1] !== b) {
+    stopPlay();
+    setLoop([a, b]);
+  }
+  revealSegment(button, behavior);
+}
+overview.addEventListener("click", (e) => {
+  const button = (e.target as Element | null)?.closest<HTMLButtonElement>("[data-run]");
+  if (button) goTo(button, "smooth");
+});
+// The arrows move along the segments, Home and End to the first and last, one tab stop among them.
+overview.addEventListener("keydown", (e) => {
+  const buttons = segments();
+  const at = buttons.indexOf(e.target as HTMLButtonElement);
+  const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[e.key];
+  if (to === undefined || at < 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  e.preventDefault();
+  const button = buttons[to];
+  if (!button) return;
+  buttons[at]!.tabIndex = -1;
+  button.tabIndex = 0;
+  button.focus();
+});
+// A drag along the overview shows each segment it passes and brings it into view, and chooses
+// the one it ends on, so that the score is drawn again once; a tap is a click.
+let dragging: { id: number; x: number; moved: boolean; at: HTMLButtonElement | null } | null = null;
+overview.addEventListener("pointerdown", (e) => {
+  if (e.button === 0) dragging = { id: e.pointerId, x: e.clientX, moved: false, at: null };
+});
+overview.addEventListener("pointermove", (e) => {
+  if (!dragging || dragging.id !== e.pointerId) return;
+  // A press let go away from the page ended there.
+  if ((e.buttons & 1) === 0) return endDrag(null);
+  if (!dragging.moved) {
+    if (Math.abs(e.clientX - dragging.x) < 6) return;
+    dragging.moved = true;
+    overview.setPointerCapture(e.pointerId);
+  }
+  const button = segments().find((b) => {
+    const box = b.getBoundingClientRect();
+    return e.clientX >= box.left && e.clientX < box.right;
+  });
+  if (!button || button === dragging.at) return;
+  dragging.at?.classList.remove("passing");
+  dragging.at = button;
+  button.classList.add("passing");
+  revealSegment(button, "auto");
+});
+/** Ends the drag under way, choosing the segment it ended on if it was let go there (`ended`),
+ * and moving the keyboard there if it was in the overview. */
+function endDrag(ended: PointerEvent | null): void {
+  const drag = dragging;
+  if (!drag || (ended && ended.pointerId !== drag.id)) return;
+  dragging = null;
+  drag.at?.classList.remove("passing");
+  if (!ended || ended.type !== "pointerup" || !drag.moved || !drag.at) return;
+  const keyboard = overview.contains(document.activeElement);
+  // A touch that moves less than the browser's slop is still a tap to it, and its click would
+  // land on whatever the bar, drawn again, now has under the finger.
+  afterDrag = true;
+  // The keyboard first, so that the segment chosen is the tab stop as it is drawn.
+  if (keyboard) drag.at.focus({ preventScroll: true });
+  goTo(drag.at, "auto");
+}
+// Let go anywhere: off the overview, a press does not go on as a drag.
+window.addEventListener("pointerup", (e) => endDrag(e));
+window.addEventListener("pointercancel", (e) => endDrag(e));
+/** Whether the click that may follow a drag just chosen is to be let fall. */
+let afterDrag = false;
+window.addEventListener("pointerdown", () => (afterDrag = false), true);
+window.addEventListener(
+  "click",
+  (e) => {
+    if (!afterDrag) return;
+    afterDrag = false;
+    // Only a click a press sends; one from a key, a script or assistive technology goes through.
+    if (e.detail === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+  },
+  true,
+);
 
 prevButton.addEventListener("click", () => {
   if (prevButton.getAttribute("aria-disabled") !== "true") stepSpot(-1);
@@ -1085,13 +1374,26 @@ function tapped(run: readonly [number, number] | null, i: number): [number, numb
   return tapLoop(run, i, pauses, notes.length, neumes.at, neumes.syllables);
 }
 
-/** What a tap on note `i`'s band does (`tapped`), in words, from its note: chooses its phrase,
- * or the run it stretches or narrows the run chosen to, or lets the run go. */
+/** What a tap on note `i`'s band does (`tapped`), in words, from its note: while the take plays
+ * that note, plays it on from there (`seek`); else chooses its phrase, or the run it stretches or
+ * narrows the run chosen to, or lets the run go. */
 function bandName(i: number): string {
+  const playing = replay.notes;
+  if (replay.playing && playing && i >= playing[0] && i <= playing[1]) return `Note ${i + 1}: play your take on from here`;
   const run = tapped(loop, i);
   const [a, b] = phraseOf(i, score.timeline.pauses, score.timeline.notes.length);
   if (run && run[0] === a && run[1] === b) return `Choose the phrase of note ${i + 1}`;
   return `Note ${i + 1}: ${run ? `choose ${numbered(run[0], run[1]).toLowerCase()}` : "let the run go"}`;
+}
+
+/** Whether the bands were last named for a take playing back (`bandName`). */
+let namedPlaying = false;
+
+/** Names the bands drawn again, once the take starts or stops playing back. */
+function renameBands(): void {
+  if (namedPlaying === replay.playing) return;
+  namedPlaying = replay.playing;
+  for (const band of score.host.querySelectorAll<SVGGElement>("[data-band][role=button]")) band.setAttribute("aria-label", bandName(Number(band.dataset.band)));
 }
 
 /** Chooses the phrase of note `i`, or stretches the run to it, narrows it or lets it go. */
@@ -1175,7 +1477,16 @@ async function play(button: HTMLButtonElement, over: "once" | "run" | "always"):
 // sending (decoded once a take), the cursor on each note where it was due; on a phone it takes
 // the place of Start note while a take is shown. Compare plays the guide over the same notes
 // first.
-const replay = new Replay(score, cursor, () => hearButton.setAttribute("aria-pressed", "false"));
+const replay = new Replay(
+  score,
+  cursor,
+  () => hearButton.setAttribute("aria-pressed", "false"),
+  (at) => {
+    heardAt = at;
+    drawPlayhead();
+    renameBands();
+  },
+);
 /** The take shown, as it may be heard again: when each note judged was due in it, which for a
  * take stopped short is fewer notes than the chant's, and the seconds a pulse it was sung at. */
 let replayable: { times: Timed[]; pulse: number } | null = null;
