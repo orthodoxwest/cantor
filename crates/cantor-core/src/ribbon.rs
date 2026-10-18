@@ -34,6 +34,10 @@ pub struct Band {
     /// The note's error from the key and the drift line, in cents, as the judge read it
     /// ([`Verdict::relative`]); `None` when it was not heard.
     pub cents: Option<f32>,
+    /// Where the judge put the note, as MIDI, in the octave the singer held it: the pitch its
+    /// value and its trace are measured from, which a tone at it sounds against the take's own
+    /// note; `None` when it was not heard.
+    pub target_midi: Option<f32>,
     /// The pitch heard over the whole note, as (seconds, cents) on the same reference, each
     /// point the median of [`SMOOTH_FRAMES`] voiced frames, leaving out those the two trackers
     /// hear far apart ([`TRACE_AGREE_CENTS`]); empty when not heard, or when they heard every
@@ -67,7 +71,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
                 (Some(rel), Some(key), Some(heard)) => Some(note.midi * 100.0 + key + fold(heard - key - rel)),
                 _ => None,
             };
-            let trace = reference.map_or_else(Vec::new, |reference| {
+            let held_at = reference.map(|reference| {
                 let off = |f: &Frame| f.midi.map(|m| m * 100.0 - reference);
                 let held = |f: &Frame| f.t >= from_s && f.t < to_s;
                 let contradicted =
@@ -96,8 +100,9 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
                     .filter(|f| f.t >= start_s && f.t < end_s && !contradicted(f))
                     .filter_map(|f| off(f).map(|c| (f.t, c - octave)))
                     .collect();
-                smooth(&voiced)
+                ((reference + octave) / 100.0, smooth(&voiced))
             });
+            let (target_midi, trace) = held_at.map_or((None, Vec::new()), |(target, trace)| (Some(target), trace));
             Band {
                 index,
                 from_s,
@@ -105,6 +110,7 @@ pub fn ribbon(notes: &[Note], frames: &[Frame], report: &Report, verdict: &Verdi
                 start_s,
                 end_s,
                 cents,
+                target_midi,
                 trace,
             }
         })
@@ -173,6 +179,11 @@ mod tests {
         for (band, want) in bands.iter().zip([0.0, 0.0, 0.0, -200.0, 0.0, 0.0]) {
             assert_eq!(band.cents, verdict.relative[band.index]);
             assert!((band.cents.unwrap() - want).abs() < 1.0, "{band:?}");
+            // Its target in the singer's key, the fourth note's too: where it belonged.
+            assert!(
+                (band.target_midi.unwrap() - (notes[band.index].midi - 2.0)).abs() < 0.01,
+                "{band:?}"
+            );
             assert!(!band.trace.is_empty());
             assert!(
                 band.trace
@@ -357,7 +368,12 @@ mod tests {
         }
         let report = score(&notes, &fr);
         let verdict = judge(&notes, &report);
-        let band = &ribbon(&notes, &fr, &report, &verdict)[1];
+        let bands = ribbon(&notes, &fr, &report, &verdict);
+        // Each note's target in the octave it was held in, a tone against the singer's own.
+        for (band, note) in bands.iter().zip(&notes) {
+            assert!((band.target_midi.unwrap() - (note.midi - 12.0)).abs() < 0.01, "{band:?}");
+        }
+        let band = &bands[1];
         // The note before, a whole tone below, as it is: not an octave and a tone.
         let head: Vec<f32> = band.trace.iter().filter(|&&(t, _)| t < 1.05).map(|&(_, c)| c).collect();
         assert!(!head.is_empty() && head.iter().all(|&c| (c + 200.0).abs() < 1.0), "{band:?}");
@@ -390,6 +406,9 @@ mod tests {
             let want = if band.index == 4 { -200.0 } else { 0.0 };
             assert!((band.cents.unwrap() - want).abs() < 2.0, "{band:?}");
             assert!(band.trace.iter().all(|&(_, c)| (c - want).abs() < 2.0), "{band:?}");
+            // On the drift line, the fifth note's too.
+            let line = notes[band.index].midi - 0.2 * band.index as f32;
+            assert!((band.target_midi.unwrap() - line).abs() < 0.02, "{band:?}");
         }
     }
 
@@ -399,6 +418,10 @@ mod tests {
         let report = score(&notes, &[]);
         let verdict = judge(&notes, &report);
         let bands = ribbon(&notes, &[], &report, &verdict);
-        assert!(bands.iter().all(|b| b.cents.is_none() && b.trace.is_empty()));
+        assert!(
+            bands
+                .iter()
+                .all(|b| b.cents.is_none() && b.target_midi.is_none() && b.trace.is_empty())
+        );
     }
 }

@@ -7,7 +7,7 @@ import { escape, finds, highlight, kicker, library, chant as findChant, terms, t
 import { describePitch, noteName } from "./notes";
 import { drawMarks, type Mark } from "./marks";
 import { SCALE, Score } from "./score";
-import { across, drawRibbon, type GridCell, type Judged, places, type Place, secondAt, span, STRIP } from "./ribbon";
+import { across, type Band, drawRibbon, type GridCell, type Judged, places, type Place, secondAt, span, STRIP } from "./ribbon";
 import { offerSignIn } from "./beam";
 import { copyWhenReady, sendTake, signedIn } from "./send";
 import { audioContext } from "./audio";
@@ -17,6 +17,7 @@ import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
 import { recordedTimes, recordingSound } from "./recording";
 import { Replay } from "./replay";
 import { grewOver, grown, outside, saidIn, viewOf } from "./again";
+import { Held, heldBand } from "./held";
 import { opening, stepCell } from "./grid";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
@@ -201,6 +202,7 @@ function labelButton(button: HTMLButtonElement, label: string): void {
   button.title = label;
 }
 const stepButton = byId<HTMLButtonElement>("step");
+const againstButton = byId<HTMLButtonElement>("against");
 let shown: Judged | null = null;
 /** The take shown as it is heard back: when each of its notes was due in its audio, the seconds
  * a pulse it was sung at, and its audio decoded; and whether it is a run sung again. */
@@ -263,10 +265,10 @@ const openSpot = (): Spot | undefined => (open === null ? (cellOpen ?? undefined
 /** The place last opened, which the steps go on from while the run chosen holds it. */
 let lastOpen: number | null = null;
 
-/** Opens place `k`, or none; the step of another place stops, so that it does not play on under
- * a card that has moved on. */
+/** Opens place `k`, or none; the step of another place stops, and its note against where it
+ * belonged, so that neither plays on under a card that has moved on. */
 function setOpen(k: number | null): void {
-  if ((k !== open || cellOpen) && playing?.button === stepButton) stopPlay();
+  if ((k !== open || cellOpen) && (playing?.button === stepButton || playing?.button === againstButton)) stopPlay();
   open = k;
   cellOpen = null;
   openedByCell = false;
@@ -663,7 +665,8 @@ function say(text: string): void {
 }
 
 /** The card of the place open, if one is: the core's words, and how the note they are of is
- * written from the one before, the step that Hear the step plays. */
+ * written from the one before, the step that Hear the step plays; and Against the note, where
+ * that note can be heard against where it belonged. */
 function drawCard(): void {
   const spot = openSpot();
   why.hidden = !spot;
@@ -683,8 +686,10 @@ function drawCard(): void {
   // sung again.
   const step = before && at && spot.mark?.kind !== "verse-missing" && !(ofAgain(spot) && spot.at === again?.run[0]);
   // A keyboard on a step going, as at a mark with none, stays in the card.
-  if (!step && document.activeElement === stepButton) unopenButton.focus({ preventScroll: true });
+  const against = heldOf(spot) !== null;
+  if ((!step && document.activeElement === stepButton) || (!against && document.activeElement === againstButton)) unopenButton.focus({ preventScroll: true });
   stepButton.hidden = !step;
+  againstButton.hidden = !against;
   const which = !spot.mark ? "That note is written" : spot.first === spot.last ? "Written" : "Its first note is written";
   whyStep.textContent = step ? `${which} ${writtenStep(at.semitones - before.semitones)}.` : "";
   // Measured now, not when the observer next runs, so that a ring brought into view at once
@@ -1862,8 +1867,9 @@ function stopPlay(): void {
   playingBack = null;
   replay.stop();
   recordingReplay.stop();
+  held.stop();
   guide?.stop();
-  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, recordingButton]) button.setAttribute("aria-pressed", "false");
+  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, againstButton, recordingButton]) button.setAttribute("aria-pressed", "false");
   letSleep("play");
   unsayFetching();
 }
@@ -2068,6 +2074,40 @@ async function playTake(run: number, take: Heardback, range: readonly [number, n
   }
 }
 
+// Against the note plays the note a place's words are of, as sung, a few times over, against a
+// soft tone where the judge put the note, in the octave it was held in: off pitch, the two rub.
+const held = new Held();
+
+/** The band of the note place `spot`'s words are of, where it can be heard against where it
+ * belonged ([`heldBand`]), and what it is heard back from: the run sung again, where that holds
+ * the note, else the take. */
+function heldOf(spot: Spot): { band: Band & { target_midi: number }; take: Heardback } | null {
+  const take = heardback([spot.at, spot.at]);
+  const judged = take?.again ? again?.judged : shown;
+  const band = judged && heldBand(judged.ribbon, spot.at, spot.mark?.kind);
+  return take && band ? { band, take } : null;
+}
+
+/** Plays the note the place open's words are of against where it belonged, once over. */
+async function holdAgainst(): Promise<void> {
+  const spot = openSpot();
+  const of = spot && heldOf(spot);
+  if (!of) return;
+  quieten();
+  const run = begin(againstButton, true, false);
+  try {
+    const ctx = await audioContext();
+    const buffer = await of.take.audio(ctx);
+    if (!going(run)) return;
+    await held.play(ctx, buffer, of.band.from_s, of.band.to_s, of.band.target_midi);
+  } catch (error) {
+    if (!going(run)) return;
+    stopPlay();
+    return setStatus(`Your take could not be played: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (going(run)) stopPlay();
+}
+
 /** Plays the take, or the run sung again, over the run chosen, once. */
 async function hear(): Promise<void> {
   const take = heardback(loop);
@@ -2123,6 +2163,8 @@ toggle(stepButton, async () => {
   const spot = openSpot();
   if (spot && spot.at > 0) await compare([spot.at - 1, spot.at], stepButton);
 });
+// The note the place open's words are of, as sung, against where it belonged.
+toggle(againstButton, holdAgainst);
 
 if (!guide) {
   playButton.title = noteButton.title = droneButton.title = compareButton.title = repeatButton.title = "The guide voice could not load.";
@@ -2414,7 +2456,7 @@ async function takeAgain(): Promise<void> {
   singingAgain = true;
   setOpen(null);
   drawResult();
-  compareButton.disabled = hearButton.disabled = repeatButton.disabled = stepButton.disabled = true;
+  compareButton.disabled = hearButton.disabled = repeatButton.disabled = stepButton.disabled = againstButton.disabled = true;
   setStatus("");
   try {
     const key = await listener.againKey(beforeOf(take0), a, b);
@@ -2567,7 +2609,7 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = droneButton.disabled = takeButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   compareButton.disabled = repeatButton.disabled = !guide;
-  hearButton.disabled = stepButton.disabled = recordingButton.disabled = false;
+  hearButton.disabled = stepButton.disabled = againstButton.disabled = recordingButton.disabled = false;
   sendButton.disabled = sending;
   readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
@@ -2624,6 +2666,11 @@ if (test) {
     /** The notes the cursor has marked in the last take heard back, and whether it plays. */
     get replayed() {
       return { visited: replay.visited, playing: replay.playing, decodes };
+    },
+    /** The note of the take heard against where it belonged, and the tone's pitch and level,
+     * while it plays. */
+    get held() {
+      return { playing: held.playing, now: held.now };
     },
     /** The notes the cursor has marked in the recording's latest play, whether it plays, and
      * whether its sound is kept. */

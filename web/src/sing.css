@@ -447,6 +447,31 @@ main {
   padding: 0;
   font-size: 1.25rem;
 }
+/* On a phone the words of the step have a row of their own, and the buttons the row under them,
+   the close at its end. */
+@media (max-width: 619.98px) {
+  .why-step {
+    flex-wrap: wrap;
+    row-gap: 0.3rem;
+  }
+  .why-step span {
+    flex-basis: 100%;
+  }
+  .why-step span:empty {
+    display: none;
+  }
+  #unopen {
+    margin-left: auto;
+  }
+}
+@media (max-width: 374.98px) {
+  .why-step {
+    column-gap: 0.35rem;
+  }
+  .why .btn:not(#unopen) {
+    padding-inline: 0.55rem;
+  }
+}
 /* The buttons and the readout keep to one row on a phone. */
 @media (max-width: 479.98px) {
   .bar-in {
