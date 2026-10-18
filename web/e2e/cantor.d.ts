@@ -10,6 +10,7 @@ declare global {
       following: boolean;
       chunks: Array<[number, number, number]>;
       pitch: number[];
+      cued: number[];
       drone: number | null;
       drones: number;
       centre: number | null;

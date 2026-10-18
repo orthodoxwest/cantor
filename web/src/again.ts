@@ -22,6 +22,20 @@ export function grown(take: Judged, chosen: readonly [number, number]): [number,
   return [a, b];
 }
 
+/** What of the take `take` the run `chosen` is grown to hold when it is sung again ([`grown`]), in
+ * words: "to hold the whole of your take’s mark there". An ending a mark tells of is that mark,
+ * where the run is grown to hold the mark too. */
+export function grewOver(take: Judged, chosen: readonly [number, number]): string {
+  const [a, b] = chosen;
+  const [c, d] = grown(take, chosen);
+  const swept = ({ first, last }: Span) => last >= c && first <= d && !(first >= a && last <= b);
+  const marks = take.verdict.marks.filter(swept);
+  const told = (e: { mark: number | null }) => e.mark !== null && marks.includes(take.verdict.marks[e.mark]!);
+  const endings = (take.endings ?? []).filter((e) => swept(e) && !told(e)).length;
+  const noun = marks.length && endings ? "marks and phrase endings" : marks.length ? (marks.length > 1 ? "marks" : "mark") : endings > 1 ? "phrase endings" : "phrase ending";
+  return `to hold the whole of your take’s ${noun} there`;
+}
+
 /** The take `take` with notes `run` of it sung again, judged `sung` (its marks, endings and bands
  * of the chant's notes by index), in their place: the run's bands, marks and endings where the
  * take's were (the take's that reach into the run go), each mark with its words and each ending

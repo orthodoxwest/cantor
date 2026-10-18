@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grown, saidIn, viewOf } from "../src/again";
+import { grewOver, grown, saidIn, viewOf } from "../src/again";
 import type { Mark } from "../src/marks";
 import type { Band, Judged } from "../src/ribbon";
 
@@ -31,6 +31,19 @@ describe("grown", () => {
     expect(grown(take, [6, 7])).toEqual([4, 9]);
     expect(grown(take, [8, 10])).toEqual([4, 11]);
     expect(grown(take, [11, 11])).toEqual([10, 11]);
+  });
+});
+
+describe("grewOver", () => {
+  it("names what the run is grown to hold: a mark, an ending a mark does not tell of, or both", () => {
+    const take = judged([mark("verse", 4, 9), mark("note", 11)], [ending(10, 11, 1), ending(2, 3, null)]);
+    expect(grewOver(take, [6, 7])).toBe("to hold the whole of your take’s mark there");
+    // The ending over 10 to 11 is told by the mark on 11: grown over both, it is that mark; over
+    // the ending alone, from the mark, the ending.
+    expect(grewOver(take, [8, 10])).toBe("to hold the whole of your take’s marks there");
+    expect(grewOver(take, [11, 11])).toBe("to hold the whole of your take’s phrase ending there");
+    expect(grewOver(take, [3, 3])).toBe("to hold the whole of your take’s phrase ending there");
+    expect(grewOver(take, [3, 5])).toBe("to hold the whole of your take’s marks and phrase endings there");
   });
 });
 
