@@ -643,13 +643,25 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
   font-weight: 500;
   color: var(--muted);
   text-align: left;
-  /* "Termination" is wider than its column on the narrowest phones. */
+  /* Larger text than a column holds breaks where the word may be hyphenated, not anywhere. */
+  -webkit-hyphens: auto;
   hyphens: auto;
-  overflow-wrap: break-word;
 }
 .grid thead th:first-child {
   width: 32%;
   padding-left: 0;
+}
+/* "Termination" whole in its column on the narrowest phones. */
+@media (max-width: 379px) {
+  .grid thead th {
+    font-size: 0.75rem;
+  }
+  .grid thead th:first-child {
+    width: 28%;
+  }
+  .grid thead th:last-child {
+    padding-right: 0;
+  }
 }
 .grid tbody tr {
   border-top: 1px solid var(--border);

@@ -5,9 +5,10 @@
 import type { Grid, GridCell, GridRow } from "./ribbon";
 
 /** The grid of a take with a run of it sung again, the run's grid `sung` in its place: each part
- * the run called (one it sang, not "unsung" in its grid) as the run called it, with the take's
- * cell there beside it as `was`, unless neither had an ending to judge; the rest the take's. A
- * run is sung only within what the take judged, so its verses are the take's. */
+ * the run called (one it sang to its ending, not "unsung" in its grid) as the run called it, with
+ * the take's cell there beside it as `was`, unless neither had an ending to judge, or one off
+ * pitch at a pause in it; the rest the take's, a part the run held only in part included. A run is
+ * sung only within what the take judged, so its verses are the take's. */
 export function gridWith(take: Grid | null | undefined, sung: Grid | null | undefined): Grid | null {
   if (!take || !sung) return take ?? null;
   const by = new Map(sung.rows.map((row) => [row.verse, row]));
@@ -20,7 +21,8 @@ export function gridWith(take: Grid | null | undefined, sung: Grid | null | unde
       cells: row.cells.map((cell, c) => {
         const now = again.cells[columns[c]!] ?? null;
         if (!now || now.called === "unsung") return cell;
-        return now.called === "no-ending" && cell?.called === "no-ending" ? cell : { ...now, was: cell ?? undefined };
+        const nothing = (c: GridCell) => c.called === "no-ending" && !c.inner?.length;
+        return cell && nothing(now) && nothing(cell) ? cell : { ...now, was: cell ?? undefined };
       }),
     };
   });

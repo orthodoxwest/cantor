@@ -1237,6 +1237,11 @@ test("beside a psalm sung to a tone, a row a verse and a column a part of the to
   const ending: Ending = whole.endings.find((e: Ending) => e.first === cell.ending![0] && e.last === cell.ending![1]);
   const mark = ending.mark === null ? null : whole.verdict.marks[ending.mark];
   await expect(page.locator("#why-words")).toHaveText(mark?.kind === "note" && mark.first === ending.note ? whole.told[ending.mark!] : ending.words);
+  // Closed, the card sends the keyboard back to the cell, its part still chosen.
+  await page.locator("#unopen").click();
+  await expect(page.locator("#why")).toBeHidden();
+  await expect(mediant).toBeFocused();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([cell.first, cell.last]);
   // Tapped again, it is let go.
   await mediant.click();
   expect(await page.evaluate(() => window.__cantor.loop)).toBeNull();

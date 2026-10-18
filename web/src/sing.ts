@@ -255,6 +255,8 @@ let open: number | null = null;
  * a mark not on its own note tells of already (a verse's, say), whose card is then the ending's
  * own, so that it says what the cell does. Let go as any place opens or closes. */
 let cellOpen: Spot | null = null;
+/** Whether the place open was opened from a cell of the grid, which closing it goes back to. */
+let openedByCell = false;
 /** The place whose card is open: one of the spots, or an ending a cell opened. */
 const openSpot = (): Spot | undefined => (open === null ? (cellOpen ?? undefined) : spots[open]);
 /** The place last opened, which the steps go on from while the run chosen holds it. */
@@ -266,6 +268,7 @@ function setOpen(k: number | null): void {
   if ((k !== open || cellOpen) && playing?.button === stepButton) stopPlay();
   open = k;
   cellOpen = null;
+  openedByCell = false;
   if (k !== null) lastOpen = k;
 }
 
@@ -570,6 +573,7 @@ function chooseCell(r: number, c: number): void {
     if (place === null) return;
     const opened = typeof place === "number" ? open === place : cellOpen?.first === place.first && cellOpen.last === place.last;
     openPlace(opened ? null : place);
+    openedByCell = !opened;
     return drawResult();
   }
   const chosen = loop !== null && loop[0] === cell.first && loop[1] === cell.last;
@@ -580,6 +584,7 @@ function chooseCell(r: number, c: number): void {
     openPlace(place);
     drawResult();
   }
+  openedByCell = place !== null;
 }
 
 /** The cell of the grid a button is, by row and column. */
@@ -1735,16 +1740,13 @@ unchooseButton.addEventListener("click", () => {
   setLoop(null);
 });
 unopenButton.addEventListener("click", () => {
-  if (open === null && cellOpen) {
-    // An ending a cell opened: the keyboard goes back to the cell.
-    setOpen(null);
-    drawResult();
-    return (runButton(gridAt) ?? nextButton).focus({ preventScroll: true });
-  }
-  if (open === null) return;
+  if (open === null && !cellOpen) return;
   const k = open;
+  const byCell = openedByCell;
   setOpen(null);
   drawResult();
+  // A place a cell opened: the keyboard goes back to the cell.
+  if (byCell || k === null) return (runButton(gridAt) ?? nextButton).focus({ preventScroll: true });
   // The keyboard goes back to the place on the score: a mark's ring, or the band of an ending's
   // note off.
   const spot = spots[k];

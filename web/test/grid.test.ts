@@ -72,6 +72,32 @@ describe("gridWith", () => {
     expect(cells[1]!.was).toBe(take.rows[1]!.cells[1]);
   });
 
+  it("puts a part with no ending where the take's was when either was off at a pause in it", () => {
+    const off = { first: 11, last: 11, note: 11, cents: 400, words: "At a pause in it, a major third above" };
+    const withOff = (c: GridCell): GridCell => ({ ...c, inner: [off] });
+    const noEnding = take.rows[1]!.cells[2]!;
+    const sungRow = (termination: GridCell): Grid => ({
+      columns,
+      rows: [{ ...take.rows[1]!, cells: [cell("flex", 6, 7, "unsung", "Not sung"), cell("mediant", 8, 10, "unsung", "Not sung"), termination] }],
+    });
+    // The take off at the pause, the run in tune: the run's, the take's beside it.
+    const offTake: Grid = { columns, rows: take.rows.map((r, i) => (i === 1 ? { ...r, cells: [r.cells[0]!, r.cells[1]!, withOff(noEnding)] } : r)) };
+    const fixed = gridWith(offTake, sungRow(noEnding))!.rows[1]!.cells[2]!;
+    expect(fixed.inner ?? []).toEqual([]);
+    expect(fixed.was).toBe(offTake.rows[1]!.cells[2]);
+    // The take in tune, the run off at the pause: the run's, so its ending off is told.
+    const slipped = gridWith(take, sungRow(withOff(noEnding)))!.rows[1]!.cells[2]!;
+    expect(slipped.inner).toEqual([off]);
+    expect(slipped.was).toBe(noEnding);
+  });
+
+  it("keeps the take's part where the run held only some of it", () => {
+    // The run sang the mediant's first notes, off at a pause, not its ending: unsung in its grid.
+    const partOf: GridCell = { ...cell("mediant", 8, 10, "unsung", "Not sung"), inner: [{ first: 8, last: 8, note: 8, cents: -200, words: "At a pause in it, a whole tone below" }] };
+    const sung: Grid = { columns, rows: [{ ...take.rows[1]!, cells: [cell("flex", 6, 7, "unsung", "Not sung"), partOf, cell("termination", 11, 13, "unsung", "Not sung")] }] };
+    expect(gridWith(take, sung)!.rows[1]!.cells[1]).toBe(take.rows[1]!.cells[1]);
+  });
+
   it("has only the take's verses", () => {
     // A run is sung only within what the take judged; were one past it, it is not drawn.
     const stopped: Grid = { columns, rows: take.rows.slice(0, 1) };
