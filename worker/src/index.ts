@@ -38,8 +38,20 @@ app.get("/api/chants", async (c) => {
  * private content's seeding: FLAC, at the times its ribbon's bands are measured from. */
 const recordingKey = (slug: string) => `recordings/${slug}.flac`;
 
+/** A private chant's aligned recording, as stored, as its ribbon's bands: none when it is not a
+ * list of them, and the chant is then served without it. */
+function bandsOf(recording: string | null): unknown[] | null {
+  try {
+    const parsed = recording === null ? null : (JSON.parse(recording) as unknown);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // One chant with its GABC; a private one is not found by a stranger, and comes with its aligned
-// recording's ribbon when it has one, and where the recording's sound is kept, where to hear it.
+// recording's ribbon when it has one, and where the recording's sound is kept, where to hear it:
+// named for the sound as kept, so that a sound put again is not heard from a copy of the last.
 app.get("/api/chants/:slug", async (c) => {
   const slug = c.req.param("slug");
   const row = await c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM chants WHERE slug = ?`)
@@ -59,42 +71,41 @@ app.get("/api/chants/:slug", async (c) => {
     : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
   const { recording, ...chant } = hidden;
-  // A recording that is not a list of bands is left out, and the chant still served.
-  const parsed = (() => {
-    try {
-      return recording === null ? null : (JSON.parse(recording) as unknown);
-    } catch {
-      return null;
-    }
-  })();
-  if (!Array.isArray(parsed)) return c.json(chant);
+  const bands = bandsOf(recording);
+  if (!bands) return c.json(chant);
   // Without its sound the ribbon is still drawn; a store that fails to answer is as without it.
   const sound = await c.env.TAKES.head(recordingKey(slug)).catch(() => null);
-  return c.json({ ...chant, recording: parsed, ...(sound ? { audio: `/api/chants/${encodeURIComponent(slug)}/recording` } : {}) });
+  const audio = sound && `/api/chants/${encodeURIComponent(slug)}/recording?v=${encodeURIComponent(sound.etag)}`;
+  return c.json({ ...chant, recording: bands, ...(audio ? { audio } : {}) });
 });
 
-// A private chant's aligned recording as sound, to a known caller, for a chant served with its
-// ribbon.
+// A private chant's aligned recording as sound, to a known caller, where its chant is served with
+// its ribbon (so not under a public chant of the same slug), and to the page's own fetch only:
+// another site's cannot tell a sound from none. A copy the caller has of it unchanged is kept.
 app.get("/api/chants/:slug/recording", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
+  c.header("Cross-Origin-Resource-Policy", "same-origin");
   const slug = c.req.param("slug");
-  const row = (await identity(c.req.raw.headers, c.env))
-    ? await c.env.DB.prepare("SELECT 1 AS found FROM private_chants WHERE slug = ? AND recording IS NOT NULL").bind(slug).first<{ found: number }>()
-    : null;
-  const object = row && (await c.env.TAKES.get(recordingKey(slug)));
+  const known = await identity(c.req.raw.headers, c.env);
+  const shadowed = known && (await c.env.DB.prepare("SELECT 1 AS found FROM chants WHERE slug = ?").bind(slug).first());
+  const row =
+    known && !shadowed
+      ? await c.env.DB.prepare("SELECT recording FROM private_chants WHERE slug = ?").bind(slug).first<{ recording: string | null }>()
+      : null;
+  const object = row && bandsOf(row.recording) ? await c.env.TAKES.get(recordingKey(slug), { onlyIf: c.req.raw.headers }) : null;
   if (!object) return c.json({ error: "not found" }, 404);
-  return new Response(object.body, {
-    headers: {
-      "Content-Type": "audio/flac",
-      "Content-Length": String(object.size),
-      ETag: object.httpEtag,
-      "Cache-Control": "private, max-age=3600",
-      Vary: "Cookie, Cf-Access-Jwt-Assertion",
-      "X-Content-Type-Options": "nosniff",
-      "X-Robots-Tag": "noindex",
-    },
-  });
+  const headers = {
+    ETag: object.httpEtag,
+    "Cache-Control": "private, max-age=3600",
+    Vary: "Cookie, Cf-Access-Jwt-Assertion",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex",
+  };
+  // Without a body, the copy the caller has is the sound as kept.
+  if (!("body" in object)) return new Response(null, { status: 304, headers });
+  return new Response((object as R2ObjectBody).body, { headers: { ...headers, "Content-Type": "audio/flac", "Content-Length": String(object.size) } });
 });
 
 interface PointingRow {

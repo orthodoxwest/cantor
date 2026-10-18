@@ -468,20 +468,34 @@ main {
 .bar .break {
   display: none;
 }
-body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
+body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer),
+body:not(.taking):has(#recording:not([hidden])) :is(#readout, .bar .spacer) {
   display: none;
+}
+/* A chant's recording is a voice beside the guide, and not heard in a take: there it goes, so
+   the bar is as it was. Beside a take shown, the four voices, Compare, Guide, Yours and
+   Recording, have a row of their own at any width, and the rest the next. */
+body.taking #recording {
+  display: none;
+}
+body:not(.taking):has(#hear:not([hidden])):has(#recording:not([hidden])) .bar-in {
+  row-gap: 0.25rem;
+}
+body:not(.taking):has(#hear:not([hidden])):has(#recording:not([hidden])) .bar .break {
+  display: block;
+  flex-basis: 100%;
+  height: 0;
 }
 /* Outside a take the readout has nothing to say, and in one Start note and Drone are off;
    beside a take shown, Yours has Start note's room (a take gives its opening notes anyway). So
    on a narrow screen the bar keeps to one row, or beside a take two: Compare, Guide and Yours,
-   then Repeat, Drone and Sing a take. A chant's recording is heard beside the guide: Play and
-   Recording, then the rest, and in a take, which it is not heard in, it goes. */
+   then Repeat, Drone and Sing a take. Beside a chant's recording, Play and Recording, then the
+   rest. */
 @media (max-width: 699.98px) {
   body:not(.taking) #readout,
   body:not(.taking) .bar .spacer,
   body.taking #note,
-  body.taking #drone,
-  body.taking #recording {
+  body.taking #drone {
     display: none;
   }
 }

@@ -16,20 +16,29 @@ export function recordedTimes(bands: readonly Band[], count: number): Timed[] | 
 }
 
 /** The recording's sound at `url`, fetched and decoded the first time it is heard and kept for
- * the next; one that failed is fetched again the next time. */
-export function recordingSound(url: string): (ctx: BaseAudioContext) => Promise<AudioBuffer> {
+ * the next (`kept` once it is in hand); one that failed is fetched again the next time. */
+export function recordingSound(url: string): { sound: (ctx: BaseAudioContext) => Promise<AudioBuffer>; kept: () => boolean } {
   let decoded: Promise<AudioBuffer> | null = null;
-  return (ctx) => {
-    if (!decoded) {
-      const pending = fetch(url).then(async (res) => {
-        if (!res.ok) throw new Error(`the library answered ${res.status}`);
-        return ctx.decodeAudioData(await res.arrayBuffer());
-      });
-      pending.catch(() => {
-        if (decoded === pending) decoded = null;
-      });
-      decoded = pending;
-    }
-    return decoded;
+  let kept = false;
+  return {
+    kept: () => kept,
+    sound: (ctx) => {
+      if (!decoded) {
+        const pending = fetch(url).then(async (res) => {
+          if (!res.ok) throw new Error(`the library answered ${res.status}`);
+          return ctx.decodeAudioData(await res.arrayBuffer());
+        });
+        pending.then(
+          () => {
+            kept = decoded === pending;
+          },
+          () => {
+            if (decoded === pending) decoded = null;
+          },
+        );
+        decoded = pending;
+      }
+      return decoded;
+    },
   };
 }

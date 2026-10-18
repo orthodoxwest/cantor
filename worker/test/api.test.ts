@@ -63,12 +63,13 @@ describe("api", () => {
     expect(await served("private-sung")).not.toHaveProperty("audio");
     expect((await get("/api/chants/private-sung/recording", student)).status).toBe(404);
     const sound = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 1, 2, 3]);
-    await env.TAKES.put("recordings/private-sung.flac", sound);
+    const kept = await env.TAKES.put("recordings/private-sung.flac", sound);
     // A chant with no recording is not heard by its sound alone, nor a public one.
     await env.TAKES.put("recordings/private-test.flac", sound);
     await env.TAKES.put("recordings/ubi-caritas.flac", sound);
     try {
-      expect((await served("private-sung")).audio).toBe("/api/chants/private-sung/recording");
+      // Named for the sound as kept.
+      expect((await served("private-sung")).audio).toBe(`/api/chants/private-sung/recording?v=${kept!.etag}`);
       expect(await served("private-test")).not.toHaveProperty("audio");
       expect(await (await get("/api/chants/ubi-caritas")).json<object>()).not.toHaveProperty("audio");
       const res = await get("/api/chants/private-sung/recording", student);
@@ -78,6 +79,13 @@ describe("api", () => {
       expect(res.headers.get("Content-Length")).toBe(String(sound.length));
       expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
       expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+      expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+      // A copy the caller has of it, unchanged, is kept, and none sent again.
+      const etag = res.headers.get("ETag")!;
+      const again = await get("/api/chants/private-sung/recording", { ...student, "If-None-Match": etag });
+      expect(again.status).toBe(304);
+      expect(await again.arrayBuffer()).toHaveProperty("byteLength", 0);
+      expect(again.headers.get("ETag")).toBe(etag);
       for (const [path, headers] of [
         ["/api/chants/private-sung/recording", undefined],
         ["/api/chants/private-test/recording", student],
@@ -87,8 +95,20 @@ describe("api", () => {
         const hidden = await get(path, headers);
         expect(hidden.status, path).toBe(404);
         expect(hidden.headers.get("Cache-Control")).toBe("private, no-store");
+        expect(hidden.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
       }
+      // Heard only where its chant is served with its ribbon: not with a ribbon that is not one,
+      // nor under a public chant of the same slug, which is the one served.
+      await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-test'").bind('{"index":0}').run();
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(404);
+      await env.DB.prepare("UPDATE private_chants SET recording = (SELECT recording FROM private_chants WHERE slug = 'private-sung') WHERE slug = 'private-test'").run();
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(200);
+      await env.DB.prepare("INSERT INTO chants (slug, title, gabc) VALUES ('private-test', 'Shadow', '(c4) A(f) (::)')").run();
+      expect(await served("private-test")).not.toHaveProperty("audio");
+      expect((await get("/api/chants/private-test/recording", student)).status).toBe(404);
     } finally {
+      await env.DB.prepare("DELETE FROM chants WHERE slug = 'private-test'").run();
+      await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
       await env.TAKES.delete(["recordings/private-sung.flac", "recordings/private-test.flac", "recordings/ubi-caritas.flac"]);
     }
   });

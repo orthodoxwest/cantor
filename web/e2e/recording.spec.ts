@@ -85,16 +85,32 @@ async function voiced(page: Page, audio: ((route: Route) => Promise<void>) | nul
   return { fetches: () => fetches, ids };
 }
 
+/** Keeps, for each sound the page starts of the recording (its eight seconds), from how far into
+ * it and for how long. */
+async function startsOf(page: Page): Promise<() => Promise<Array<[number, number]>>> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { starts: Array<[number, number]> };
+    w.starts = [];
+    const start = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (when?: number, offset?: number, duration?: number) {
+      if (Math.abs((this.buffer?.duration ?? 0) - 8) < 0.01) w.starts.push([offset ?? 0, duration ?? Infinity]);
+      return start.call(this, when, offset, duration);
+    };
+  });
+  return () => page.evaluate(() => (window as unknown as { starts: Array<[number, number]> }).starts);
+}
+
 /** Waits for the recording's play to end on its own. */
 async function played(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => window.__cantor.recorded.playing), { timeout: 10_000 }).toBe(false);
 }
 
 test("a chant's recording plays over the phrase chosen, once, the cursor in its colour where it sang each note", async ({ page }) => {
+  const starts = await startsOf(page);
   const { fetches, ids } = await voiced(page);
   const recording = page.getByRole("button", { name: "Recording" });
   await expect(recording).toBeVisible();
-  await expect(recording).toHaveAttribute("title", "The recording of this chant over the phrase chosen, once, in the key it was sung in");
+  await expect(recording).toHaveAttribute("title", "The recording of this chant over the phrase chosen, or the whole chant from its first note, once, in the key it was sung in");
   // The second phrase: notes 3 to 6.
   await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
@@ -107,11 +123,19 @@ test("a chant's recording plays over the phrase chosen, once, the cursor in its 
   expect(await page.evaluate(() => window.__cantor.recorded.visited)).toEqual(ids.slice(2, 6));
   await expect(page.locator("#score .cursor")).toBeHidden();
   await expect(page.locator("#score.hearing-recording")).toHaveCount(0);
-  // The whole chant, from its first note, its sound fetched once.
+  // Sounded from a moment before the phrase's first note, 5 s in, to a moment after its last.
+  const [phrase] = await starts();
+  expect(phrase![0]).toBeCloseTo(4.7, 2);
+  expect(phrase![0] + phrase![1]).toBeCloseTo(7.3, 2);
+  // The whole chant, from just before its first note, 4 s in, past what is spoken before it;
+  // its sound fetched once.
   await page.getByRole("button", { name: "Whole chant" }).click();
   await recording.click();
   await played(page);
   expect(await page.evaluate(() => window.__cantor.recorded.visited)).toEqual(ids);
+  const whole = (await starts())[1]!;
+  expect(whole[0]).toBeCloseTo(3.7, 2);
+  expect(whole[0] + whole[1]).toBeCloseTo(7.3, 2);
   expect(fetches()).toBe(1);
   // Pressed again while it plays, it stops; the guide stops it too.
   await recording.click();
@@ -124,6 +148,43 @@ test("a chant's recording plays over the phrase chosen, once, the cursor in its 
   await page.getByRole("button", { name: "Play" }).click();
   await expect(recording).toHaveAttribute("aria-pressed", "false");
   expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
+  // A drone would cover it: the recording stops the drone, and the drone the recording.
+  await page.getByRole("button", { name: "Play" }).click();
+  const drone = page.getByRole("button", { name: "Drone" });
+  await drone.click();
+  await expect(drone).toHaveAttribute("aria-pressed", "true");
+  await recording.click();
+  await expect(page.locator("#score .cursor.recording")).toBeVisible();
+  await expect(drone).toHaveAttribute("aria-pressed", "false");
+  await drone.click();
+  await expect(drone).toHaveAttribute("aria-pressed", "true");
+  await expect(recording).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
+});
+
+test("while the recording's sound is first fetched the status says so, and a play stopped meanwhile does not start when it comes", async ({ page }) => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const { fetches } = await voiced(page, async (route) => {
+    await held;
+    await route.fulfill({ body: sine(8), contentType: "audio/flac" });
+  });
+  const recording = page.getByRole("button", { name: "Recording" });
+  await recording.click();
+  await expect(page.locator("#status")).toHaveText("Fetching the recording…");
+  await expect(page.locator("#status")).not.toHaveClass(/error/);
+  await recording.click();
+  await expect(recording).toHaveAttribute("aria-pressed", "false");
+  release();
+  await expect(page.locator("#status")).toHaveText("");
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  // Kept, it plays at once the next time, with nothing to say.
+  await recording.click();
+  await expect(page.locator("#score .cursor.recording")).toBeVisible();
+  await expect(page.locator("#status")).toHaveText("");
+  expect(fetches()).toBe(1);
 });
 
 test("a recording whose sound cannot be had says so, and is asked for again the next time", async ({ page }) => {
@@ -136,6 +197,8 @@ test("a recording whose sound cannot be had says so, and is asked for again the 
   missing = false;
   await recording.click();
   await expect(page.locator("#score .cursor.recording")).toBeVisible();
+  // What could not be played is not said while it plays.
+  await expect(page.locator("#status")).toHaveText("");
   expect(fetches()).toBe(2);
 });
 
@@ -174,9 +237,44 @@ test("on a phone the bar has Play and Recording, then the rest, and fits", async
   await page.getByRole("button", { name: "Sing a take" }).click();
   await expect(page.locator("#recording")).toBeHidden();
   expect(await top("Stop")).toBe(await top("Repeat"));
-  // And comes back when the take is over.
+  // And comes back when the take is over, to be pressed.
   await expect(page.locator("#recording")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#recording")).toBeEnabled();
 });
+
+for (const width of [700, 768, 1024]) {
+  test(`at ${width} px the bar keeps Recording in a row of its voices, and fits`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await voiced(page);
+    const top = (name: string) => page.getByRole("button", { name, exact: true }).evaluate((el) => Math.round(el.getBoundingClientRect().top));
+    const tops = async (names: string[]) => Promise.all(names.map(top));
+    const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
+    // Before a take, one row, the readout, which has nothing to say, gone.
+    expect(new Set(await tops(["Play", "Recording", "Start note", "Drone", "Sing a take"])).size).toBe(1);
+    await expect(page.locator("#readout")).toBeHidden();
+    expect(await fits()).toBe(true);
+    // Beside a take, the four voices, then the rest.
+    await page.evaluate(() => void window.__cantor.listen());
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => void window.__cantor.listen());
+    await page.evaluate((gabc) => window.__cantor.show(gabc, 0.5, 0.2), PHRASES);
+    await expect(page.locator("#key")).toBeVisible();
+    const voices = await tops(["Compare", "Guide", "Yours", "Recording"]);
+    expect(new Set(voices).size).toBe(1);
+    const rest = await tops(["Repeat", "Drone", "Sing a take"]);
+    expect(new Set(rest).size).toBe(1);
+    expect(rest[0]).toBeGreaterThan(voices[0]!);
+    expect(await fits()).toBe(true);
+    // In a take it goes, and the bar is as it is without it.
+    await page.getByRole("button", { name: "Sing a take" }).click();
+    await expect(page.locator("#recording")).toBeHidden();
+    const shown = await page.locator(".bar-in > button").evaluateAll((els) => els.filter((el) => (el as HTMLElement).offsetParent !== null).map((el) => [el.id, Math.round(el.getBoundingClientRect().top)] as const));
+    expect(shown.map(([id]) => id)).toEqual(["play", "note", "drone", "take"]);
+    expect(new Set(shown.map(([, at]) => at)).size).toBe(1);
+    expect(await fits()).toBe(true);
+    await expect(page.locator("#recording")).toBeVisible({ timeout: 15_000 });
+  });
+}
 
 test("on a phone, a take with no take shown keeps the bar to one row", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 });

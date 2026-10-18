@@ -45,9 +45,13 @@ describe("recordingSound", () => {
   it("fetches and decodes the sound once, and keeps it for the next time", async () => {
     const fetched = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
     vi.stubGlobal("fetch", fetched);
-    const sound = recordingSound("/api/chants/sung/recording");
+    const { sound, kept } = recordingSound("/api/chants/sung/recording");
     const { ctx, decoded } = context();
-    expect(await sound(ctx)).toBe(decoded);
+    expect(kept()).toBe(false);
+    const first = sound(ctx);
+    expect(kept()).toBe(false);
+    expect(await first).toBe(decoded);
+    expect(kept()).toBe(true);
     expect(await sound(ctx)).toBe(decoded);
     expect(fetched).toHaveBeenCalledTimes(1);
     expect(fetched).toHaveBeenCalledWith("/api/chants/sung/recording");
@@ -56,11 +60,13 @@ describe("recordingSound", () => {
   it("says what the library answered when it gives none, and asks again the next time", async () => {
     const fetched = vi.fn(async () => new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", fetched);
-    const sound = recordingSound("/api/chants/sung/recording");
+    const { sound, kept } = recordingSound("/api/chants/sung/recording");
     const { ctx, decoded } = context();
     await expect(sound(ctx)).rejects.toThrow("the library answered 404");
+    expect(kept()).toBe(false);
     fetched.mockImplementation(async () => new Response(new Uint8Array([1])));
     expect(await sound(ctx)).toBe(decoded);
+    expect(kept()).toBe(true);
     expect(fetched).toHaveBeenCalledTimes(2);
   });
 });

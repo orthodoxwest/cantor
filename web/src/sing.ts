@@ -956,9 +956,10 @@ onNews((news) => {
   if (drawn) steadily(drawResult);
 });
 
-// The guide sings anew from where it is next played; the take alone plays on.
+// The guide sings anew from where it is next played; the take and the recording, each in its own
+// key, play on.
 inKeyBox.addEventListener("change", () => {
-  if (playing && playing.button !== hearButton) stopPlay();
+  if (playing && playing.button !== hearButton && playing.button !== recordingButton) stopPlay();
 });
 
 // A take shown may be sent, by a signed-in singer: the button gives a link to it.
@@ -1934,18 +1935,27 @@ function offerRecording(): void {
 }
 offerRecording();
 
-/** Plays the recording over the run chosen, or from its first note to its last, once. */
+/** Plays the recording over the run chosen, or from its first note to its last, once. As Play,
+ * it lets go of what the status said, a recording that could not be had included; while its
+ * sound is first fetched, the status says so. */
 async function hearRecording(): Promise<void> {
   const times = recordingAt;
   if (!recordable() || !recordingAudio || !times) return;
-  quieten();
+  setStatus("");
   const run = begin(recordingButton, true, false);
+  const fetching = recordingAudio.kept() ? "" : "Fetching the recording…";
+  if (fetching) setStatus(fetching, true);
+  const fetched = () => {
+    if (fetching && status.textContent === fetching) setStatus("");
+  };
   try {
     const ctx = await audioContext();
-    const buffer = await recordingAudio(ctx);
+    const buffer = await recordingAudio.sound(ctx);
+    fetched();
     if (!going(run)) return;
     await recordingReplay.play(ctx, buffer, times, loop ?? [0, times.length - 1]);
   } catch (error) {
+    fetched();
     if (!going(run)) return;
     stopPlay();
     return setStatus(`The recording could not be played: ${error instanceof Error ? error.message : String(error)}`);
