@@ -57,6 +57,22 @@ test("the practice page sings the chant the address names", async ({ page }) => 
   await expect(page.getByRole("link", { name: "Browse the library" })).toHaveAttribute("href", "/library");
 });
 
+test("words in the practice page's search before the page is ready are searched for", async ({ page }) => {
+  // The page's script held back, as on a slow phone, while the words are typed; or the browser
+  // puts them back on going back to the page.
+  let ready: () => void = () => {};
+  const held = new Promise<void>((resolve) => (ready = resolve));
+  await page.route("**/assets/*.js", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/sing?chant=ubi-caritas", { waitUntil: "commit" });
+  await page.getByPlaceholder("Find another chant").fill("zzzz");
+  ready();
+  await expect(page.locator("#title")).toHaveText("Where charity and love are");
+  await expect(page.locator("#found-note")).toHaveText("Nothing matches “zzzz”.");
+});
+
 test("every page has the same pages in its header", async ({ page }) => {
   for (const [path, current] of [
     ["/", "Psalms"],

@@ -101,6 +101,9 @@ find.addEventListener("input", () => {
   reach();
   drawFound();
 });
+// Words already in the box, typed before the page was ready or put back by the browser on
+// going back to it, are searched for too.
+if (find.value.trim()) reach();
 const links = () => [...foundList.querySelectorAll<HTMLAnchorElement>("a")];
 find.addEventListener("keydown", (e) => {
   // Enter practises the first match (not the Enter that ends an input method's composing, which
