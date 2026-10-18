@@ -9,10 +9,11 @@
 use std::cell::RefCell;
 
 use cantor_core::{
-    Band, Ending, Frame, Listening, Note, Report, Verdict, endings, entry, judge_part, notes_from_gabc, ribbon, score, summary, told,
+    Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, key_at, notes_from_gabc, ribbon,
+    score, summary, told, told_again,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A sample at least this loud is the take's first loud sample.
 const ONSET_PEAK: f32 = 1e-3;
@@ -146,6 +147,61 @@ pub fn judge_notes(mut notes: Vec<Note>, frames: &[Frame], through: Option<usize
     let ribbon = ribbon(&notes, frames, &report, &verdict);
     let told = told(&verdict);
     let endings = endings(&verdict);
+    Judged {
+        notes,
+        report,
+        verdict,
+        ribbon,
+        told,
+        summary,
+        endings,
+    }
+}
+
+/// The notes `first..=last` of `gabc` at `pulse_s` a pulse sung again, the first due `offset_s`
+/// into the take, scored and judged on its `frames` in `key_cents`, the key the guide sang them
+/// in, beside the take of the whole chant they were sung after, `before`: as
+/// [`judge_again_notes`] judges them.
+pub fn judge_again_gabc(
+    gabc: &str,
+    pulse_s: f32,
+    offset_s: f32,
+    run: (usize, usize),
+    key_cents: f32,
+    before: &Before,
+    frames: &[Frame],
+) -> Judged {
+    let mut notes = notes_from_gabc(gabc, pulse_s);
+    let at = notes.get(run.0).map_or(0.0, |n| n.start_s);
+    for n in &mut notes {
+        n.start_s += offset_s - at;
+    }
+    judge_again_notes(notes, run.0..run.1.saturating_add(1), key_cents, before, frames)
+}
+
+/// The chant's `notes`, timed on the take's clock, of which those of `run` were sung again,
+/// scored and judged on its `frames` in `key_cents` ([`judge_again`]): its notes are the run's,
+/// its report theirs from the run's first, while its verdict, bands and endings are of the
+/// chant's notes by index, so that they are drawn and told where the take's are. Its summary
+/// tells of the run beside the take it was sung after, `before` ([`again`]).
+pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_cents: f32, before: &Before, frames: &[Frame]) -> Judged {
+    let start = run.start.min(notes.len());
+    let run = start..run.end.clamp(start, notes.len());
+    let report = score(&notes[run.clone()], frames);
+    let verdict = judge_again(&notes, run.clone(), &report, key_cents, &before.verdict);
+    let taken: Vec<Option<f32>> = before.report.notes.iter().map(|r| r.cents).collect();
+    let summary = again(&before.verdict, &taken, &verdict, run.clone());
+    let ribbon = ribbon(&notes[run.clone()], frames, &report, &verdict.within(run.clone()))
+        .into_iter()
+        .map(|mut band| {
+            band.index += run.start;
+            band
+        })
+        .collect();
+    let told = told_again(&verdict, &notes);
+    let endings = endings(&verdict);
+    notes.truncate(run.end);
+    notes.drain(..run.start);
     Judged {
         notes,
         report,
@@ -320,6 +376,81 @@ pub extern "C" fn ear_judge(gabc_len: u32, pulse_s: f32, offset_s: f32, through:
     output_json(json)
 }
 
+/// Scores and judges the heard take as the notes `first..=last` of a chant sung again, in
+/// `key_cents`, beside the take of the whole chant they were sung after: the byte buffer holds
+/// the chant's GABC in its first `gabc_len` bytes, then that take as JSON (a [`Before`], as
+/// [`ear_again_key`] reads it) in the next `before_len`; the notes are at `pulse_s` a pulse, the
+/// first due `offset_s` into the take ([`judge_again_gabc`]). The length of the JSON left in the
+/// output buffer, or -1 with the error there: for no key to judge in (NaN, as
+/// [`ear_again_key`] gives for a take with none), or notes not of the chant.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ear_judge_again(
+    gabc_len: u32,
+    before_len: u32,
+    pulse_s: f32,
+    offset_s: f32,
+    first: u32,
+    last: u32,
+    key_cents: f32,
+) -> i32 {
+    let (gabc, before) = BYTES.with(|b| {
+        let b = b.borrow();
+        let split = (gabc_len as usize).min(b.len());
+        let end = split.saturating_add(before_len as usize).min(b.len());
+        (
+            String::from_utf8_lossy(&b[..split]).into_owned(),
+            serde_json::from_slice::<Before>(&b[split..end]),
+        )
+    });
+    let len = notes_from_gabc(&gabc, pulse_s).len();
+    let (first, last) = (first as usize, last as usize);
+    let json = match before {
+        Err(e) => Err(format!("the take before could not be read: {e}")),
+        Ok(_) if !key_cents.is_finite() => Err("no key to judge the notes sung again in".to_string()),
+        Ok(_) if first > last || last >= len => Err(format!("notes {first} to {last} are not of the chant's {len}")),
+        Ok(before) => TAKE.with(|t| match t.borrow().as_ref() {
+            Some(Take::Heard(heard)) => serde_json::to_string(&judge_again_gabc(
+                &gabc,
+                pulse_s,
+                offset_s,
+                (first, last),
+                key_cents,
+                &before,
+                &heard.frames,
+            ))
+            .map_err(|e| e.to_string()),
+            _ => Err("no take heard".to_string()),
+        }),
+    };
+    output_json(json)
+}
+
+/// A take a run is sung again after, as the page has it: its verdict and its report.
+#[derive(Deserialize)]
+pub struct Before {
+    pub verdict: Verdict,
+    pub report: Report,
+}
+
+/// The key the take in the byte buffer's first `len` bytes (a [`Before`], as JSON) was in at its
+/// notes `first..=last`, in cents, for them to be sung again in, and judged in by
+/// [`ear_judge_again`] ([`key_at`]); NaN when it had none, could not be read, or the notes are
+/// not of its chant.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ear_again_key(len: u32, first: u32, last: u32) -> f32 {
+    BYTES.with(|b| {
+        let b = b.borrow();
+        let (first, last) = (first as usize, last as usize);
+        serde_json::from_slice::<Before>(&b[..(len as usize).min(b.len())])
+            .ok()
+            .filter(|before| first <= last && last < before.verdict.relative.len())
+            .and_then(|before| key_at(&before.verdict, &before.report, first..last + 1))
+            .unwrap_or(f32::NAN)
+    })
+}
+
 /// Leaves `json` in the output buffer and returns its length, or -1 with the error there.
 fn output_json(json: Result<String, String>) -> i32 {
     match json {
@@ -363,7 +494,13 @@ mod tests {
                 n
             })
             .collect();
-        let take = render_take(&notes, &Profile::default(), sr, 5);
+        // Sung in a key of the singer's own, so its errors off the score are not its errors off
+        // its key.
+        let profile = Profile {
+            key_cents: -300.0,
+            ..Profile::default()
+        };
+        let take = render_take(&notes, &profile, sr, 5);
         let track = SwiftF0::new().expect("model").track(&take.samples, sr).expect("run");
         let whole = listen_with(&take.samples, sr, None, Some(&track));
         assert_eq!(ear_push(1), -1, "nothing is heard before a take starts");
@@ -400,6 +537,127 @@ mod tests {
         assert_eq!(ear_stop(), -1, "a take stops once");
         assert_eq!(ear_judge(bytes.len() as u32, 0.5, 1.0, -1), len, "and stays to be judged");
         assert!(json.contains("\"heard_fraction\""));
+        // Its notes 1 to 3 sung again are judged as the ear's own judge_again_gabc judges them,
+        // in the key the core reads the take was in there, from the take's verdict and report;
+        // the same take is handed to both. The take is told of as sung a tone sharp on its note
+        // 2, and marked there, so the run is told beside it, not beside itself.
+        let judged = judge_gabc(gabc, 0.5, 1.0, &whole, None);
+        let mut take = judged.verdict.clone();
+        take.marks.push(cantor_core::Mark {
+            kind: cantor_core::MarkKind::Note,
+            first: 2,
+            last: 2,
+            cents: Some(200.0),
+        });
+        take.relative[2] = take.relative[2].map(|c| c + 200.0);
+        let mut sharp = judged.report.clone();
+        sharp.notes[2].cents = sharp.notes[2].cents.map(|c| c + 200.0);
+        let taken = Before {
+            verdict: take.clone(),
+            report: sharp.clone(),
+        };
+        let read = |take: &Verdict| {
+            format!(
+                "{{\"verdict\":{},\"report\":{}}}",
+                serde_json::to_string(take).unwrap(),
+                serde_json::to_string(&sharp).unwrap()
+            )
+        };
+        let before = read(&take);
+        ear_bytes(before.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(before.as_bytes()));
+        let key = ear_again_key(before.len() as u32, 1, 3);
+        assert_eq!(key, key_at(&judged.verdict, &judged.report, 1..4).expect("a key"));
+        assert!(ear_again_key(3, 1, 3).is_nan(), "a take that cannot be read has no key");
+        assert!(
+            ear_again_key(before.len() as u32, 3, 1).is_nan(),
+            "nor notes that end before they begin"
+        );
+        assert!(ear_again_key(before.len() as u32, 1, u32::MAX).is_nan(), "nor notes past its chant");
+        let both = [bytes, before.as_bytes()].concat();
+        // The take's own frames, its note 1 due where it was in the take.
+        let offset = 1.0 + notes_from_gabc(gabc, 0.5)[1].start_s;
+        let again_beside = |before: &str, first, last, key| {
+            let both = [bytes, before.as_bytes()].concat();
+            ear_bytes(both.len() as u32);
+            BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
+            ear_judge_again(bytes.len() as u32, before.len() as u32, 0.5, offset, first, last, key)
+        };
+        let again_with = |first, last, key| again_beside(&before, first, last, key);
+        for (first, last, key) in [(1, 3, f32::NAN), (3, 1, key), (1, u32::MAX, key), (1, 99, key)] {
+            assert_eq!(again_with(first, last, key), -1, "{first} to {last} in {key}");
+        }
+        let n = again_with(1, 3, key);
+        let again = OUTPUT.with(|o| String::from_utf8(o.borrow().clone()).expect("JSON"));
+        assert_eq!(n as usize, again.len());
+        let want = judge_again_gabc(gabc, 0.5, offset, (1, 3), key, &taken, &whole);
+        assert_eq!(again, serde_json::to_string(&want).unwrap());
+        assert_eq!(want.verdict.outcome, cantor_core::Outcome::Heard);
+        assert_eq!((want.notes.len(), want.ribbon.len(), want.ribbon[0].index), (3, 3, 1));
+        // Sung from the take's own frames over the same notes, each is heard as it was in the
+        // take; told beside the take, and its marks told as a run's are; each band of a note of
+        // the run, as judged.
+        let chant = notes_from_gabc(gabc, 0.5);
+        for i in 1..4 {
+            let (a, w) = (want.verdict.relative[i].expect("heard"), judged.verdict.relative[i].expect("heard"));
+            assert!((a - w).abs() < 30.0, "note {i}: {a} sung again, {w} in the take");
+        }
+        let cents: Vec<Option<f32>> = sharp.notes.iter().map(|r| r.cents).collect();
+        assert_eq!(want.summary, cantor_core::again(&take, &cents, &want.verdict, 1..4));
+        assert_eq!(
+            want.summary,
+            [
+                "All three of its notes were in tune this time, where two were before.",
+                "Its mark is gone."
+            ]
+        );
+        assert!(want.verdict.marks.is_empty());
+        // Sung again a tone below the take's key there, the run is marked note by note, as the
+        // take judged its verse; beside a take that marked the verse, as the part of it the run
+        // is, and told so.
+        let low = |before: &str| {
+            assert!(again_beside(before, 1, 3, key + 200.0) > 0);
+            let low: serde_json::Value = OUTPUT.with(|o| serde_json::from_slice(&o.borrow()).expect("JSON"));
+            let verdict: Verdict = serde_json::from_value(low["verdict"].clone()).expect("a verdict");
+            let told: Vec<String> = serde_json::from_value(low["told"].clone()).expect("words");
+            assert_eq!(told, told_again(&verdict, &chant));
+            (verdict.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(), told)
+        };
+        let (marks, told) = low(&before);
+        assert_eq!(marks, (1..4).map(|i| (cantor_core::MarkKind::Note, i, i)).collect::<Vec<_>>());
+        assert!(told.iter().all(|t| !t.starts_with("These notes")), "{told:?}");
+        let mut verse = judged.verdict.clone();
+        verse.marks = vec![cantor_core::Mark {
+            kind: cantor_core::MarkKind::Verse,
+            first: 0,
+            last: 4,
+            cents: Some(-200.0),
+        }];
+        let (marks, told) = low(&read(&verse));
+        assert_eq!(marks, [(cantor_core::MarkKind::Verse, 1, 3)]);
+        assert!(told[0].starts_with("These notes were sung together"), "{told:?}");
+        for (k, band) in want.ribbon.iter().enumerate() {
+            assert_eq!(band.index, 1 + k);
+            assert_eq!(band.cents, want.verdict.relative[1 + k]);
+        }
+        // The chant's last note is of it, and none past it.
+        let last = chant.len() as u32 - 1;
+        assert!(again_with(1, last, key) > 0);
+        assert_eq!(again_with(1, last + 1, key), -1);
+        ear_bytes(before.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(before.as_bytes()));
+        assert!(ear_again_key(before.len() as u32, 1, last).is_finite());
+        assert!(ear_again_key(before.len() as u32, 1, last + 1).is_nan());
+        // A run that ends before it begins is not heard.
+        let reversed = judge_again_notes(chant.clone(), std::ops::Range { start: 3, end: 1 }, key, &taken, &whole);
+        assert_eq!(
+            (reversed.verdict.outcome, reversed.notes.len()),
+            (cantor_core::Outcome::NotHeard, 0)
+        );
+        // The take before cut short cannot be read.
+        ear_bytes(both.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
+        assert_eq!(ear_judge_again(bytes.len() as u32, 3, 0.5, offset, 1, 3, key), -1);
     }
 
     #[test]

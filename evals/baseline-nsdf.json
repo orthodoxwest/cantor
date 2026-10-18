@@ -34,14 +34,14 @@
     "takes_under_floor": 0,
     "heard_all": 0.9653979,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.995856,
+    "tracking_cents": 8.004696,
     "gross_error_rate": 0.0035842294,
     "marks": 15,
     "false_marks": 0,
     "faults": 38,
     "recall": 0.9736842,
     "false_in_tune": 0,
-    "key_error_cents": 8.168396,
+    "key_error_cents": 8.044067,
     "summary_errors": 0,
     "cadences": 28,
     "cadences_judged": 26,
@@ -52,8 +52,21 @@
     "timed_late": 0,
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
-    "in_tune": 211,
-    "agreement": null
+    "in_tune": 209,
+    "agreement": null,
+    "again": {
+      "runs": 20,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 1.1122437,
+      "false_marks": 0,
+      "faults": 37,
+      "caught": 37,
+      "dropped": 0,
+      "first_faults": 2,
+      "first_caught": 2,
+      "told_otherwise": 0
+    }
   },
   "expert-bleed": {
     "takes": 6,
@@ -81,7 +94,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 390,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 27,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 1.1965332,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "expert-dry": {
     "takes": 6,
@@ -109,7 +135,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 523,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 27,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 2.9228516,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "expert-guide-key": {
     "takes": 6,
@@ -137,7 +176,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 498,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 30,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 1.048645,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "expert-lead": {
     "takes": 6,
@@ -165,7 +217,20 @@
     "timed_by_sound": 6,
     "timing_moved_marks": 0,
     "in_tune": 523,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 27,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 2.4266357,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "expert-rooms": {
     "takes": 6,
@@ -193,7 +258,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 523,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 27,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 2.2529907,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "expert-stopped": {
     "takes": 9,
@@ -261,7 +339,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 272,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 20,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 1.5841675,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "research-hard": {
     "takes": 12,
@@ -289,7 +380,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 615,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 40,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 4.5686646,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "student-lead": {
     "takes": 4,
@@ -317,35 +421,61 @@
     "timed_by_sound": 4,
     "timing_moved_marks": 0,
     "in_tune": 255,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 20,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 2.8753052,
+      "false_marks": 0,
+      "faults": 27,
+      "caught": 26,
+      "dropped": 0,
+      "first_faults": 1,
+      "first_caught": 1,
+      "told_otherwise": 0
+    }
   },
   "student-notes": {
-    "takes": 4,
+    "takes": 6,
     "heard_fraction": 1.0,
     "worst_take_heard": 1.0,
     "takes_under_floor": 0,
     "heard_all": 1.0,
     "masked_fraction": 0.0,
-    "tracking_cents": 7.06078,
+    "tracking_cents": 6.847892,
     "gross_error_rate": 0.0,
-    "marks": 29,
+    "marks": 34,
     "false_marks": 0,
-    "faults": 29,
+    "faults": 34,
     "recall": 1.0,
     "false_in_tune": 0,
-    "key_error_cents": 7.313965,
+    "key_error_cents": 7.703369,
     "summary_errors": 0,
-    "cadences": 28,
-    "cadences_judged": 28,
+    "cadences": 44,
+    "cadences_judged": 44,
     "cadence_errors": 0,
-    "cadence_faults": 17,
+    "cadence_faults": 19,
     "cadence_recall": 1.0,
     "unjudged": 0,
     "timed_late": 0,
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
-    "in_tune": 255,
-    "agreement": null
+    "in_tune": 410,
+    "agreement": null,
+    "again": {
+      "runs": 30,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 3.0895386,
+      "false_marks": 0,
+      "faults": 33,
+      "caught": 33,
+      "dropped": 0,
+      "first_faults": 2,
+      "first_caught": 2,
+      "told_otherwise": 0
+    }
   },
   "student-stopped": {
     "takes": 6,
@@ -413,7 +543,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 629,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 35,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 62.045105,
+      "false_marks": 0,
+      "faults": 14,
+      "caught": 14,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "tracker-clean": {
     "takes": 1,
@@ -441,7 +584,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 40,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 5,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 0.0,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "tracker-drift": {
     "takes": 1,
@@ -469,7 +625,20 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 40,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 5,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 8.980469,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   },
   "tracker-noisy": {
     "takes": 1,
@@ -497,6 +666,19 @@
     "timed_by_sound": 0,
     "timing_moved_marks": 0,
     "in_tune": 40,
-    "agreement": null
+    "agreement": null,
+    "again": {
+      "runs": 5,
+      "unheard": 0,
+      "otherwise": 0,
+      "apart_cents": 0.3486328,
+      "false_marks": 0,
+      "faults": 0,
+      "caught": 0,
+      "dropped": 0,
+      "first_faults": 0,
+      "first_caught": 0,
+      "told_otherwise": 0
+    }
   }
 }
