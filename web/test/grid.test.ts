@@ -92,8 +92,8 @@ describe("gridWith", () => {
   });
 
   it("keeps the take's part where the run held only some of it", () => {
-    // The run sang the mediant's first notes, off at a pause, not its ending: unsung in its grid.
-    const partOf: GridCell = { ...cell("mediant", 8, 10, "unsung", "Not sung"), inner: [{ first: 8, last: 8, note: 8, cents: -200, words: "At a pause in it, a whole tone below" }] };
+    // The run sang the mediant's first notes, not its ending: unsung in its grid.
+    const partOf: GridCell = cell("mediant", 8, 10, "unsung", "Not sung");
     const sung: Grid = { columns, rows: [{ ...take.rows[1]!, cells: [cell("flex", 6, 7, "unsung", "Not sung"), partOf, cell("termination", 11, 13, "unsung", "Not sung")] }] };
     expect(gridWith(take, sung)!.rows[1]!.cells[1]).toBe(take.rows[1]!.cells[1]);
   });

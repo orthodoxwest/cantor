@@ -1241,6 +1241,7 @@ test("beside a psalm sung to a tone, a row a verse and a column a part of the to
   await page.locator("#unopen").click();
   await expect(page.locator("#why")).toBeHidden();
   await expect(mediant).toBeFocused();
+  await expect(mediant).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([cell.first, cell.last]);
   // Tapped again, it is let go.
   await mediant.click();

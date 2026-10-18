@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-use crate::judge::{Outcome, Verdict, recited};
+use crate::judge::{Cadence, Outcome, Verdict, recited};
 use crate::synth::Note;
 use crate::tell::{capitalise, interval};
 
@@ -93,7 +93,7 @@ pub struct Cell {
     pub words: String,
     /// The endings off pitch inside it, before the one closing it, in order: so a part whose own
     /// ending was on pitch does not read as wholly on pitch while one of its earlier phrases
-    /// went off.
+    /// went off. None in a part not sung.
     #[serde(default)]
     pub inner: Vec<Inner>,
 }
@@ -214,10 +214,12 @@ fn cell(
         _ if cut_in && !all_judged => Called::Stopped,
         _ => Called::Unsung,
     };
+    // A part not sung, as a run's that holds only some of it, tells nothing of what it holds.
+    let inside = |c: &&Cadence| called != Called::Unsung && first <= c.first && c.last < last;
     let inner = verdict
         .cadences
         .iter()
-        .filter(|c| first <= c.first && c.last < last && c.on_pitch() == Some(false))
+        .filter(|c| inside(c) && c.on_pitch() == Some(false))
         .map(|c| Inner {
             first: c.first,
             last: c.last,
@@ -492,7 +494,8 @@ mod tests {
     #[test]
     fn a_run_sung_again_over_part_of_a_part_leaves_its_ending_unsung() {
         // A breath inside the first verse's mediant, notes 0–3 before it: sung again alone, off
-        // at the breath, the mediant's ending is not sung, and the run was not stopped in it.
+        // at the breath, the mediant's ending is not sung, and the run was not stopped in it. The
+        // part not sung tells nothing of its breath, which the run tells of on the score.
         let gabc = "(c4) a(h) b(h) c(h) d(g) (,) e(h) f(h) g(h) h(i) i(h) *(:) j(h) k(h) l(h) m(g) n(f) (:) \
             a(h) b(h) c(h) d(h) e(i) f(h) *(:) g(h) h(h) i(h) j(g) k(f) (::)";
         let notes = crate::notes_from_gabc(gabc, 0.5);
@@ -506,10 +509,8 @@ mod tests {
             (mediant.part, mediant.called, mediant.words.as_str()),
             (Part::Mediant, Called::Unsung, "Not sung")
         );
-        assert_eq!(
-            mediant.inner.iter().map(|i| (i.last, i.words.as_str())).collect::<Vec<_>>(),
-            [(3, "At a pause in it, a whole tone below")]
-        );
+        assert!(mediant.inner.is_empty(), "{mediant:?}");
+        assert!(v.cadences.iter().any(|c| c.last == 3 && c.on_pitch() == Some(false)), "{v:?}");
     }
 
     #[test]

@@ -651,16 +651,19 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
   width: 32%;
   padding-left: 0;
 }
-/* "Termination" whole in its column on the narrowest phones. */
+/* "Termination" whole in its column on the narrowest phones, the verses' first words given as
+ * much room as it leaves. */
 @media (max-width: 379px) {
   .grid thead th {
     font-size: 0.75rem;
   }
-  .grid thead th:first-child {
-    width: 28%;
-  }
   .grid thead th:last-child {
     padding-right: 0;
+  }
+}
+@media (max-width: 339px) {
+  .grid thead th:first-child {
+    width: 28%;
   }
 }
 .grid tbody tr {

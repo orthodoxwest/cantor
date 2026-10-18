@@ -1745,8 +1745,13 @@ unopenButton.addEventListener("click", () => {
   const byCell = openedByCell;
   setOpen(null);
   drawResult();
-  // A place a cell opened: the keyboard goes back to the cell.
-  if (byCell || k === null) return (runButton(gridAt) ?? nextButton).focus({ preventScroll: true });
+  // A place a cell opened: the keyboard goes back to the cell, brought into view if the card or
+  // the bar covered it.
+  if (byCell || k === null) {
+    const cell = runButton(gridAt);
+    (cell ?? nextButton).focus({ preventScroll: true });
+    return reveal([cell], "smooth");
+  }
   // The keyboard goes back to the place on the score: a mark's ring, or the band of an ending's
   // note off.
   const spot = spots[k];
