@@ -2625,9 +2625,10 @@ if (test) {
     get replayed() {
       return { visited: replay.visited, playing: replay.playing, decodes };
     },
-    /** The notes the cursor has marked in the recording's latest play, and whether it plays. */
+    /** The notes the cursor has marked in the recording's latest play, whether it plays, and
+     * whether its sound is kept. */
     get recorded() {
-      return { visited: recordingReplay.visited, playing: recordingReplay.playing };
+      return { visited: recordingReplay.visited, playing: recordingReplay.playing, kept: recordingAudio?.kept() ?? false };
     },
     /** The run looped, by note index, or null. */
     get loop() {

@@ -210,7 +210,7 @@ test("while the recording's sound is first fetched the status says so, until it 
   await expect(recording).toHaveAttribute("aria-pressed", "false");
   await expect(status).toHaveText("");
   release();
-  await page.waitForTimeout(500);
+  await expect.poll(() => page.evaluate(() => window.__cantor.recorded.kept)).toBe(true);
   expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
   await expect(page.locator("#score .cursor.recording")).toBeHidden();
   await expect(status).toHaveText("");
@@ -250,6 +250,44 @@ test("without the guide, the recording plays and leaves what the status says of 
   await expect(page.locator("#score .cursor.recording")).toBeVisible();
   await expect(status).toHaveText("The guide voice could not load.");
   await expect(status).toHaveClass(/error/);
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(true);
+});
+
+test("a line said while the recording's sound is fetched stays when it comes, and Recording lets go of what Yours does", async ({ page }) => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await voiced(page, async (route) => {
+    await held;
+    await route.fulfill({ body: sine(8), contentType: "audio/flac" });
+  });
+  // A take stopped after its first note: Yours has none of the second phrase to hear.
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => void window.__cantor.listen());
+  await page.evaluate((gabc) => window.__cantor.show(gabc, 0.5, 0.2, 1), PHRASES);
+  await expect(page.locator("#key")).toBeVisible();
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  const NONE = "You stopped the take before this phrase, so there is none of it to hear.";
+  const status = page.locator("#status");
+  const recording = page.getByRole("button", { name: "Recording" });
+  const yours = page.getByRole("button", { name: "Yours" });
+  await yours.click();
+  await expect(status).toHaveText(NONE);
+  await recording.click();
+  await expect(status).toHaveText("Fetching the recording…");
+  await recording.click();
+  await expect(status).toHaveText("");
+  // Said while the sound is fetched, Yours' line stays once it comes and the recording plays.
+  await recording.click();
+  await expect(status).toHaveText("Fetching the recording…");
+  await yours.click();
+  await expect(status).toHaveText(NONE);
+  release();
+  await expect(page.locator("#score .cursor.recording")).toBeVisible();
+  await expect(status).toHaveText(NONE);
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(true);
 });
 
 test("the recording, in its own key, plays on when the guide's key is changed", async ({ page }) => {
@@ -278,6 +316,7 @@ test("a recording whose sound cannot be had says so, and is asked for again the 
   await expect(page.locator("#score .cursor.recording")).toBeVisible();
   // What could not be played is not said while it plays.
   await expect(page.locator("#status")).toHaveText("");
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(true);
   expect(fetches()).toBe(2);
 });
 
