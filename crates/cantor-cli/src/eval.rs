@@ -88,15 +88,16 @@
 //! the key the take was in there (its key moved along its drift line), and compared with the
 //! take: no mark it does not deserve; no run the take heard enough of to judge left unheard;
 //! and, where the two are judged alike, the same note marks past the first phrase (save under a
-//! verse's mark, as the run's part of a verse all off together is judged as a verse), verse
-//! marks on a verse the run holds whole, and its cadences placed and called alike. A fault
-//! planted in a run that the take caught must be caught sung again too wherever the run's frames
-//! agree on the note, as a mark on a note alone needs; and the run's part of a verse the take
-//! marked off together must be marked so again wherever it was planted so and three of its notes
-//! were heard, however short they are, as a psalm phrase's recited notes are. Sung as before, a
-//! run past the first phrase must be told so: which of its notes were in tune as beside itself,
-//! and no mark gone. `student-notes` sings a last phrase two-thirds sharp, ending in tune, which
-//! the take marks a note at a time and the run must too. A run sung again does not drift, so a
+//! verse's mark, as the run's part of a verse the take marked is judged as a verse), verse marks
+//! on a verse the run holds whole, and its cadences placed and called alike. A fault planted in a
+//! run that the take caught must be caught sung again too wherever the run's frames agree on the
+//! note, as a mark on a note alone needs; and the run's part of a verse the take marked off
+//! together must be marked so again wherever it was planted so and three of its notes were heard,
+//! however short they are, as a psalm phrase's recited notes are. Sung as before, a run past the
+//! first phrase that heard the notes the take heard must be told so, in the same words as beside
+//! itself. `student-notes` sings a last phrase all sharp, and one two-thirds sharp ending in tune,
+//! in verses otherwise in tune, which the take marks a note at a time and the run must too. A run
+//! sung again does not drift, so a
 //! whole verse of a take that sank lies from the take's errors along its line by what it sank
 //! there; its words read the take's notes in the run's key, so it is told it was in tune as
 //! before. Sung again in a key given, a
@@ -675,9 +676,9 @@ struct AgainMetrics {
     /// again, in a key given, may be; and those caught.
     first_faults: u32,
     first_caught: u32,
-    /// Runs past the first phrase whose words beside the take say otherwise than beside
-    /// themselves which of their notes were in tune, or tell of a mark gone: sung from the take's
-    /// own frames, a run is sung as before.
+    /// Runs past the first phrase, hearing the notes the take heard, whose words beside the take
+    /// are not their words beside themselves: sung from the take's own frames, a run is sung as
+    /// before.
     told_otherwise: u32,
 }
 
@@ -736,14 +737,18 @@ impl AgainMetrics {
                 self.dropped += u32::from(deserved(&part, &take.planted) && heard >= 3 && !marked);
             }
             self.otherwise += u32::from(again_otherwise(&take.notes, v, &take.verdict, run.clone()));
-            if run.clone().all(|i| take.notes[i].phrase > 0) {
+            // Beside itself a note it did not hear is one not heard before, so a run that heard
+            // otherwise than the take is not told as beside itself.
+            let alike = run
+                .clone()
+                .all(|i| take.report.notes[i].cents.is_some() == again.report.notes[i - run.start].cents.is_some());
+            if alike && run.clone().all(|i| take.notes[i].phrase > 0) {
                 let mut own = vec![None; take.notes.len()];
                 for (k, r) in again.report.notes.iter().enumerate() {
                     own[run.start + k] = r.cents;
                 }
                 let itself = cantor_core::again(v, &own, v, run.clone());
-                let gone = again.summary.iter().any(|s| s.contains("gone"));
-                self.told_otherwise += u32::from(again.summary.first() != itself.first() || gone);
+                self.told_otherwise += u32::from(again.summary != itself);
             }
             for i in run {
                 if let (Some(a), Some(w)) = (v.relative[i], take.verdict.relative[i]) {
@@ -757,9 +762,10 @@ impl AgainMetrics {
 /// Whether a run of `notes` sung again (`again`) was judged otherwise than the same notes in
 /// the take (`whole`), where the two are judged alike: other note marks past the first phrase
 /// (where a take is never marked), save on a note a verse mark of either covers (sung again,
-/// the part of a verse the run holds is judged as a verse when all of it is off together, which
-/// it may be where the whole verse was not); other verse marks on a verse the run holds whole; or
-/// the cadences inside it placed or called otherwise (see [`contradicts`]).
+/// the part of a verse the take marked is judged as a verse alone, so it may be marked note by
+/// note where the whole verse was not, and a whole verse, read with no drift, may be marked where
+/// the take marked its notes); other verse marks on a verse the run holds whole; or the cadences
+/// inside it placed or called otherwise (see [`contradicts`]).
 fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
     let in_verse = |i: usize| {
         [again, whole]
@@ -1616,7 +1622,7 @@ pub fn run(
              where the two are judged alike. False: marks not deserved. Faults: planted in the runs heard again, in a \
              first phrase too (caught: by a mark; dropped: caught by the take, not the run, a verse's part included). \
              First: of those, in a first phrase, which only a run sung again is marked in. Told: runs past the first \
-             phrase told otherwise beside the take than beside themselves which notes were in tune, or of a mark gone. \
+             phrase, hearing the notes the take heard, told otherwise beside the take than beside themselves. \
              Apart: the furthest a note's error sung again was from its error in the take.";
         let heads = [
             "runs",
@@ -2176,6 +2182,40 @@ mod tests {
         assert!(again_runs(&[]).is_empty());
         // A phrase no note is in has no run, nor a verse.
         assert_eq!(again_runs(&phrased(&[0, 2, 2])), [0..1, 1..3]);
+    }
+
+    #[test]
+    fn a_note_mark_under_a_verse_mark_of_either_is_not_judged_otherwise_sung_again() {
+        // A verse of four notes past the first phrase (2 to 5), and a run of its middle two.
+        let notes = phrased(&[0, 0, 2, 2, 2, 2]);
+        let mark = |kind, first, last| Mark {
+            kind,
+            first,
+            last,
+            cents: Some(200.0),
+        };
+        let marked = |marks: Vec<Mark>| Verdict {
+            outcome: Outcome::Heard,
+            key_cents: Some(0.0),
+            drift_cents: 0.0,
+            steady: true,
+            marks,
+            relative: vec![Some(200.0); notes.len()],
+            in_tune: 0,
+            cadences: Vec::new(),
+        };
+        let verse = marked(vec![mark(MarkKind::Verse, 2, 5)]);
+        let noted = marked(vec![mark(MarkKind::Note, 3, 3), mark(MarkKind::Note, 4, 4)]);
+        let part = marked(vec![mark(MarkKind::Verse, 3, 4)]);
+        // The take's verse mark over the run's notes marked one at a time, and the run's mark
+        // over the part of it it holds where the take marked them so.
+        assert!(!again_otherwise(&notes, &noted, &verse, 3..5));
+        assert!(!again_otherwise(&notes, &part, &noted, 3..5));
+        // Other note marks with no verse mark over them are.
+        assert!(again_otherwise(&notes, &marked(vec![mark(MarkKind::Note, 3, 3)]), &noted, 3..5));
+        // So is another verse mark on the verse the run holds whole, but not on the part it holds.
+        assert!(again_otherwise(&notes, &marked(Vec::new()), &verse, 2..6));
+        assert!(!again_otherwise(&notes, &marked(Vec::new()), &part, 3..5));
     }
 
     /// How far a note's band may be from the eval's wherever the frames fall, in cents; the

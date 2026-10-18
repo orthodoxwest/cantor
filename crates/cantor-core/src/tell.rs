@@ -164,14 +164,15 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
 /// in tune each time, then which were marked, when any are or were. A note is in tune, as the
 /// judge counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. Each time it is read
 /// against the key the run was sung in, with no drift, so the same singing is in tune the same
-/// both times, though the take was judged along its drift; one the take did not hear was neither
-/// in tune in it nor out, and is said so. Both are compared note by note, not counted: "as
-/// before" is said of the same notes, "the same notes" of marks the same way. The marks before are
-/// the take's, as it showed them; a run's part of a verse the take marked, of three notes or
-/// more, is marked together as the verse was when all of it is still off, so sung as before it is
-/// marked on the same notes. A smaller part is judged a note at a time, as too few to judge as a
-/// verse, so the verse's mark over it is told gone. A take not heard is not compared with. None
-/// for a run not heard.
+/// both times; "before" is the take read so, which beside a take that drifted may not be the
+/// notes it showed in tune along its drift. One the take did not hear was neither in tune in it
+/// nor out, and is said so. Both are compared note by note, not counted: "as before" is said of
+/// the same notes, "the same notes" of marks the same way. The marks before are the take's, as it
+/// showed them; the run's part of a verse is marked as a verse only where the take marked the
+/// verse, by the same rule, so a part off as the verse was, sung as before, is marked on the same
+/// notes. A part not off enough to judge as a verse alone, or of fewer than three notes heard, is
+/// judged a note at a time, and told so beside the verse's mark. A take not heard is not compared
+/// with. None for a run not heard.
 pub fn again(before: &Verdict, before_cents: &[Option<f32>], after: &Verdict, run: Range<usize>) -> Vec<String> {
     let (Outcome::Heard, Some(key)) = (after.outcome, after.key_cents) else {
         return Vec::new();
@@ -248,6 +249,7 @@ pub fn again(before: &Verdict, before_cents: &[Option<f32>], after: &Verdict, ru
         Some(b) if notes(a) == notes(b) => {
             let which = if a.len() == 1 { "note" } else { "notes" };
             let way = |v: &Vec<(usize, i8)>| v.iter().all(|m| m.1 == v[0].1).then_some(v[0].1);
+            let side = |w: i8| if w < 0 { "below" } else { "above" };
             Some(match (way(a), way(b)) {
                 _ if a == b => format!("It is marked on the same {which} as before."),
                 (Some(-1), Some(1)) => {
@@ -256,6 +258,14 @@ pub fn again(before: &Verdict, before_cents: &[Option<f32>], after: &Verdict, ru
                 (Some(1), Some(-1)) => {
                     format!("It is marked on the same {which} as before, but above your key this time, where it was below.")
                 }
+                (Some(0), Some(w)) => format!(
+                    "It is marked on the same {which} as before, but not heard this time, where it was {} your key.",
+                    side(w)
+                ),
+                (Some(w), Some(0)) => format!(
+                    "It is marked on the same {which} as before, but {} your key this time, where it was not heard.",
+                    side(w)
+                ),
                 _ => format!("It is marked on the same {which} as before, but not for the same reason."),
             })
         }
@@ -745,8 +755,16 @@ mod tests {
     }
 
     /// A verdict on `cents` of eight notes, two verses of a phrase of four, judged whole (`run`
-    /// None) or as a run sung again in the key 0.
+    /// None) or as a run sung again in the key 0 after a take in tune.
     fn judged(cents: &[Option<f32>], run: Option<std::ops::Range<usize>>) -> Verdict {
+        match run {
+            None => judged_after(cents, None, None),
+            Some(run) => judged_after(cents, Some(run), Some(&judged_after(&[Some(0.0); 8], None, None))),
+        }
+    }
+
+    /// As [`judged`], a run sung again after `take`.
+    fn judged_after(cents: &[Option<f32>], run: Option<std::ops::Range<usize>>, take: Option<&Verdict>) -> Verdict {
         let notes: Vec<Note> = (0..8)
             .map(|i| Note {
                 phrase: (i / 4) as u32,
@@ -775,7 +793,7 @@ mod tests {
         };
         match run {
             None => crate::judge::judge(&notes, &report),
-            Some(run) => crate::judge::judge_again(&notes, run, &report, 0.0),
+            Some(run) => crate::judge::judge_again(&notes, run, &report, 0.0, take.expect("a take")),
         }
     }
 
@@ -854,7 +872,7 @@ mod tests {
         let before = judged(&[[Some(0.0); 4], [Some(200.0); 4]].concat(), None);
         let kinds = |v: &Verdict| v.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>();
         assert_eq!(kinds(&before), [(MarkKind::Verse, 4, 7)]);
-        let after = judged(&[Some(200.0); 3], Some(5..8));
+        let after = judged_after(&[Some(200.0); 3], Some(5..8), Some(&before));
         assert_eq!(kinds(&after), [(MarkKind::Verse, 5, 7)]);
         assert_eq!(
             again(&before, &before.relative, &after, 5..8),
@@ -1130,8 +1148,53 @@ mod tests {
             again(&sharp, &sharp.relative, &silent, 0..8),
             [
                 "Four of its eight notes were in tune, as before.",
-                "It is marked on the same notes as before, but not for the same reason."
+                "It is marked on the same notes as before, but not heard this time, where it was above your key."
             ]
+        );
+        // Sung off where it was not heard.
+        assert_eq!(
+            again(
+                &silent,
+                &silent.relative,
+                &judged(&[[Some(0.0); 4], [Some(-200.0); 4]].concat(), Some(0..8)),
+                0..8
+            ),
+            [
+                "Four of its eight notes were in tune, as before.",
+                "It is marked on the same notes as before, but below your key this time, where it was not heard."
+            ]
+        );
+        // Marked both ways, one of them now the other way.
+        let both = judged(
+            &[
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(200.0),
+                Some(-200.0),
+                Some(0.0),
+            ],
+            None,
+        );
+        let turned = judged(
+            &[
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(200.0),
+                Some(200.0),
+                Some(0.0),
+            ],
+            Some(0..8),
+        );
+        assert_eq!(both.marks.len(), 2);
+        assert_eq!(
+            again(&both, &both.relative, &turned, 0..8)[1],
+            "It is marked on the same notes as before, but not for the same reason."
         );
     }
 

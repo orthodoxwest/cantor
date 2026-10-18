@@ -188,7 +188,7 @@ pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_
     let start = run.start.min(notes.len());
     let run = start..run.end.clamp(start, notes.len());
     let report = score(&notes[run.clone()], frames);
-    let verdict = judge_again(&notes, run.clone(), &report, key_cents);
+    let verdict = judge_again(&notes, run.clone(), &report, key_cents, &before.verdict);
     let taken: Vec<Option<f32>> = before.report.notes.iter().map(|r| r.cents).collect();
     let summary = again(&before.verdict, &taken, &verdict, run.clone());
     let ribbon = ribbon(&notes[run.clone()], frames, &report, &verdict.within(run.clone()))
@@ -494,7 +494,13 @@ mod tests {
                 n
             })
             .collect();
-        let take = render_take(&notes, &Profile::default(), sr, 5);
+        // Sung in a key of the singer's own, so its errors off the score are not its errors off
+        // its key.
+        let profile = Profile {
+            key_cents: -300.0,
+            ..Profile::default()
+        };
+        let take = render_take(&notes, &profile, sr, 5);
         let track = SwiftF0::new().expect("model").track(&take.samples, sr).expect("run");
         let whole = listen_with(&take.samples, sr, None, Some(&track));
         assert_eq!(ear_push(1), -1, "nothing is heard before a take starts");
@@ -547,11 +553,14 @@ mod tests {
             verdict: take.clone(),
             report: judged.report.clone(),
         };
-        let before = format!(
-            "{{\"verdict\":{},\"report\":{}}}",
-            serde_json::to_string(&take).unwrap(),
-            serde_json::to_string(&judged.report).unwrap()
-        );
+        let read = |take: &Verdict| {
+            format!(
+                "{{\"verdict\":{},\"report\":{}}}",
+                serde_json::to_string(take).unwrap(),
+                serde_json::to_string(&judged.report).unwrap()
+            )
+        };
+        let before = read(&take);
         ear_bytes(before.len() as u32);
         BYTES.with(|b| b.borrow_mut().copy_from_slice(before.as_bytes()));
         let key = ear_again_key(before.len() as u32, 1, 3);
@@ -565,11 +574,13 @@ mod tests {
         let both = [bytes, before.as_bytes()].concat();
         // The take's own frames, its note 1 due where it was in the take.
         let offset = 1.0 + notes_from_gabc(gabc, 0.5)[1].start_s;
-        let again_with = |first, last, key| {
+        let again_beside = |before: &str, first, last, key| {
+            let both = [bytes, before.as_bytes()].concat();
             ear_bytes(both.len() as u32);
             BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
             ear_judge_again(bytes.len() as u32, before.len() as u32, 0.5, offset, first, last, key)
         };
+        let again_with = |first, last, key| again_beside(&before, first, last, key);
         for (first, last, key) in [(1, 3, f32::NAN), (3, 1, key), (1, u32::MAX, key), (1, 99, key)] {
             assert_eq!(again_with(first, last, key), -1, "{first} to {last} in {key}");
         }
@@ -598,14 +609,29 @@ mod tests {
             ]
         );
         assert!(want.verdict.marks.is_empty());
-        // Sung again a tone below the take's key there, the run is marked as the part of its
-        // verse it is, and told so.
-        assert!(again_with(1, 3, key + 200.0) > 0);
-        let low: serde_json::Value = OUTPUT.with(|o| serde_json::from_slice(&o.borrow()).expect("JSON"));
-        let verdict: Verdict = serde_json::from_value(low["verdict"].clone()).expect("a verdict");
-        let told: Vec<String> = serde_json::from_value(low["told"].clone()).expect("words");
-        assert_eq!(verdict.marks.len(), 1);
-        assert_eq!(told, told_again(&verdict, &chant));
+        // Sung again a tone below the take's key there, the run is marked note by note, as the
+        // take judged its verse; beside a take that marked the verse, as the part of it the run
+        // is, and told so.
+        let low = |before: &str| {
+            assert!(again_beside(before, 1, 3, key + 200.0) > 0);
+            let low: serde_json::Value = OUTPUT.with(|o| serde_json::from_slice(&o.borrow()).expect("JSON"));
+            let verdict: Verdict = serde_json::from_value(low["verdict"].clone()).expect("a verdict");
+            let told: Vec<String> = serde_json::from_value(low["told"].clone()).expect("words");
+            assert_eq!(told, told_again(&verdict, &chant));
+            (verdict.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(), told)
+        };
+        let (marks, told) = low(&before);
+        assert_eq!(marks, (1..4).map(|i| (cantor_core::MarkKind::Note, i, i)).collect::<Vec<_>>());
+        assert!(told.iter().all(|t| !t.starts_with("These notes")), "{told:?}");
+        let mut verse = judged.verdict.clone();
+        verse.marks = vec![cantor_core::Mark {
+            kind: cantor_core::MarkKind::Verse,
+            first: 0,
+            last: 4,
+            cents: Some(-200.0),
+        }];
+        let (marks, told) = low(&read(&verse));
+        assert_eq!(marks, [(cantor_core::MarkKind::Verse, 1, 3)]);
         assert!(told[0].starts_with("These notes were sung together"), "{told:?}");
         for (k, band) in want.ribbon.iter().enumerate() {
             assert_eq!(band.index, 1 + k);
