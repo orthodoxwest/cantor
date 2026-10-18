@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grewOver, grown, saidIn, viewOf } from "../src/again";
+import { grewOver, grown, outside, saidIn, viewOf } from "../src/again";
 import type { Mark } from "../src/marks";
 import type { Band, Judged } from "../src/ribbon";
 
@@ -43,7 +43,31 @@ describe("grewOver", () => {
     expect(grewOver(take, [8, 10])).toBe("to hold the whole of your take’s marks there");
     expect(grewOver(take, [11, 11])).toBe("to hold the whole of your take’s phrase ending there");
     expect(grewOver(take, [3, 3])).toBe("to hold the whole of your take’s phrase ending there");
-    expect(grewOver(take, [3, 5])).toBe("to hold the whole of your take’s marks and phrase endings there");
+    expect(grewOver(take, [3, 5])).toBe("to hold the whole of your take’s mark and phrase ending there");
+  });
+
+  it("names each by its own count", () => {
+    // Two verse marks over 2 to 5 and 6 to 9, an ending over 0 to 2 and one over 10 to 11.
+    const take = judged([mark("verse", 2, 5), mark("verse", 6, 9)], [ending(0, 2, null), ending(10, 11, null)]);
+    expect(grewOver(take, [3, 4])).toBe("to hold the whole of your take’s mark and phrase ending there");
+    expect(grewOver(take, [5, 6])).toBe("to hold the whole of your take’s marks and phrase ending there");
+    expect(grewOver(take, [1, 10])).toBe("to hold the whole of your take’s phrase endings there");
+    expect(grewOver(take, [1, 6])).toBe("to hold the whole of your take’s mark and phrase ending there");
+  });
+});
+
+describe("outside", () => {
+  it("is what of the last run the next does not hold", () => {
+    expect(outside([2, 5], [0, 1])).toEqual([[2, 5]]);
+    expect(outside([2, 5], [6, 9])).toEqual([[2, 5]]);
+    expect(outside([2, 5], [3, 4])).toEqual([
+      [2, 2],
+      [5, 5],
+    ]);
+    expect(outside([2, 5], [4, 7])).toEqual([[2, 3]]);
+    expect(outside([2, 5], [0, 3])).toEqual([[4, 5]]);
+    expect(outside([2, 5], [2, 5])).toEqual([]);
+    expect(outside([2, 5], [0, 9])).toEqual([]);
   });
 });
 

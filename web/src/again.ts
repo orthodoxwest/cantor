@@ -32,8 +32,20 @@ export function grewOver(take: Judged, chosen: readonly [number, number]): strin
   const marks = take.verdict.marks.filter(swept);
   const told = (e: { mark: number | null }) => e.mark !== null && marks.includes(take.verdict.marks[e.mark]!);
   const endings = (take.endings ?? []).filter((e) => swept(e) && !told(e)).length;
-  const noun = marks.length && endings ? "marks and phrase endings" : marks.length ? (marks.length > 1 ? "marks" : "mark") : endings > 1 ? "phrase endings" : "phrase ending";
-  return `to hold the whole of your take’s ${noun} there`;
+  const many = (n: number, one: string) => (n === 0 ? [] : [n > 1 ? `${one}s` : one]);
+  const nouns = [...many(marks.length, "mark"), ...many(endings, "phrase ending")];
+  return `to hold the whole of your take’s ${nouns.join(" and ") || "places"} there`;
+}
+
+/** The notes of the run `last`, sung again before, that the run `run` sung again after it does
+ * not hold, where the take is shown again: none, the part before `run` or after it, or both. */
+export function outside(last: readonly [number, number], [a, b]: readonly [number, number]): Array<[number, number]> {
+  const [c, d] = last;
+  const parts: Array<[number, number]> = [
+    [c, Math.min(d, a - 1)],
+    [Math.max(c, b + 1), d],
+  ];
+  return parts.filter(([x, y]) => x <= y);
 }
 
 /** The take `take` with notes `run` of it sung again, judged `sung` (its marks, endings and bands

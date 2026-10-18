@@ -15,7 +15,7 @@ import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
 import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
 import { Replay } from "./replay";
-import { grewOver, grown, saidIn, viewOf } from "./again";
+import { grewOver, grown, outside, saidIn, viewOf } from "./again";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, throughHeard, timed, type Timed } from "./timing";
@@ -150,8 +150,11 @@ const keyText = byId<HTMLParagraphElement>("key");
 const inKeyLine = byId<HTMLParagraphElement>("in-key-line");
 const inKeyBox = byId<HTMLInputElement>("in-key");
 const recordedText = byId<HTMLParagraphElement>("recorded");
-// A run of the take sung again: the core's words of it beside the take.
+// A run of the take sung again: the core's words of it beside the take, and the same words for a
+// screen reader, filled anew for each run so that the same words are heard again without the
+// line moving the score.
 const againText = byId<HTMLParagraphElement>("again-said");
+const againHeard = byId<HTMLParagraphElement>("again-heard");
 // The take before this one of the same chant, kept on the device, drawn dotted under it unless
 // the singer turns it off; the foot of the page says takes are kept, and forgets them at a tap.
 const beforeLine = byId<HTMLParagraphElement>("before-line");
@@ -208,14 +211,14 @@ interface Heardback {
 /** A run of the take shown sung again, while it is shown over the take: its notes, the key it
  * was sung and judged in (in cents from the score, the core's `key_at`), it judged (its bands,
  * marks and endings of the chant's notes by index, its words beside the take), and how it is
- * heard back. Another run sung again, or another take, takes its place; `replaced` is the run sung
- * again before it that it took the place of and does not hold, drawn as in the take again. */
+ * heard back. Another run sung again, or another take, takes its place; `replaced` is what of the
+ * run sung again before it this one does not hold ([`outside`]), drawn as in the take again. */
 interface Again {
   run: [number, number];
   key: number;
   judged: Judged;
   back: Heardback;
-  replaced: [number, number] | null;
+  replaced: Array<[number, number]>;
 }
 let again: Again | null = null;
 /** What is drawn of the take shown: the take, with the run sung again in place of it there
@@ -583,7 +586,8 @@ function drawResult(): void {
     readingText.hidden = true;
     recordedText.hidden = true;
     beforeLine.hidden = true;
-    againText.textContent = "";
+    againText.textContent = againHeard.textContent = "";
+    saidFor = null;
     inKeyLine.hidden = true;
     keyText.hidden = judged?.ribbon.length === 0;
     if (judged) keyText.textContent = unheard(judged);
@@ -604,22 +608,25 @@ function drawResult(): void {
   const view = viewed ?? judged;
   const inRun = (i: number) => sung !== null && i >= sung.run[0] && i <= sung.run[1];
   const faint = [...(was && beforeBox.checked ? was.bands.filter((b) => !inRun(b.index)) : []), ...judged.ribbon.filter((b) => inRun(b.index))];
-  // Kept in the page while empty, so that a screen reader hears it the first time it is filled;
-  // and emptied a moment for a new run told in the same words as the last, so that it is heard.
   const said = sung
     ? [
         `You sang ${runWords(sung.run[0], sung.run[1])} again.`,
         ...sung.judged.summary,
         "Your take’s bars there are dotted under the new ones.",
-        ...(sung.replaced ? [`Your take is shown again at ${runWords(sung.replaced[0], sung.replaced[1])}, which you sang again before.`] : []),
+        ...(sung.replaced.length ? [`Your take is shown again at ${sung.replaced.map(([x, y]) => runWords(x, y)).join(" and ")}, which you sang again before.`] : []),
       ].join(" ")
     : "";
-  if (sung !== saidFor && said && againText.textContent === said) {
-    againText.textContent = "";
-    requestAnimationFrame(() => {
-      if (again === sung && !againText.textContent) againText.textContent = said;
-    });
-  } else if (againText.textContent !== said) againText.textContent = said;
+  if (againText.textContent !== said) againText.textContent = said;
+  // The hidden line is kept in the page while empty, so that a screen reader hears it each time
+  // it is filled: emptied for a new run, and filled a moment later, though its words are the
+  // last run's.
+  if (sung !== saidFor) {
+    againHeard.textContent = "";
+    if (said)
+      requestAnimationFrame(() => {
+        if (again === sung && againText.textContent === said) againHeard.textContent = said;
+      });
+  }
   saidFor = sung;
   score.showStrips((timeline, room) => {
     strips = { places: places(timeline.notes), stripTop: room.stripTop };
@@ -1280,10 +1287,18 @@ function drawChosen(): void {
   drawOverview();
   const run = taking ? null : againRun();
   // What Sing again sings, when it is more than the run chosen ([`grown`]).
-  const more = run && loop && (run[0] !== loop[0] || run[1] !== loop[1]) && shown ? `Sing again sings ${numbered(...run).toLowerCase()}, ${grewOver(shown, loop)}` : "";
+  // The bar says it in short, so that it stays low on a phone; the button's title and the status
+  // as it is sung say why.
+  const grows = run && loop && (run[0] !== loop[0] || run[1] !== loop[1]) && shown ? run : null;
+  const more = grows ? `Sing again sings ${numbered(...grows).toLowerCase()}` : "";
   if (!taking && guide) {
     takeButton.textContent = run ? "Sing again" : "Sing a take";
-    takeButton.title = more ? `${more}, in the key you sang them in, to see them over your take` : run ? "Sing the notes chosen again, in the key you sang them in, to see them over your take" : "";
+    takeButton.title =
+      grows && loop && shown
+        ? `${more}, ${grewOver(shown, loop)}, in the key you sang them in, to see them over your take`
+        : run
+          ? "Sing the notes chosen again, in the key you sang them in, to see them over your take"
+          : "";
   }
   chosenLine.hidden = !shown || taking || (!loop && spots.length === 0);
   if (chosenLine.hidden || !shown) return;
@@ -2280,7 +2295,7 @@ async function judgeAgain(take: Judged, run: [number, number], key: number, puls
     return decodedAgain;
   };
   stopHear();
-  const replaced = again && !inside(again.run, run) ? again.run : null;
+  const replaced = again ? outside(again.run, run) : [];
   steadily(() => {
     again = { run, key, judged, back: { times, pulse, audio, again: true }, replaced };
     viewed = viewOf(take, run, judged);

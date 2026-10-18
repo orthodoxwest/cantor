@@ -1103,20 +1103,42 @@ test("a phrase sung again is drawn and told as the core judged it, its marks the
   // Sung again once more there, the take is already shown at “alleluia”, so the line says no more.
   const amen2 = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(0, 1, 0.5, 0.2)))!);
   await expect(page.locator("#again-said")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
-  // Sung again in the same words, the line is emptied a moment, so that a screen reader hears it.
-  const emptied = await page.evaluate(async () => {
+  // Sung again in the same words, a screen reader's hidden line is emptied a moment and filled
+  // again, so that they are heard; the line on the screen stays as it is, and the score where it
+  // was, scrolled with the line in view.
+  await page.evaluate(() => window.scrollTo(0, document.getElementById("again-said")!.getBoundingClientRect().top + window.scrollY - 120));
+  const heard = await page.evaluate(async () => {
     const said = document.getElementById("again-said")!;
-    let empty = false;
-    const watch = new MutationObserver(() => (empty ||= said.textContent === ""));
-    watch.observe(said, { childList: true, characterData: true, subtree: true });
+    const hidden = document.getElementById("again-heard")!;
+    const top = () => document.getElementById("score")!.getBoundingClientRect().top;
+    const before = top();
+    const seen = { shown: [] as string[], heard: [] as string[], moved: 0 };
+    const watch = new MutationObserver(() => {
+      seen.shown.push(said.textContent ?? "");
+      seen.heard.push(hidden.textContent ?? "");
+      seen.moved = Math.max(seen.moved, Math.abs(top() - before));
+    });
+    for (const el of [said, hidden]) watch.observe(el, { childList: true, characterData: true, subtree: true });
     await window.__cantor.showAgain(0, 1, 0.5, 0.2);
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
     watch.disconnect();
-    return empty;
+    return { ...seen, moved: Math.max(seen.moved, Math.abs(top() - before)), now: hidden.textContent };
   });
-  expect(emptied).toBe(true);
-  await expect(page.locator("#again-said")).toHaveText(`You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`);
+  const words = `You sang “A men” again. ${amen2.summary.join(" ")} Your take’s bars there are dotted under the new ones.`;
+  expect(heard.heard).toEqual(["", words]);
+  expect(heard.shown.every((text) => text === words)).toBe(true);
+  expect(heard.now).toBe(words);
+  expect(heard.moved).toBeLessThan(1);
+  await expect(page.locator("#again-said")).toHaveText(words);
+  // A run sung again inside the last, the take is shown again only either side of it.
+  await page.evaluate(() => window.__cantor.showAgain(2, 5, 0.5, 0.2));
+  const inner = JSON.parse((await page.evaluate(() => window.__cantor.showAgain(3, 4, 0.5, 0.2)))!);
+  await expect(page.locator("#again-said")).toHaveText(
+    `You sang notes 4 to 5 again. ${inner.summary.join(" ")} Your take’s bars there are dotted under the new ones. Your take is shown again at note 3 and note 6, which you sang again before.`,
+  );
+  const nested = await page.locator("[data-band]").evaluateAll((els) => els.map((el) => el.getAttribute("data-cents")));
+  expect(nested).toEqual([...whole.ribbon.slice(0, 3).map(cents), ...inner.ribbon.map(cents), ...whole.ribbon.slice(5).map(cents)]);
 });
 
 test("a phrase holding part of a mark of the take is sung again with the whole of it, said before it is sung, and Send still sends the take", async ({ page }) => {
@@ -1142,7 +1164,11 @@ test("a phrase holding part of a mark of the take is sung again with the whole o
   // Its second phrase chosen, the bar says Sing again sings the whole verse, before it is sung.
   await page.getByRole("button", { name: "Choose the phrase of note 7", exact: true }).click();
   expect(await page.evaluate(() => window.__cantor.loop)).toEqual([6, 7]);
-  await expect(page.locator("#chosen-text")).toHaveText("Notes 7 to 8 · “lu … ia” · Sing again sings notes 5 to 8, to hold the whole of your take’s mark there");
+  await expect(page.locator("#chosen-text")).toHaveText("Notes 7 to 8 · “lu … ia” · Sing again sings notes 5 to 8");
+  await expect(page.locator("#take")).toHaveAttribute(
+    "title",
+    "Sing again sings notes 5 to 8, to hold the whole of your take’s mark there, in the key you sang them in, to see them over your take",
+  );
   const take = page.locator("#take");
   await take.click();
   await expect(page.locator("#status")).toHaveText("Notes 5 to 8, to hold the whole of your take’s mark there. Listen to its first note.");
