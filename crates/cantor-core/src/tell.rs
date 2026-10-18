@@ -159,29 +159,45 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
 }
 
 /// The notes `run` sung again (`after`, as [`crate::judge::judge_again`] judges them) beside the
-/// same notes in the take they were sung after (`before`), in a sentence or two: which were in
-/// tune each time, then which were marked, when any are or were. A note is in tune, as the judge
-/// counts it, within [`IN_TUNE_CENTS`] of the key and under no mark; one the take did not hear
-/// was neither in tune in it nor out, and is said so. Both are compared note by note, not
-/// counted: "as before" is said of the same notes. A run's part of a verse the take marked is
-/// marked together as the verse was, so sung as before it is marked on the same notes. A take
-/// not heard is not compared with. None for a run not heard.
-pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String> {
-    if after.outcome != Outcome::Heard || run.is_empty() {
+/// same notes in the take they were sung after (judged `before`, its notes heard `before_cents`
+/// off the score, by the chant's index, as its report has them), in a sentence or two: which were
+/// in tune each time, then which were marked, when any are or were. A note is in tune, as the
+/// judge counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. Each time it is read
+/// against the key the run was sung in, with no drift, so the same singing is in tune the same
+/// both times, though the take was judged along its drift; one the take did not hear was neither
+/// in tune in it nor out, and is said so. Both are compared note by note, not counted: "as
+/// before" is said of the same notes, "the same notes" of marks the same way. The marks before are
+/// the take's, as it showed them; a run's part of a verse the take marked, of three notes or
+/// more, is marked together as the verse was when all of it is still off, so sung as before it is
+/// marked on the same notes. A smaller part is judged a note at a time, as too few to judge as a
+/// verse, so the verse's mark over it is told gone. A take not heard is not compared with. None
+/// for a run not heard.
+pub fn again(before: &Verdict, before_cents: &[Option<f32>], after: &Verdict, run: Range<usize>) -> Vec<String> {
+    let (Outcome::Heard, Some(key)) = (after.outcome, after.key_cents) else {
+        return Vec::new();
+    };
+    if run.is_empty() {
         return Vec::new();
     }
     let n = run.len();
-    let marked = |v: &Verdict| -> Vec<usize> { run.clone().filter(|&i| v.marks.iter().any(|m| m.covers(i))).collect() };
-    let tuned = |v: &Verdict| -> Vec<usize> {
+    fn under(v: &Verdict, i: usize) -> Option<&Mark> {
+        v.marks.iter().find(|m| m.covers(i))
+    }
+    // Each note marked, and which way: above the key, below it, or not heard.
+    let marked = |v: &Verdict| -> Vec<(usize, i8)> {
         run.clone()
-            .filter(|&i| {
-                v.relative.get(i).copied().flatten().is_some_and(|c| c.abs() < IN_TUNE_CENTS) && !v.marks.iter().any(|m| m.covers(i))
-            })
+            .filter_map(|i| under(v, i).map(|m| (i, m.cents.map_or(0, |c| if c < 0.0 { -1 } else { 1 }))))
             .collect()
     };
-    let now = (tuned(after), marked(after));
-    let was = (before.outcome == Outcome::Heard).then(|| (tuned(before), marked(before)));
-    let heard = run.clone().filter(|&i| before.relative.get(i).copied().flatten().is_some()).count();
+    let tuned = |v: &Verdict, error: &dyn Fn(usize) -> Option<f32>| -> Vec<usize> {
+        run.clone()
+            .filter(|&i| error(i).is_some_and(|c| c.abs() < IN_TUNE_CENTS) && under(v, i).is_none())
+            .collect()
+    };
+    let taken = |i: usize| before_cents.get(i).copied().flatten();
+    let now = (tuned(after, &|i| after.relative.get(i).copied().flatten()), marked(after));
+    let was = (before.outcome == Outcome::Heard).then(|| (tuned(before, &|i| taken(i).map(|c| fold(c - key))), marked(before)));
+    let heard = run.clone().filter(|&i| taken(i).is_some()).count();
     let same = |k: usize| if k == 1 { "the same one" } else { "the same ones" };
     let mut out = vec![if n == 1 {
         let tune = |v: &Vec<usize>| !v.is_empty();
@@ -200,7 +216,8 @@ pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String
         let k = now.0.len();
         match was.as_ref().map(|w| &w.0) {
             None => format!("{} in tune.", of_its(k, n, true)),
-            Some(w) if *w == now.0 => format!("{} in tune, as before.", of_its(k, n, true)),
+            // None in tune either time is as before only of notes the take heard.
+            Some(w) if *w == now.0 && (heard == n || k > 0) => format!("{} in tune, as before.", of_its(k, n, true)),
             Some(w) if w.len() == k && heard == n => {
                 format!("{} in tune this time, but not {} as before.", of_its(k, n, true), same(k))
             }
@@ -211,9 +228,10 @@ pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String
         if k == 1 {
             "one mark".to_string()
         } else {
-            format!("{} marks", amount(k, n))
+            format!("{} marks", number(k))
         }
     };
+    let notes = |v: &Vec<(usize, i8)>| v.iter().map(|m| m.0).collect::<Vec<_>>();
     let (a, b) = (&now.1, was.as_ref().map(|w| &w.1));
     out.extend(match b {
         _ if a.is_empty() && b.is_none_or(Vec::is_empty) => None,
@@ -227,11 +245,20 @@ pub fn again(before: &Verdict, after: &Verdict, run: Range<usize>) -> Vec<String
             })
         }
         Some(b) if b.is_empty() => Some(format!("It has {}.", marks(after.marks.len()))),
-        Some(b) if a == b => Some(if a.len() == 1 {
-            "It is marked on the same note as before.".to_string()
-        } else {
-            "It is marked on the same notes as before.".to_string()
-        }),
+        Some(b) if notes(a) == notes(b) => {
+            let which = if a.len() == 1 { "note" } else { "notes" };
+            let way = |v: &Vec<(usize, i8)>| v.iter().all(|m| m.1 == v[0].1).then_some(v[0].1);
+            Some(match (way(a), way(b)) {
+                _ if a == b => format!("It is marked on the same {which} as before."),
+                (Some(-1), Some(1)) => {
+                    format!("It is marked on the same {which} as before, but below your key this time, where it was above.")
+                }
+                (Some(1), Some(-1)) => {
+                    format!("It is marked on the same {which} as before, but above your key this time, where it was below.")
+                }
+                _ => format!("It is marked on the same {which} as before, but not for the same reason."),
+            })
+        }
         Some(b) if a.len() == b.len() => Some(format!(
             "{} marked this time, but not {} as before.",
             of_its(a.len(), n, false),
@@ -762,35 +789,35 @@ mod tests {
         assert_eq!(before.marks.len(), 1);
         let after = |c: [f32; 4]| judged(&c.map(Some), Some(4..8));
         assert_eq!(
-            again(&before, &after([0.0, 10.0, -20.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([0.0, 10.0, -20.0, 0.0]), 4..8),
             [
                 "All four of its notes were in tune this time, where two were before.",
                 "Its mark is gone."
             ]
         );
         assert_eq!(
-            again(&before, &after([0.0, 200.0, -60.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([0.0, 200.0, -60.0, 0.0]), 4..8),
             [
                 "Two of its four notes were in tune, as before.",
                 "It is marked on the same note as before."
             ]
         );
         assert_eq!(
-            again(&before, &after([300.0, 0.0, -200.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([300.0, 0.0, -200.0, 0.0]), 4..8),
             [
                 "Two of its four notes were in tune this time, but not the same ones as before.",
                 "Two of its four notes are marked this time, where one was before."
             ]
         );
         assert_eq!(
-            again(&before, &after([0.0, 0.0, -200.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([0.0, 0.0, -200.0, 0.0]), 4..8),
             [
                 "Three of its four notes were in tune this time, where two were before.",
                 "One of its four notes is marked this time, but not the same one as before."
             ]
         );
         assert_eq!(
-            again(&before, &after([80.0, 80.0, 80.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([80.0, 80.0, 80.0, 0.0]), 4..8),
             [
                 "One of its four notes was in tune this time, where two were before.",
                 "Its mark is gone."
@@ -798,26 +825,26 @@ mod tests {
         );
         // A run of two, and of one.
         assert_eq!(
-            again(&before, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
+            again(&before, &before.relative, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
             ["Both its notes were in tune this time, where one was before."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(300.0), Some(300.0)], Some(6..8)), 6..8),
+            again(&before, &before.relative, &judged(&[Some(300.0), Some(300.0)], Some(6..8)), 6..8),
             [
                 "Neither of its notes was in tune this time, where one was before.",
                 "It has two marks."
             ]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0)], Some(5..6)), 5..6),
+            again(&before, &before.relative, &judged(&[Some(0.0)], Some(5..6)), 5..6),
             ["Its note was in tune this time, where it was not before.", "Its mark is gone."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0)], Some(4..5)), 4..5),
+            again(&before, &before.relative, &judged(&[Some(0.0)], Some(4..5)), 4..5),
             ["Its note was in tune, as before."]
         );
         // Not heard, nothing.
-        assert!(again(&before, &judged(&[None; 4], Some(4..8)), 4..8).is_empty());
+        assert!(again(&before, &before.relative, &judged(&[None; 4], Some(4..8)), 4..8).is_empty());
     }
 
     #[test]
@@ -830,7 +857,7 @@ mod tests {
         let after = judged(&[Some(200.0); 3], Some(5..8));
         assert_eq!(kinds(&after), [(MarkKind::Verse, 5, 7)]);
         assert_eq!(
-            again(&before, &after, 5..8),
+            again(&before, &before.relative, &after, 5..8),
             [
                 "None of its three notes were in tune, as before.",
                 "It is marked on the same notes as before."
@@ -846,6 +873,17 @@ mod tests {
             told_again(&after, &chant),
             ["These notes were sung together a whole tone above your key (+200 cents), as if they began on another note."]
         );
+        // So is a part that begins the verse.
+        let begun = Verdict {
+            marks: vec![Mark {
+                kind: MarkKind::Verse,
+                first: 4,
+                last: 6,
+                cents: Some(200.0),
+            }],
+            ..after.clone()
+        };
+        assert!(told_again(&begun, &chant)[0].starts_with("These notes were sung together"));
         // The whole verse is told of as the verse, and a mark on a note as ever.
         assert_eq!(told_again(&before, &chant), told(&before));
         let missing = Verdict {
@@ -890,11 +928,11 @@ mod tests {
         let before = judged(&cents, None);
         assert_eq!(before.marks.iter().map(|m| m.first).collect::<Vec<_>>(), [5, 7]);
         assert_eq!(
-            again(&before, &judged(&[Some(0.0); 2], Some(6..8)), 6..8),
+            again(&before, &before.relative, &judged(&[Some(0.0); 2], Some(6..8)), 6..8),
             ["Both its notes were in tune this time, where one was before.", "Its mark is gone."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0); 4], Some(4..8)), 4..8),
+            again(&before, &before.relative, &judged(&[Some(0.0); 4], Some(4..8)), 4..8),
             [
                 "All four of its notes were in tune this time, where two were before.",
                 "Its two marks are gone."
@@ -913,7 +951,7 @@ mod tests {
         let after = judged(&[Some(0.0); 4], Some(4..8));
         assert_eq!(after.in_tune, 4);
         assert_eq!(
-            again(&before, &after, 4..8),
+            again(&before, &before.relative, &after, 4..8),
             [
                 "All four of its notes were in tune this time, where none were before.",
                 "Its mark is gone."
@@ -923,7 +961,7 @@ mod tests {
         let after = judged(&cents[4..], Some(4..8));
         assert_eq!(after.in_tune, 0);
         assert_eq!(
-            again(&before, &after, 4..8),
+            again(&before, &before.relative, &after, 4..8),
             [
                 "None of its four notes were in tune, as before.",
                 "It is marked on the same notes as before."
@@ -938,42 +976,42 @@ mod tests {
         assert!(before.marks.is_empty());
         let after = |c: [f32; 4]| judged(&c.map(Some), Some(4..8));
         assert_eq!(
-            again(&before, &after([80.0, 80.0, 0.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([80.0, 80.0, 0.0, 0.0]), 4..8),
             ["Two of its four notes were in tune this time, but not the same ones as before."]
         );
         assert_eq!(
-            again(&before, &after([80.0, 0.0, 80.0, 0.0]), 4..8),
+            again(&before, &before.relative, &after([80.0, 0.0, 80.0, 0.0]), 4..8),
             ["Two of its four notes were in tune this time, but not the same ones as before."]
         );
         assert_eq!(
-            again(&before, &after([80.0, 0.0, 80.0, 80.0]), 4..8),
+            again(&before, &before.relative, &after([80.0, 0.0, 80.0, 80.0]), 4..8),
             ["One of its four notes was in tune this time, where two were before."]
         );
         assert_eq!(
-            again(&before, &after([80.0; 4]), 4..8),
+            again(&before, &before.relative, &after([80.0; 4]), 4..8),
             ["None of its four notes were in tune this time, where two were before."]
         );
         assert_eq!(
-            again(&before, &after([0.0, 0.0, 80.0, 80.0]), 4..8),
+            again(&before, &before.relative, &after([0.0, 0.0, 80.0, 80.0]), 4..8),
             ["Two of its four notes were in tune, as before."]
         );
         // Where none, both or all were.
         let flat = judged(&[[Some(0.0); 4], [Some(80.0); 4]].concat(), None);
         assert_eq!(
-            again(&flat, &after([0.0; 4]), 4..8),
+            again(&flat, &flat.relative, &after([0.0; 4]), 4..8),
             ["All four of its notes were in tune this time, where none were before."]
         );
         let tuned = judged(&[Some(0.0); 8], None);
         assert_eq!(
-            again(&tuned, &after([0.0, 80.0, 0.0, 0.0]), 4..8),
+            again(&tuned, &tuned.relative, &after([0.0, 80.0, 0.0, 0.0]), 4..8),
             ["Three of its four notes were in tune this time, where all were before."]
         );
         assert_eq!(
-            again(&tuned, &judged(&[Some(80.0), Some(0.0)], Some(6..8)), 6..8),
+            again(&tuned, &tuned.relative, &judged(&[Some(80.0), Some(0.0)], Some(6..8)), 6..8),
             ["One of its two notes was in tune this time, where both were before."]
         );
         assert_eq!(
-            again(&flat, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
+            again(&flat, &flat.relative, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
             ["Both its notes were in tune this time, where neither was before."]
         );
     }
@@ -985,42 +1023,115 @@ mod tests {
         assert_eq!(before.outcome, Outcome::Heard);
         let after = |c: [f32; 4]| judged(&c.map(Some), Some(4..8));
         assert_eq!(
-            again(&before, &after([0.0; 4]), 4..8),
+            again(&before, &before.relative, &after([0.0; 4]), 4..8),
             ["All four of its notes were in tune this time, where both heard before were."]
         );
         assert_eq!(
-            again(&before, &after([80.0, 0.0, 0.0, 80.0]), 4..8),
+            again(&before, &before.relative, &after([80.0, 0.0, 0.0, 80.0]), 4..8),
             ["Two of its four notes were in tune this time, where both heard before were."]
         );
         assert_eq!(
-            again(&before, &after([0.0, 0.0, 0.0, 80.0]), 4..8),
+            again(&before, &before.relative, &after([0.0, 0.0, 0.0, 80.0]), 4..8),
             ["Three of its four notes were in tune this time, where both heard before were."]
         );
         let one = judged(&[[Some(0.0); 4], [Some(80.0), None, None, Some(0.0)]].concat(), None);
         assert_eq!(
-            again(&one, &after([0.0; 4]), 4..8),
+            again(&one, &one.relative, &after([0.0; 4]), 4..8),
             ["All four of its notes were in tune this time, where one of the two heard before was."]
         );
         let three = judged(&[[Some(0.0); 4], [Some(80.0), Some(80.0), None, Some(80.0)]].concat(), None);
         assert_eq!(
-            again(&three, &after([0.0; 4]), 4..8),
+            again(&three, &three.relative, &after([0.0; 4]), 4..8),
             ["All four of its notes were in tune this time, where none of the three heard before were."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0), Some(0.0)], Some(5..7)), 5..7),
+            again(&before, &before.relative, &judged(&[Some(0.0), Some(0.0)], Some(5..7)), 5..7),
             ["Both its notes were in tune this time, where neither was heard before."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
+            again(&before, &before.relative, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
             ["Both its notes were in tune this time, where the one heard before was."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0)], Some(5..6)), 5..6),
+            again(&before, &before.relative, &judged(&[Some(0.0)], Some(5..6)), 5..6),
             ["Its note was in tune this time, where it was not heard before."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(80.0)], Some(5..6)), 5..6),
+            again(&before, &before.relative, &judged(&[Some(80.0)], Some(5..6)), 5..6),
             ["Its note was not in tune this time, where it was not heard before."]
+        );
+        // Out of tune now, it is not as before of notes not heard then.
+        assert_eq!(
+            again(&before, &before.relative, &after([80.0; 4]), 4..8),
+            ["None of its four notes were in tune this time, where both heard before were."]
+        );
+        let flat = judged(&[[Some(0.0); 4], [Some(80.0), None, None, Some(80.0)]].concat(), None);
+        assert_eq!(
+            again(&flat, &flat.relative, &after([80.0; 4]), 4..8),
+            ["None of its four notes were in tune this time, where neither heard before was."]
+        );
+        assert_eq!(
+            again(&flat, &flat.relative, &after([0.0; 4]), 4..8),
+            ["All four of its notes were in tune this time, where neither heard before was."]
+        );
+        // Its verse marked as not heard, then heard.
+        let unheard = judged(&[[Some(0.0); 4], [None; 4]].concat(), None);
+        assert_eq!(unheard.outcome, Outcome::Heard);
+        assert_eq!(
+            again(&unheard, &unheard.relative, &after([80.0; 4]), 4..8),
+            [
+                "None of its four notes were in tune this time, where none were heard before.",
+                "Its mark is gone."
+            ]
+        );
+        let late = judged(&[[Some(0.0); 4], [Some(0.0), Some(0.0), None, Some(80.0)]].concat(), None);
+        assert_eq!(
+            again(&late, &late.relative, &judged(&[Some(0.0), Some(0.0)], Some(6..8)), 6..8),
+            ["Both its notes were in tune this time, where the one heard before was not."]
+        );
+        assert_eq!(
+            again(&late, &late.relative, &after([0.0; 4]), 4..8),
+            ["All four of its notes were in tune this time, where two of the three heard before were."]
+        );
+        let three = judged(&[[Some(0.0); 4], [Some(0.0), Some(0.0), None, Some(0.0)]].concat(), None);
+        assert_eq!(
+            again(&three, &three.relative, &after([0.0; 4]), 4..8),
+            ["All four of its notes were in tune this time, where all three heard before were."]
+        );
+    }
+
+    #[test]
+    fn marks_on_the_same_notes_are_told_apart_by_which_way_they_are() {
+        // The second verse marked a tone sharp, then sung a tone flat: marked on the same notes,
+        // the other way.
+        let sharp = judged(&[[Some(0.0); 4], [Some(200.0); 4]].concat(), None);
+        assert_eq!(
+            again(&sharp, &sharp.relative, &judged(&[Some(-200.0); 4], Some(4..8)), 4..8),
+            [
+                "None of its four notes were in tune, as before.",
+                "It is marked on the same notes as before, but below your key this time, where it was above."
+            ]
+        );
+        let flat = judged(&[[Some(0.0); 4], [Some(-200.0); 4]].concat(), None);
+        assert_eq!(
+            again(&flat, &flat.relative, &judged(&[Some(200.0); 4], Some(4..8)), 4..8),
+            [
+                "None of its four notes were in tune, as before.",
+                "It is marked on the same notes as before, but above your key this time, where it was below."
+            ]
+        );
+        // Not heard where it was sung off.
+        let silent = judged(&[[Some(0.0); 4], [None; 4]].concat(), Some(0..8));
+        assert_eq!(
+            silent.marks.iter().map(|m| (m.kind, m.first, m.last)).collect::<Vec<_>>(),
+            [(MarkKind::VerseMissing, 4, 7)]
+        );
+        assert_eq!(
+            again(&sharp, &sharp.relative, &silent, 0..8),
+            [
+                "Four of its eight notes were in tune, as before.",
+                "It is marked on the same notes as before, but not for the same reason."
+            ]
         );
     }
 
@@ -1032,6 +1143,8 @@ mod tests {
         assert_eq!(of_its(0, 24, true), "Of its 24 notes, none were");
         assert_eq!(of_its(1, 24, false), "Of its 24 notes, one is");
         assert_eq!(of_its(24, 24, true), "Of its 24 notes, all were");
+        assert_eq!(of_its(5, 20, true), "Five of its twenty notes were");
+        assert_eq!(of_its(1, 21, true), "Of its 21 notes, one was");
         assert_eq!(where_before(12, 24, 24), ", where 12 were before");
         assert_eq!(where_before(12, 24, 20), ", where 12 of the 20 heard before were");
         assert_eq!(where_before(12, 14, 14), ", where twelve were before");
@@ -1042,15 +1155,20 @@ mod tests {
         let before = judged(&[None; 8], None);
         assert_ne!(before.outcome, Outcome::Heard);
         assert_eq!(
-            again(&before, &judged(&[Some(0.0); 4], Some(4..8)), 4..8),
+            again(&before, &before.relative, &judged(&[Some(0.0); 4], Some(4..8)), 4..8),
             ["All four of its notes were in tune."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(0.0), Some(300.0), Some(0.0), Some(0.0)], Some(4..8)), 4..8),
+            again(
+                &before,
+                &before.relative,
+                &judged(&[Some(0.0), Some(300.0), Some(0.0), Some(0.0)], Some(4..8)),
+                4..8
+            ),
             ["Three of its four notes were in tune.", "It has one mark."]
         );
         assert_eq!(
-            again(&before, &judged(&[Some(300.0)], Some(5..6)), 5..6),
+            again(&before, &before.relative, &judged(&[Some(300.0)], Some(5..6)), 5..6),
             ["Its note was not in tune.", "It has one mark."]
         );
     }
@@ -1064,7 +1182,7 @@ mod tests {
         let after = judged(&[Some(0.0), Some(300.0), Some(0.0), Some(0.0)], Some(0..4));
         assert_eq!(after.marks.len(), 1);
         assert_eq!(
-            again(&before, &after, 0..4),
+            again(&before, &before.relative, &after, 0..4),
             ["Three of its four notes were in tune, as before.", "It has one mark."]
         );
     }

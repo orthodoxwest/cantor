@@ -12,7 +12,7 @@
 //!
 //! A run of the chant sung again after a take ([`judge_again`]) is judged in the key the take
 //! was in there, given, with no drift: so a note of its first phrase may be marked too, and the
-//! part of a verse the run holds is marked as a verse is.
+//! part of a verse the run holds is marked as a verse when all of it was off together.
 
 use std::ops::Range;
 
@@ -233,13 +233,15 @@ pub fn judge_part(chant: &[Note], judged: usize, report: &Report) -> Verdict {
 /// Judges a scored take of `chant`'s notes `run` alone, sung again after a take of the whole
 /// chant in that take's key, `key_cents`: against that key, with no drift (a run is too short to
 /// read one from, and not sung long enough to drift), and with the cadences the whole chant has
-/// there. The key is given, so a note may be marked in the first phrase too. The run's notes of
-/// a verse, the whole of it or the part the run holds, are marked together as a verse is, so a
-/// phrase of a verse sung off together is marked as the verse was, though its recited notes are
-/// too short to be marked alone ([`crate::tell::told_again`] tells such a mark of its notes,
-/// not of the verse). The verdict's notes are the chant's, by index, those outside the run not
-/// heard; `report` scores the run's alone, from its first. A report that does not match them is
-/// not heard.
+/// there. The key is given, so a note may be marked in the first phrase too. A verse the run
+/// holds whole is marked as a take's is. The part of a verse it holds, of three notes heard or
+/// more, is marked together as a verse when all of them were off together the same way, so a
+/// phrase of a verse sung off is marked as the verse was, though its recited notes are too short
+/// to be marked alone ([`crate::tell::told_again`] tells such a mark of its notes, not of the
+/// verse); otherwise its notes are judged one at a time, as the take judged them. A part silent
+/// beside one heard is marked so. The verdict's notes are the chant's, by index, those outside
+/// the run not heard; `report` scores the run's alone, from its first. A report that does not
+/// match them is not heard.
 ///
 /// A key that is not a number (no key to sing it in) leaves the run not heard; a run that ends
 /// before it begins is empty.
@@ -307,7 +309,23 @@ fn judge_run(chant: &[Note], run: Range<usize>, report: &Report, key: Option<f32
         .map(|(i, e)| e.map(|e| fold(e - slope * (mid(&notes[i]) - t0))))
         .collect();
 
-    let mut marks = verse_marks(notes, results, &relative);
+    // Sung again, the part of a verse a run holds is marked as a verse only when all of it was
+    // off together: a phrase is too few notes for some of them to speak for the rest, which the
+    // take judged one at a time. The whole of a verse is marked as the take marks one.
+    let whole = |m: &Mark| {
+        let verse = notes[m.first].verse;
+        let (a, b) = (run.start + m.first, run.start + m.last);
+        (a == 0 || chant[a - 1].verse != verse) && chant.get(b + 1).is_none_or(|n| n.verse != verse)
+    };
+    let together = |m: &Mark| {
+        (m.first..=m.last)
+            .filter_map(|i| relative[i])
+            .all(|c| m.cents.is_some_and(|at| c.signum() == at.signum()) && c.abs() >= VERSE_NOTE_CENTS)
+    };
+    let mut marks: Vec<Mark> = verse_marks(notes, results, &relative)
+        .into_iter()
+        .filter(|m| !given || m.kind != MarkKind::Verse || whole(m) || together(m))
+        .collect();
     for i in 0..notes.len() {
         if marks.iter().any(|m| m.covers(i)) {
             continue;
@@ -903,9 +921,16 @@ mod tests {
         // Part of it too; and a part of another verse too little to be marked so is marked note by note.
         let v = judge_again(&notes(), 3..8, &report(&[Some(200.0); 5]), 0.0);
         assert_eq!(kinds(&v), [(MarkKind::Note, 3, 3), (MarkKind::Note, 4, 4), (MarkKind::Verse, 5, 7)]);
-        // A part not sung off together is not marked as a verse.
+        // A part not all sung off together is judged note by note, as the take judged it.
         let v = judge_again(&notes(), 5..8, &report(&[Some(200.0), Some(0.0), Some(0.0)]), 0.0);
         assert_eq!(kinds(&v), [(MarkKind::Note, 5, 5)]);
+        let v = judge_again(&notes(), 5..9, &report(&[Some(200.0), Some(200.0), Some(200.0), Some(0.0)]), 0.0);
+        assert_eq!(kinds(&v), [(MarkKind::Note, 5, 5), (MarkKind::Note, 6, 6), (MarkKind::Note, 7, 7)]);
+        let v = judge_again(&notes(), 5..9, &report(&[Some(200.0), Some(200.0), Some(90.0), Some(200.0)]), 0.0);
+        assert_eq!(kinds(&v).len(), 3, "{v:?}");
+        // A note not heard does not stop the rest being off together.
+        let v = judge_again(&notes(), 5..9, &report(&[Some(200.0), None, Some(200.0), Some(200.0)]), 0.0);
+        assert_eq!(kinds(&v), [(MarkKind::Verse, 5, 8)]);
         // Silent throughout, the run is not heard: a whole verse sung again is not marked missing.
         let v = judge_again(&notes(), 5..10, &report(&[None; 5]), 0.0);
         assert_eq!(v.outcome, Outcome::NotHeard);
@@ -931,7 +956,7 @@ mod tests {
                 let v = judge_again(&notes, run.clone(), &report(&cents[run.clone()]), key);
                 assert_eq!(kinds(&v), [(MarkKind::Verse, run.start, run.end - 1)], "{pulse} {run:?}");
                 assert_eq!(
-                    crate::tell::again(&take, &v, run.clone()),
+                    crate::tell::again(&take, &cents, &v, run.clone()),
                     [
                         format!("None of its {n} notes were in tune, as before."),
                         "It is marked on the same notes as before.".to_string()
@@ -939,6 +964,70 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_phrase_partly_in_tune_sung_again_as_before_is_marked_as_the_take_marked_it() {
+        // A hymn's phrase, two of its three notes a tone sharp: the take marks them one at a
+        // time, and so does the phrase sung again the same, leaving the third in tune.
+        let hymn = crate::notes_from_gabc("(c4) Te(g) lu(h)cis(j) an(i)te(h) (,) ter(g)mi(h)num(g) (::)", 0.5);
+        let mut cents = vec![Some(0.0); hymn.len()];
+        cents[5] = Some(200.0);
+        cents[6] = Some(200.0);
+        let take = judge(&hymn, &report(&cents));
+        assert_eq!(kinds(&take), [(MarkKind::Note, 5, 5), (MarkKind::Note, 6, 6)]);
+        let again = judge_again(&hymn, 5..8, &report(&cents[5..]), take.key_cents.unwrap());
+        assert_eq!(kinds(&again), kinds(&take));
+        // The psalm's second phrase, all but its final sharp, at every speed.
+        for pulse in [0.38, 0.5, 0.65] {
+            let notes = crate::notes_from_gabc(PSALM, pulse);
+            let cents: Vec<Option<f32>> = (0..notes.len())
+                .map(|i| Some(if (8..12).contains(&i) { 200.0 } else { 0.0 }))
+                .collect();
+            let take = judge(&notes, &report(&cents));
+            let again = judge_again(
+                &notes,
+                8..14,
+                &report(&cents[8..14]),
+                key_at(&take, &report(&cents), 8..14).unwrap(),
+            );
+            assert_eq!(kinds(&again), kinds(&take), "{pulse}");
+        }
+    }
+
+    #[test]
+    fn a_take_that_sank_sung_again_the_same_is_told_as_before() {
+        // Sinking 50 cents a second: the take is in tune along its drift, but the run sung again
+        // the same, in the key the take had sunk to at its middle, sinks off it at either end.
+        let cents: Vec<Option<f32>> = (0..10).map(|i| Some(-30.0 * i as f32)).collect();
+        let take = judge(&notes(), &report(&cents));
+        assert!(!take.steady && take.in_tune == 10, "{take:?}");
+        let key = key_at(&take, &report(&cents), 5..10).unwrap();
+        let again = judge_again(&notes(), 5..10, &report(&cents[5..]), key);
+        assert_eq!(again.in_tune, 3);
+        // The take's notes are read in that key too, so the same singing is in tune the same.
+        assert_eq!(
+            crate::tell::again(&take, &cents, &again, 5..10),
+            ["Three of its five notes were in tune, as before."]
+        );
+    }
+
+    #[test]
+    fn a_long_run_counts_its_notes_in_figures_and_its_marks_in_words() {
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        let take = judge(&notes, &report(&vec![Some(0.0); notes.len()]));
+        let mut cents = vec![Some(0.0); notes.len()];
+        cents[13] = Some(200.0);
+        cents[24] = Some(200.0);
+        let again = judge_again(&notes, 0..notes.len(), &report(&cents), 0.0);
+        assert_eq!(again.marks.len(), 2);
+        assert_eq!(
+            crate::tell::again(&take, &vec![Some(0.0); notes.len()], &again, 0..notes.len()),
+            [
+                "Of its 30 notes, 28 were in tune this time, where all were before.",
+                "It has two marks."
+            ]
+        );
     }
 
     #[test]
@@ -974,8 +1063,6 @@ mod tests {
         let r = report(&[None, None, Some(140.0), Some(170.0), Some(150.0)]);
         assert_eq!(key_at(&v, &r, 2..5), Some(150.0));
         assert_eq!(key_at(&v, &r, 2..4), Some(155.0));
-        v.relative = vec![Some(0.0), Some(0.0), Some(10.0), None, Some(-30.0), Some(5.0)];
-        let r = report(&[Some(100.0), Some(100.0), Some(160.0), Some(900.0), Some(120.0), Some(155.0)]);
         // Drifted past a tritone, the key folds as the judge's does.
         v.key_cents = Some(550.0);
         v.relative = vec![Some(0.0)];
