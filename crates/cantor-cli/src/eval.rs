@@ -87,23 +87,22 @@
 //! is of, each heard from the take's own frames over the run and half a second either side, in
 //! the key the take was in there (its key moved along its drift line), and compared with the
 //! take: no mark it does not deserve; no run the take heard enough of to judge left unheard;
-//! and, where the two are judged alike, the same note marks past the first phrase (save under a
-//! verse's mark, as the run's part of a verse the take marked is judged as a verse), verse marks
-//! on a verse the run holds whole, and its cadences placed and called alike. A fault planted in a
-//! run that the take caught must be caught sung again too wherever the run's frames agree on the
-//! note, as a mark on a note alone needs; and the run's part of a verse the take marked off
-//! together must be marked so again wherever it was planted so and three of its notes were heard,
-//! however short they are, as a psalm phrase's recited notes are. Sung as before, a run past the
-//! first phrase that heard the notes the take heard must be told so, in the same words as beside
-//! itself. `student-notes` sings a last phrase all sharp, and one two-thirds sharp ending in tune,
-//! in verses otherwise in tune, which the take marks a note at a time and the run must too. A run
-//! sung again does not drift, so a
-//! whole verse of a take that sank lies from the take's errors along its line by what it sank
-//! there; its words read the take's notes in the run's key, so it is told it was in tune as
-//! before. Sung again in a key given, a
-//! first phrase may be marked where a take never is: under the student and wrong gates the
-//! faults planted there are caught as a take's are, so `student-notes` and
-//! `control-wrong-singer` plant one there, flat and sharp. Every suite is gated on it; how
+//! and, where the two are judged alike, the same note marks past the first phrase (save under
+//! the take's verse mark, as the run's part of a verse the take marked is judged as a verse),
+//! verse marks on a verse the run holds whole, and its cadences placed and called alike. A
+//! fault planted in a run that the take caught must be caught sung again too wherever the run's
+//! frames agree on the note, as a mark on a note alone needs; and the run's part of a verse the
+//! take marked off together must be marked so again wherever it was planted so and three of
+//! its notes were heard, however short they are, as a psalm phrase's recited notes are. Sung as
+//! before, a run past the first phrase that heard the notes the take heard must be told so, in
+//! the same words as beside itself. `student-notes` sings a last phrase all sharp, and one
+//! two-thirds sharp ending in tune, in verses otherwise in tune, which the take marks a note at
+//! a time and the run must too. A run sung again does not drift, so a whole verse of a take
+//! that sank lies from the take's errors along its line by what it sank there; its words read
+//! the take's notes in the run's key, so it is told it was in tune as before. Sung again in a
+//! key given, a first phrase may be marked where a take never is: under the student and wrong
+//! gates the faults planted there are caught as a take's are, so `control-wrong-singer` plants
+//! one sharp and one flat there, and `student-notes` one flat. Every suite is gated on it; how
 //! many faults the runs hold is fixed, and how far a note's error sung again lies from its error
 //! in the take is held, by the baseline, and a table counts what each suite's runs sung again
 //! were judged. Not covered: a run heard in a take of its own, with its own loudness floor and
@@ -737,19 +736,9 @@ impl AgainMetrics {
                 self.dropped += u32::from(deserved(&part, &take.planted) && heard >= 3 && !marked);
             }
             self.otherwise += u32::from(again_otherwise(&take.notes, v, &take.verdict, run.clone()));
-            // Beside itself a note it did not hear is one not heard before, so a run that heard
-            // otherwise than the take is not told as beside itself.
-            let alike = run
-                .clone()
-                .all(|i| take.report.notes[i].cents.is_some() == again.report.notes[i - run.start].cents.is_some());
-            if alike && run.clone().all(|i| take.notes[i].phrase > 0) {
-                let mut own = vec![None; take.notes.len()];
-                for (k, r) in again.report.notes.iter().enumerate() {
-                    own[run.start + k] = r.cents;
-                }
-                let itself = cantor_core::again(v, &own, v, run.clone());
-                self.told_otherwise += u32::from(again.summary != itself);
-            }
+            let taken: Vec<Option<f32>> = take.report.notes.iter().map(|r| r.cents).collect();
+            let heard: Vec<Option<f32>> = again.report.notes.iter().map(|r| r.cents).collect();
+            self.told_otherwise += u32::from(told_otherwise(&take.notes, &taken, &heard, v, &again.summary, run.clone()));
             for i in run {
                 if let (Some(a), Some(w)) = (v.relative[i], take.verdict.relative[i]) {
                     self.apart_cents = self.apart_cents.max(fold(a - w).abs());
@@ -759,19 +748,36 @@ impl AgainMetrics {
     }
 }
 
+/// Whether a run of `notes` past the first phrase sung again, heard `heard` off the score from its
+/// first note and judged `again`, was told otherwise (`said`) than beside itself, though it heard
+/// the notes the take heard (`taken`, by the chant's index): sung from the take's own frames, it
+/// was sung as before. Beside itself a note it did not hear is one not heard before, so a run
+/// that heard otherwise than the take is not held to its words beside itself.
+fn told_otherwise(
+    notes: &[Note],
+    taken: &[Option<f32>],
+    heard: &[Option<f32>],
+    again: &Verdict,
+    said: &[String],
+    run: Range<usize>,
+) -> bool {
+    let alike = run.clone().all(|i| taken[i].is_some() == heard[i - run.start].is_some());
+    if !alike || run.clone().any(|i| notes[i].phrase == 0) {
+        return false;
+    }
+    let mut own = vec![None; notes.len()];
+    own[run.clone()].copy_from_slice(heard);
+    said != cantor_core::again(again, &own, again, run)
+}
+
 /// Whether a run of `notes` sung again (`again`) was judged otherwise than the same notes in
 /// the take (`whole`), where the two are judged alike: other note marks past the first phrase
-/// (where a take is never marked), save on a note a verse mark of either covers (sung again,
-/// the part of a verse the take marked is judged as a verse alone, so it may be marked note by
-/// note where the whole verse was not, and a whole verse, read with no drift, may be marked where
-/// the take marked its notes); other verse marks on a verse the run holds whole; or the cadences
-/// inside it placed or called otherwise (see [`contradicts`]).
+/// (where a take is never marked), save on a note the take's verse mark covers (sung again, the
+/// part of a verse the take marked is judged as a verse alone, so it may be marked note by note
+/// where the whole verse was not); other verse marks on a verse the run holds whole; or the
+/// cadences inside it placed or called otherwise (see [`contradicts`]).
 fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
-    let in_verse = |i: usize| {
-        [again, whole]
-            .iter()
-            .any(|v| v.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i)))
-    };
+    let in_verse = |i: usize| whole.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i));
     let noted = |v: &Verdict| -> Vec<usize> {
         v.marks
             .iter()
@@ -2185,7 +2191,7 @@ mod tests {
     }
 
     #[test]
-    fn a_note_mark_under_a_verse_mark_of_either_is_not_judged_otherwise_sung_again() {
+    fn a_note_mark_under_the_take_s_verse_mark_is_not_judged_otherwise_sung_again() {
         // A verse of four notes past the first phrase (2 to 5), and a run of its middle two.
         let notes = phrased(&[0, 0, 2, 2, 2, 2]);
         let mark = |kind, first, last| Mark {
@@ -2207,15 +2213,55 @@ mod tests {
         let verse = marked(vec![mark(MarkKind::Verse, 2, 5)]);
         let noted = marked(vec![mark(MarkKind::Note, 3, 3), mark(MarkKind::Note, 4, 4)]);
         let part = marked(vec![mark(MarkKind::Verse, 3, 4)]);
-        // The take's verse mark over the run's notes marked one at a time, and the run's mark
-        // over the part of it it holds where the take marked them so.
+        // The take's verse mark over the run's notes marked one at a time; but the run's mark
+        // over the part of a verse where the take marked its notes so, as the judge never marks
+        // a part sung again but under the take's mark, is judged otherwise.
         assert!(!again_otherwise(&notes, &noted, &verse, 3..5));
-        assert!(!again_otherwise(&notes, &part, &noted, 3..5));
+        assert!(again_otherwise(&notes, &part, &noted, 3..5));
         // Other note marks with no verse mark over them are.
         assert!(again_otherwise(&notes, &marked(vec![mark(MarkKind::Note, 3, 3)]), &noted, 3..5));
         // So is another verse mark on the verse the run holds whole, but not on the part it holds.
         assert!(again_otherwise(&notes, &marked(Vec::new()), &verse, 2..6));
         assert!(!again_otherwise(&notes, &marked(Vec::new()), &part, 3..5));
+    }
+
+    #[test]
+    fn a_run_past_the_first_phrase_that_heard_as_the_take_did_is_held_to_its_words_beside_itself() {
+        // Four notes of a verse past the first phrase, sung again all in tune.
+        let notes = phrased(&[0, 0, 2, 2, 2, 2]);
+        let again = Verdict {
+            outcome: Outcome::Heard,
+            key_cents: Some(0.0),
+            drift_cents: 0.0,
+            steady: true,
+            marks: Vec::new(),
+            relative: [vec![None; 2], vec![Some(0.0); 4]].concat(),
+            in_tune: 4,
+            cadences: Vec::new(),
+        };
+        let taken = [Some(0.0); 6];
+        let heard = [Some(0.0); 4];
+        let said = |s: &str| vec![s.to_string()];
+        let as_before = said("All four of its notes were in tune, as before.");
+        assert!(!told_otherwise(&notes, &taken, &heard, &again, &as_before, 2..6));
+        let otherwise = said("All four of its notes were in tune this time, where none were before.");
+        assert!(told_otherwise(&notes, &taken, &heard, &again, &otherwise, 2..6));
+        // A run that missed a note the take heard, or heard one it missed, is not held to them.
+        let mut missed = again.clone();
+        missed.relative[3] = None;
+        assert!(!told_otherwise(
+            &notes,
+            &taken,
+            &[Some(0.0), None, Some(0.0), Some(0.0)],
+            &missed,
+            &otherwise,
+            2..6
+        ));
+        let mut unheard = taken;
+        unheard[3] = None;
+        assert!(!told_otherwise(&notes, &unheard, &heard, &again, &otherwise, 2..6));
+        // Nor is a run of the first phrase, which only a run sung again may be marked in.
+        assert!(!told_otherwise(&notes, &taken, &heard[..2], &again, &otherwise, 0..2));
     }
 
     /// How far a note's band may be from the eval's wherever the frames fall, in cents; the

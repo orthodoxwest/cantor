@@ -12,7 +12,7 @@
 //!
 //! A run of the chant sung again after a take ([`judge_again`]) is judged in the key the take
 //! was in there, given, with no drift: so a note of its first phrase may be marked too, and the
-//! part of a verse the run holds is marked as a verse when all of it was off together.
+//! part of a verse the run holds is marked as a verse only under the take's mark on that verse.
 
 use std::ops::Range;
 
@@ -995,8 +995,14 @@ mod tests {
                 .collect();
             let take = judge(&notes, &report(&cents));
             assert_eq!(kinds(&take), [(MarkKind::Verse, 14, 29)], "{pulse}");
-            // Each phrase of it sung again the same is marked so over the same notes, and told so.
-            for (run, n) in [(14..25, "eleven"), (25..30, "five")] {
+            // Each phrase of it sung again the same is marked so over the same notes, and told so,
+            // the note in tune told so too.
+            let first = if true_note.is_some() {
+                "One of its eleven notes was"
+            } else {
+                "None of its eleven notes were"
+            };
+            for (run, n) in [(14..25, first), (25..30, "None of its five notes were")] {
                 assert!(notes[run.clone()].iter().filter(|n| n.dur_s < MARK_MIN_S).count() >= 3);
                 let key = key_at(&take, &report(&cents), run.clone()).unwrap();
                 assert!(key.abs() < 1.0, "{key}");
@@ -1005,12 +1011,84 @@ mod tests {
                 assert_eq!(
                     crate::tell::again(&take, &cents, &v, run.clone()),
                     [
-                        format!("None of its {n} notes were in tune, as before."),
+                        format!("{n} in tune, as before."),
                         "It is marked on the same notes as before.".to_string()
                     ]
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_marked_verse_sung_again_partly_mended_is_told_its_notes_in_tune() {
+        // The psalm's second verse marked a tone sharp, sung again whole with its first notes in
+        // tune: still mostly off, so still marked, but its notes in tune are told so.
+        for pulse in [0.38, 0.5, 0.65] {
+            let notes = crate::notes_from_gabc(PSALM, pulse);
+            let cents: Vec<Option<f32>> = (0..notes.len()).map(|i| Some(if i >= 14 { 200.0 } else { 0.0 })).collect();
+            let take = judge(&notes, &report(&cents));
+            let key = key_at(&take, &report(&cents), 14..30).unwrap();
+            let mended: Vec<Option<f32>> = (14..30).map(|i| Some(if i < 18 { 0.0 } else { 200.0 })).collect();
+            let again = judge_again(&notes, 14..30, &report(&mended), key, &take);
+            assert_eq!(kinds(&again), [(MarkKind::Verse, 14, 29)], "{pulse}");
+            assert_eq!(
+                crate::tell::again(&take, &cents, &again, 14..30),
+                [
+                    "Four of its sixteen notes were in tune this time, where none were before.",
+                    "It is marked on the same notes as before."
+                ],
+                "{pulse}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_phrase_of_a_verse_the_take_marked_or_did_not_hear_sung_off_another_way_is_marked_as_the_verse() {
+        for pulse in [0.38, 0.5, 0.65] {
+            let notes = crate::notes_from_gabc(PSALM, pulse);
+            // The second verse marked a tone sharp, its first phrase sung again a tone flat.
+            let cents: Vec<Option<f32>> = (0..notes.len()).map(|i| Some(if i >= 14 { 200.0 } else { 0.0 })).collect();
+            let take = judge(&notes, &report(&cents));
+            let key = key_at(&take, &report(&cents), 14..25).unwrap();
+            let again = judge_again(&notes, 14..25, &report(&[Some(-200.0); 11]), key, &take);
+            assert_eq!(kinds(&again), [(MarkKind::Verse, 14, 24)], "{pulse}");
+            assert_eq!(
+                crate::tell::again(&take, &cents, &again, 14..25)[1],
+                "It is marked on the same notes as before, but below your key this time, where it was above."
+            );
+            // The first verse not heard in the take, its second phrase sung again a tone sharp: at
+            // the fastest speed the second verse's recited notes are too short to count, so the
+            // take is not heard at all.
+            let cents: Vec<Option<f32>> = (0..notes.len()).map(|i| (i >= 14).then_some(0.0)).collect();
+            let take = judge(&notes, &report(&cents));
+            if pulse < 0.5 {
+                assert_eq!(take.outcome, Outcome::NotHeard);
+                continue;
+            }
+            assert_eq!(kinds(&take), [(MarkKind::VerseMissing, 0, 13)], "{pulse}");
+            let key = key_at(&take, &report(&cents), 8..14).unwrap();
+            let again = judge_again(&notes, 8..14, &report(&[Some(200.0); 6]), key, &take);
+            assert_eq!(kinds(&again), [(MarkKind::Verse, 8, 13)], "{pulse}");
+            assert_eq!(
+                crate::tell::again(&take, &cents, &again, 8..14)[1],
+                "It is marked on the same notes as before, but above your key this time, where it was not heard."
+            );
+        }
+    }
+
+    #[test]
+    fn sung_again_a_take_stopped_short_marks_a_verse_only_over_the_notes_it_judged() {
+        // Stopped in the second verse, the take marks what it judged of it; a run within that is
+        // marked so, but one past it is judged a note at a time, as the notes past it were never
+        // judged with the rest.
+        let notes = crate::notes_from_gabc(PSALM, 0.5);
+        let cents: Vec<Option<f32>> = (0..25).map(|i| Some(if i >= 14 { 200.0 } else { 0.0 })).collect();
+        let take = judge_part(&notes, 25, &report(&cents));
+        assert_eq!(kinds(&take), [(MarkKind::Verse, 14, 24)]);
+        let within = judge_again(&notes, 20..25, &report(&[Some(200.0); 5]), 0.0, &take);
+        assert_eq!(kinds(&within), [(MarkKind::Verse, 20, 24)]);
+        let past = judge_again(&notes, 20..30, &report(&[Some(200.0); 10]), 0.0, &take);
+        assert!(past.marks.iter().all(|m| m.kind == MarkKind::Note), "{past:?}");
     }
 
     #[test]

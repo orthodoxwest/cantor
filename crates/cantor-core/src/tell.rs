@@ -161,8 +161,10 @@ pub fn summary(notes: &[Note], verdict: &Verdict) -> Vec<String> {
 /// The notes `run` sung again (`after`, as [`crate::judge::judge_again`] judges them) beside the
 /// same notes in the take they were sung after (judged `before`, its notes heard `before_cents`
 /// off the score, by the chant's index, as its report has them), in a sentence or two: which were
-/// in tune each time, then which were marked, when any are or were. A note is in tune, as the
-/// judge counts it, within [`IN_TUNE_CENTS`] of the key and under no mark. Each time it is read
+/// in tune each time, then which were marked, when any are or were. A note is in tune within
+/// [`IN_TUNE_CENTS`] of the key by its own error, as its band shows it, under a verse's mark
+/// too: a verse is marked when most of it is off, so some of it may be sung in tune, and a verse
+/// sung again partly mended is still marked. Each time a note is read
 /// against the key the run was sung in, with no drift, so the same singing is in tune the same
 /// both times; "before" is the take read so, which beside a take that drifted may not be the
 /// notes it showed in tune along its drift. One the take did not hear was neither in tune in it
@@ -190,14 +192,12 @@ pub fn again(before: &Verdict, before_cents: &[Option<f32>], after: &Verdict, ru
             .filter_map(|i| under(v, i).map(|m| (i, m.cents.map_or(0, |c| if c < 0.0 { -1 } else { 1 }))))
             .collect()
     };
-    let tuned = |v: &Verdict, error: &dyn Fn(usize) -> Option<f32>| -> Vec<usize> {
-        run.clone()
-            .filter(|&i| error(i).is_some_and(|c| c.abs() < IN_TUNE_CENTS) && under(v, i).is_none())
-            .collect()
+    let tuned = |error: &dyn Fn(usize) -> Option<f32>| -> Vec<usize> {
+        run.clone().filter(|&i| error(i).is_some_and(|c| c.abs() < IN_TUNE_CENTS)).collect()
     };
     let taken = |i: usize| before_cents.get(i).copied().flatten();
-    let now = (tuned(after, &|i| after.relative.get(i).copied().flatten()), marked(after));
-    let was = (before.outcome == Outcome::Heard).then(|| (tuned(before, &|i| taken(i).map(|c| fold(c - key))), marked(before)));
+    let now = (tuned(&|i| after.relative.get(i).copied().flatten()), marked(after));
+    let was = (before.outcome == Outcome::Heard).then(|| (tuned(&|i| taken(i).map(|c| fold(c - key))), marked(before)));
     let heard = run.clone().filter(|&i| taken(i).is_some()).count();
     let same = |k: usize| if k == 1 { "the same one" } else { "the same ones" };
     let mut out = vec![if n == 1 {
@@ -959,30 +959,38 @@ mod tests {
     }
 
     #[test]
-    fn a_note_under_a_mark_is_not_in_tune_whatever_its_own_error() {
+    fn a_note_under_a_verse_s_mark_is_in_tune_by_its_own_error() {
         // The second verse marked a whole tone high, one of its notes sung in tune all the same.
         let mut cents = [[Some(0.0); 4], [Some(200.0); 4]].concat();
         cents[5] = Some(20.0);
         let before = judged(&cents, None);
         assert_eq!(before.marks.len(), 1);
-        assert_eq!(before.in_tune, 4);
         let after = judged(&[Some(0.0); 4], Some(4..8));
-        assert_eq!(after.in_tune, 4);
         assert_eq!(
             again(&before, &before.relative, &after, 4..8),
             [
-                "All four of its notes were in tune this time, where none were before.",
+                "All four of its notes were in tune this time, where one was before.",
                 "Its mark is gone."
             ]
         );
-        // Sung again so too, it is no more in tune.
+        // Sung again so too, it is in tune as before, under the same mark.
         let after = judged(&cents[4..], Some(4..8));
-        assert_eq!(after.in_tune, 0);
         assert_eq!(
             again(&before, &before.relative, &after, 4..8),
             [
-                "None of its four notes were in tune, as before.",
+                "One of its four notes was in tune, as before.",
                 "It is marked on the same notes as before."
+            ]
+        );
+        // A note marked alone is too far off to be in tune.
+        let mut cents = [Some(0.0); 8];
+        cents[5] = Some(200.0);
+        let before = judged(&cents, None);
+        assert_eq!(
+            again(&before, &before.relative, &judged(&cents[4..], Some(4..8)), 4..8),
+            [
+                "Three of its four notes were in tune, as before.",
+                "It is marked on the same note as before."
             ]
         );
     }

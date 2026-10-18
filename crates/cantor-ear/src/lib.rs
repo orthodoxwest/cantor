@@ -539,8 +539,8 @@ mod tests {
         assert!(json.contains("\"heard_fraction\""));
         // Its notes 1 to 3 sung again are judged as the ear's own judge_again_gabc judges them,
         // in the key the core reads the take was in there, from the take's verdict and report;
-        // the same take is handed to both. The take is told of as marked on its note 2, so the
-        // run is told beside it, not beside itself.
+        // the same take is handed to both. The take is told of as sung a tone sharp on its note
+        // 2, and marked there, so the run is told beside it, not beside itself.
         let judged = judge_gabc(gabc, 0.5, 1.0, &whole, None);
         let mut take = judged.verdict.clone();
         take.marks.push(cantor_core::Mark {
@@ -549,15 +549,18 @@ mod tests {
             last: 2,
             cents: Some(200.0),
         });
+        take.relative[2] = take.relative[2].map(|c| c + 200.0);
+        let mut sharp = judged.report.clone();
+        sharp.notes[2].cents = sharp.notes[2].cents.map(|c| c + 200.0);
         let taken = Before {
             verdict: take.clone(),
-            report: judged.report.clone(),
+            report: sharp.clone(),
         };
         let read = |take: &Verdict| {
             format!(
                 "{{\"verdict\":{},\"report\":{}}}",
                 serde_json::to_string(take).unwrap(),
-                serde_json::to_string(&judged.report).unwrap()
+                serde_json::to_string(&sharp).unwrap()
             )
         };
         let before = read(&take);
@@ -599,7 +602,7 @@ mod tests {
             let (a, w) = (want.verdict.relative[i].expect("heard"), judged.verdict.relative[i].expect("heard"));
             assert!((a - w).abs() < 30.0, "note {i}: {a} sung again, {w} in the take");
         }
-        let cents: Vec<Option<f32>> = judged.report.notes.iter().map(|r| r.cents).collect();
+        let cents: Vec<Option<f32>> = sharp.notes.iter().map(|r| r.cents).collect();
         assert_eq!(want.summary, cantor_core::again(&take, &cents, &want.verdict, 1..4));
         assert_eq!(
             want.summary,
