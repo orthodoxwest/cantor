@@ -58,6 +58,58 @@ export interface Judged {
    * `last`, with its note furthest off, the mark on its notes that tells of it already if one
    * does, and in words; from the ear only. */
   endings?: Array<{ first: number; last: number; note: number; mark: number | null; words: string }>;
+  /** A psalm sung to a tone, verse by verse, as the core lays it out; none for another chant, or
+   * a take not heard; from the ear only. */
+  grid?: Grid | null;
+}
+
+/** A part of a psalm tone, as cantor-core's `Part` serializes. */
+export type Part = "whole" | "flex" | "mediant" | "termination";
+
+/** One part of one verse, as cantor-core's grid `Cell` serializes: its notes `first` to `last`,
+ * its ending's notes as the judge placed them, how the judge called it and in words, the note of
+ * its ending furthest off and how far in cents, when called, and the endings off pitch inside it
+ * before its own (`inner`). `was`, drawn only, is the take's cell where a run sung again called
+ * it anew (grid.ts `gridWith`). */
+export interface GridCell {
+  part: Part;
+  first: number;
+  last: number;
+  called: "on-pitch" | "off-pitch" | "unclear" | "stopped" | "unsung" | "no-ending";
+  ending: [number, number] | null;
+  note: number | null;
+  cents: number | null;
+  words: string;
+  inner?: GridInner[];
+  was?: GridCell;
+}
+
+/** An ending off pitch inside a part, before the part's own, as cantor-core's grid `Inner`
+ * serializes: its notes, its note furthest off and how far, and in words. */
+export interface GridInner {
+  first: number;
+  last: number;
+  note: number | null;
+  cents: number | null;
+  words: string;
+}
+
+/** One psalm verse, as cantor-core's grid `Row` serializes: the chant's verse, its place among
+ * the psalm's verses from 1, its notes, and a cell for each column (none where it has no such
+ * part). */
+export interface GridRow {
+  verse: number;
+  number: number;
+  first: number;
+  last: number;
+  cells: Array<GridCell | null>;
+}
+
+/** A psalm verse by verse, as cantor-core's `Grid` serializes: its parts, named, and its verses
+ * judged. */
+export interface Grid {
+  columns: Array<{ part: Part; name: string }>;
+  rows: GridRow[];
 }
 
 /** The height of the strip under each line, in the score's units (pixels). */

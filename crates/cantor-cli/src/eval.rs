@@ -29,7 +29,8 @@
 //! - `student`: planted faults a teacher hears across the room are marked: at least 95% of
 //!   them caught, nothing planted 100 cents or more off called in tune, the key found within
 //!   50 cents, and drift named where it was planted. No cadence told wrong (called off with
-//!   every note planted within 50 cents, or on with one planted 150 off), and 80% judged.
+//!   every note planted within 50 cents, or with the note it tells of not planted 50 cents off
+//!   the way it tells, or on with one planted 150 off), and 80% judged.
 //! - `silent`: the guide alone, singer silent. No take judged, no note heard, nothing in tune.
 //! - `wrong`: a wrong singer over a right guide is marked, as for `student`.
 //!
@@ -365,13 +366,15 @@ fn judged_otherwise(stopped: &Verdict, whole: &Verdict, judged: usize) -> bool {
 }
 
 /// Whether two verdicts' cadences are told otherwise: placed otherwise, or one called off
-/// pitch where the other is not. One on pitch one way and not clearly heard the other is not
-/// told otherwise, only not counted.
+/// pitch where the other is not, or off the other way, as the psalm's grid and the words of an
+/// ending say which way. One on pitch one way and not clearly heard the other is not told
+/// otherwise, only not counted.
 fn contradicts(a: &[Cadence], b: &[Cadence]) -> bool {
+    let off = |c: &Cadence| (c.on_pitch() == Some(false)).then(|| c.cents.is_some_and(|c| c > 0.0));
     a.len() != b.len()
         || a.iter()
             .zip(b)
-            .any(|(x, y)| (x.first, x.last) != (y.first, y.last) || (x.on_pitch() == Some(false)) != (y.on_pitch() == Some(false)))
+            .any(|(x, y)| (x.first, x.last) != (y.first, y.last) || off(x) != off(y))
 }
 
 /// How far behind the cursor a singer is taken to be, in seconds, each time a take is timed as
@@ -497,6 +500,15 @@ fn cadence_planted(c: &Cadence, notes: &[Note], planted: &[Planted]) -> (bool, b
     )
 }
 
+/// Whether a cadence called off pitch is told of the wrong way: the note its words and the
+/// psalm's grid tell of was not planted at least [`CADENCE_CLEAR_CENTS`] off the way they say.
+fn told_wrong_way(c: &Cadence, planted: &[Planted]) -> bool {
+    match (c.note, c.cents) {
+        (Some(note), Some(cents)) => planted[note].silent || fold(planted[note].cents) * cents.signum() < CADENCE_CLEAR_CENTS,
+        _ => false,
+    }
+}
+
 /// How the oracle's per-note pitch compares with the scorer's. It is never gated: it says
 /// where to look.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -593,7 +605,8 @@ struct Metrics {
     /// Cadences, and those the judge ruled on.
     cadences: u32,
     cadences_judged: u32,
-    /// Cadences called off pitch that were planted on it, or on pitch that were planted off.
+    /// Cadences called off pitch that were planted on it or are told of the wrong way, or on
+    /// pitch that were planted off.
     cadence_errors: u32,
     /// Cadences with a note planted flagrantly off, and the fraction of them called off (1
     /// when there were none); the rest were not judged, as one called on is a cadence error.
@@ -775,7 +788,8 @@ fn told_otherwise(
 /// (where a take is never marked), save on a note the take's verse mark covers (sung again, the
 /// part of a verse the take marked is judged as a verse alone, so it may be marked note by note
 /// where the whole verse was not); other verse marks on a verse the run holds whole; or the
-/// cadences inside it placed or called otherwise (see [`contradicts`]).
+/// cadences inside it placed or called otherwise, off pitch the other way included (see
+/// [`contradicts`]).
 fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
     let in_verse = |i: usize| whole.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i));
     let noted = |v: &Verdict| -> Vec<usize> {
@@ -946,7 +960,7 @@ impl Metrics {
                     m.cadences_judged += u32::from(c.on_pitch().is_some());
                     m.cadence_errors += u32::from(match c.on_pitch() {
                         Some(true) => off,
-                        Some(false) => clear,
+                        Some(false) => clear || told_wrong_way(c, &take.planted),
                         None => false,
                     });
                     m.cadence_faults += u32::from(off);

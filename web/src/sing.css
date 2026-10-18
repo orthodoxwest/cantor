@@ -614,3 +614,122 @@ body:not(.taking):has(#hear:not([hidden])) :is(#readout, .bar .spacer) {
 .marked .where {
   font-weight: 500;
 }
+/* A psalm sung to a tone, verse by verse, under the score (sing.ts drawGrid): a row for each
+   verse and a column for each part of the tone, each cell the core's words for how it ended, so
+   that the same fault at every mediant reads down its column. Each cell chooses its part of the
+   verse. */
+.grid {
+  border-top: 1px solid var(--gold-line);
+  margin-bottom: 1rem;
+}
+.grid h2 {
+  margin: 0.6rem 0 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--titulus);
+}
+.grid table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+.grid thead th {
+  padding: 0.2rem 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: left;
+  /* Larger text than a column holds breaks where the word may be hyphenated, not anywhere. */
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+.grid thead th:first-child {
+  width: 32%;
+  padding-left: 0;
+}
+/* "Termination" whole in its column on the narrowest phones, the verses' first words given as
+ * much room as it leaves. */
+@media (max-width: 379px) {
+  .grid thead th {
+    font-size: 0.75rem;
+  }
+  .grid thead th:last-child {
+    padding-right: 0;
+  }
+}
+@media (max-width: 329px) {
+  .grid thead th:first-child {
+    width: 28%;
+  }
+}
+.grid tbody tr {
+  border-top: 1px solid var(--border);
+}
+.grid tbody th {
+  padding: 0.45rem 0.4rem 0.45rem 0;
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.grid tbody th .n {
+  font-weight: 600;
+  color: var(--titulus);
+}
+.grid td {
+  padding: 0;
+  vertical-align: top;
+}
+.grid button.cell {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.45rem 0.3rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.grid button.cell:hover {
+  background: var(--wash);
+}
+.grid button.cell[aria-pressed="true"] {
+  background: var(--pressed);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+/* Off pitch in the colour of a mark's ring, too little heard in amber, the rest muted. */
+.grid .off-pitch .said {
+  font-weight: 500;
+  color: #b8452f;
+  color: light-dark(#b8452f, #ef8a73);
+}
+.grid .unclear .said {
+  color: var(--unsure);
+}
+.grid .stopped .said,
+.grid .unsung .said,
+.grid .no-ending .said {
+  color: var(--muted);
+}
+/* An ending off pitch inside a part, under the part's own, in the colour of a mark's ring. */
+.grid .inner {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: #b8452f;
+  color: light-dark(#b8452f, #ef8a73);
+}
+.grid .was {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
