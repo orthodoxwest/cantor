@@ -32,7 +32,7 @@ pub use pitch::{Frame, track};
 pub use ribbon::{Band, ribbon};
 pub use score::{NoteResult, Report, score};
 pub use synth::{Note, Planted, Profile, Take, render, render_take};
-pub use tell::{Ending, again, endings, summary, tell, told};
+pub use tell::{Ending, again, endings, summary, tell, told, told_again};
 pub use timeline::{notes_from_gabc, part_from_gabc};
 pub use voice::{Voice, VoiceError, sing};
 

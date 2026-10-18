@@ -83,14 +83,19 @@
 //!
 //! A run of a take may be sung again (`cantor_ear::judge_again_notes`): the singer chooses a
 //! phrase and sings it alone, judged in the take's key. Every take heard whole is sung again
-//! so in its first, second, middle and last phrases, each heard from the take's own frames
-//! over the phrase and half a second either side, in the key the take was in there (its key
-//! moved along its drift line), and compared with the take: no mark it does not deserve; no run
-//! the take heard enough of to judge left unheard; and, where the two are judged alike, the same
-//! note marks past the first phrase, verse marks on a verse the run holds whole, and its
-//! cadences placed and called alike. A fault planted in a run that the take caught must be
-//! caught sung again too, a verse the take marked whole included, wherever the run's frames
-//! agree on the note as a mark on a note alone needs. Sung again in a key given, a
+//! so in its first, second, middle and last phrases, and in the whole verse its middle phrase
+//! is of, each heard from the take's own frames over the run and half a second either side, in
+//! the key the take was in there (its key moved along its drift line), and compared with the
+//! take: no mark it does not deserve; no run the take heard enough of to judge left unheard;
+//! and, where the two are judged alike, the same note marks past the first phrase (save under a
+//! verse's mark, as the run's part of a verse is judged as a verse), verse marks on a verse the
+//! run holds whole, and its cadences placed and called alike. A fault planted in a run that the
+//! take caught must be caught sung again too wherever the run's frames agree on the note, as a
+//! mark on a note alone needs; and the run's part of a verse the take marked off together must
+//! be marked so again wherever it was planted so and three of its notes were heard, however
+//! short they are, as a psalm phrase's recited notes are. A run sung again does not drift, so a
+//! whole verse of a take that sank lies from the take's errors by what it sank there. Sung
+//! again in a key given, a
 //! first phrase may be marked where a take never is: under the student and wrong gates the
 //! faults planted there are caught as a take's are, so `student-notes` and
 //! `control-wrong-singer` plant one there, flat and sharp. Every suite is gated on it; how
@@ -615,23 +620,26 @@ struct Metrics {
 /// seconds.
 const AGAIN_PAD_S: f32 = 0.5;
 
-/// The runs of a take sung again: its first, second, middle and last phrases (each once), as
-/// the notes each spans.
+/// The runs of a take sung again: its first, second, middle and last phrases, and the whole
+/// verse its middle phrase is of (each once), as the notes each spans.
 fn again_runs(notes: &[Note]) -> Vec<Range<usize>> {
     let Some(last) = notes.last() else { return Vec::new() };
     let phrases = last.phrase as usize + 1;
-    let mut chosen = vec![0, 1, phrases / 2, phrases - 1];
-    chosen.retain(|&p| p < phrases);
-    chosen.sort_unstable();
-    chosen.dedup();
-    chosen
+    let span = |of: &dyn Fn(&Note) -> bool| {
+        let first = notes.iter().position(of)?;
+        let last = notes.iter().rposition(of)?;
+        Some(first..last + 1)
+    };
+    let mut runs: Vec<Range<usize>> = [0, 1, phrases / 2, phrases - 1]
         .into_iter()
-        .filter_map(|p| {
-            let first = notes.iter().position(|n| n.phrase as usize == p)?;
-            let last = notes.iter().rposition(|n| n.phrase as usize == p)?;
-            Some(first..last + 1)
-        })
-        .collect()
+        .filter(|&p| p < phrases)
+        .filter_map(|p| span(&|n: &Note| n.phrase as usize == p))
+        .collect();
+    let middle = notes.iter().find(|n| n.phrase as usize == phrases / 2).map(|n| n.verse);
+    runs.extend(middle.and_then(|verse| span(&|n: &Note| n.verse == verse)));
+    runs.sort_by_key(|r| (r.start, r.end));
+    runs.dedup();
+    runs
 }
 
 /// The numbers a suite's runs sung again are judged by: each of [`again_runs`] of every take
@@ -652,7 +660,10 @@ struct AgainMetrics {
     false_marks: u32,
     /// Faults planted in runs sung again and heard, as a take's are counted but in a first phrase
     /// too (see [`fault`]); those caught by a mark; and those the take caught and the run did
-    /// not, though its frames agreed on the note, as a mark on a note alone needs.
+    /// not, though its frames agreed on the note, as a mark on a note alone needs, besides each
+    /// part of a verse the take marked off together that the run holds and is not marked so
+    /// again, though it was planted so ([`deserved`]) and heard on three notes, as a verse's mark
+    /// needs, whatever their length.
     faults: u32,
     caught: u32,
     dropped: u32,
@@ -697,6 +708,21 @@ impl AgainMetrics {
                     self.first_caught += caught;
                 }
             }
+            for m in take.verdict.marks.iter().filter(|m| m.kind == MarkKind::Verse) {
+                let (first, last) = (m.first.max(run.start), m.last.min(run.end - 1));
+                if first > last {
+                    continue;
+                }
+                let part = Mark { first, last, ..*m };
+                let heard = (first..=last)
+                    .filter(|&i| again.report.notes[i - run.start].cents.is_some())
+                    .count();
+                let marked = v.marks.iter().any(|a| {
+                    let way = a.cents.zip(m.cents).is_some_and(|(a, m)| a.signum() == m.signum());
+                    a.kind == MarkKind::Verse && a.first <= first && a.last >= last && way
+                });
+                self.dropped += u32::from(deserved(&part, &take.planted) && heard >= 3 && !marked);
+            }
             self.otherwise += u32::from(again_otherwise(&take.notes, v, &take.verdict, run.clone()));
             for i in run {
                 if let (Some(a), Some(w)) = (v.relative[i], take.verdict.relative[i]) {
@@ -709,11 +735,16 @@ impl AgainMetrics {
 
 /// Whether a run of `notes` sung again (`again`) was judged otherwise than the same notes in
 /// the take (`whole`), where the two are judged alike: other note marks past the first phrase
-/// (where a take is never marked), save on a note a verse mark of the take covers (sung again
-/// part of a verse is judged note by note); other verse marks on a verse the run holds whole;
-/// or the cadences inside it placed or called otherwise (see [`contradicts`]).
+/// (where a take is never marked), save on a note a verse mark of either covers (sung again,
+/// the part of a verse the run holds is judged as a verse, and may be off together where the
+/// whole verse was not); other verse marks on a verse the run holds whole; or the cadences
+/// inside it placed or called otherwise (see [`contradicts`]).
 fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<usize>) -> bool {
-    let in_verse = |i: usize| whole.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i));
+    let in_verse = |i: usize| {
+        [again, whole]
+            .iter()
+            .any(|v| v.marks.iter().any(|m| m.kind != MarkKind::Note && m.covers(i)))
+    };
     let noted = |v: &Verdict| -> Vec<usize> {
         v.marks
             .iter()
@@ -721,10 +752,11 @@ fn again_otherwise(notes: &[Note], again: &Verdict, whole: &Verdict, run: Range<
             .map(|m| m.first)
             .collect()
     };
+    let held = |verse: u32| notes.iter().enumerate().all(|(i, n)| n.verse != verse || run.contains(&i));
     let verses = |v: &Verdict| -> Vec<(MarkKind, usize, usize)> {
         v.marks
             .iter()
-            .filter(|m| m.kind != MarkKind::Note && run.contains(&m.first) && run.contains(&m.last))
+            .filter(|m| m.kind != MarkKind::Note && run.contains(&m.first) && held(notes[m.first].verse))
             .map(|m| (m.kind, m.first, m.last))
             .collect()
     };
@@ -1552,12 +1584,13 @@ pub fn run(
         ));
     }
     if !again_md.is_empty() {
-        let note = "Runs sung again: the first, second, middle and last phrases of every take heard whole, heard again \
-             from the take's own sound and judged in the key the take was in there. Unheard: not heard again though \
-             the take heard enough of them. Otherwise: judged otherwise than in the take where the two are judged alike. \
-             False: marks not deserved. Faults: planted in the runs heard again, in a first phrase too (caught: by a \
-             mark; dropped: caught by the take, not the run). First: of those, in a first phrase, which only a run sung \
-             again is marked in. Apart: the furthest a note's error sung again was from its error in the take.";
+        let note = "Runs sung again: the first, second, middle and last phrases of every take heard whole, and the verse \
+             of its middle phrase, heard again from the take's own sound and judged in the key the take was in there. \
+             Unheard: not heard again though the take heard enough of them. Otherwise: judged otherwise than in the take \
+             where the two are judged alike. False: marks not deserved. Faults: planted in the runs heard again, in a \
+             first phrase too (caught: by a mark; dropped: caught by the take, not the run, a verse's part included). \
+             First: of those, in a first phrase, which only a run sung again is marked in. Apart: the furthest a note's \
+             error sung again was from its error in the take.";
         let heads = [
             "runs",
             "unheard",
@@ -2091,27 +2124,29 @@ mod tests {
         }
     }
 
-    /// Notes in the phrases given, a note to each.
+    /// Notes in the phrases given, a note to each, two phrases a verse.
     fn phrased(phrases: &[u32]) -> Vec<Note> {
         phrases
             .iter()
             .enumerate()
             .map(|(i, &phrase)| Note {
                 phrase,
+                verse: phrase / 2,
                 ..Note::new(60.0, i as f32, 0.9)
             })
             .collect()
     }
 
     #[test]
-    fn the_runs_sung_again_are_the_first_second_middle_and_last_phrases_each_once() {
+    fn the_runs_sung_again_are_the_first_second_middle_and_last_phrases_and_the_middle_s_verse_each_once() {
+        // Two phrases a verse.
         let runs = again_runs(&phrased(&[0, 0, 1, 1, 2, 2, 3, 4, 4, 4]));
-        assert_eq!(runs, [0..2, 2..4, 4..6, 7..10]);
-        // A chant of two phrases sings each once; of one, it once.
-        assert_eq!(again_runs(&phrased(&[0, 0, 1])), [0..2, 2..3]);
+        assert_eq!(runs, [0..2, 2..4, 4..6, 4..7, 7..10]);
+        // A chant of two phrases sings each once, and its verse; of one, it once.
+        assert_eq!(again_runs(&phrased(&[0, 0, 1])), [0..2, 0..3, 2..3]);
         assert_eq!(again_runs(&phrased(&[0, 0])), [Range { start: 0, end: 2 }]);
         assert!(again_runs(&[]).is_empty());
-        // A phrase no note is in has no run.
+        // A phrase no note is in has no run, nor a verse.
         assert_eq!(again_runs(&phrased(&[0, 2, 2])), [0..1, 1..3]);
     }
 

@@ -10,7 +10,7 @@ use std::cell::RefCell;
 
 use cantor_core::{
     Band, Ending, Frame, Listening, Note, Report, Verdict, again, endings, entry, judge_again, judge_part, key_at, notes_from_gabc, ribbon,
-    score, summary, told,
+    score, summary, told, told_again,
 };
 use cantor_swift::{Stream, SwiftF0, track_of};
 use serde::{Deserialize, Serialize};
@@ -185,7 +185,8 @@ pub fn judge_again_gabc(
 /// chant's notes by index, so that they are drawn and told where the take's are. Its summary
 /// tells of the run beside the take it was sung after, judged `before` ([`again`]).
 pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_cents: f32, before: &Verdict, frames: &[Frame]) -> Judged {
-    let run = run.start.min(notes.len())..run.end.min(notes.len());
+    let start = run.start.min(notes.len());
+    let run = start..run.end.clamp(start, notes.len());
     let report = score(&notes[run.clone()], frames);
     let verdict = judge_again(&notes, run.clone(), &report, key_cents);
     let summary = again(before, &verdict, run.clone());
@@ -196,7 +197,7 @@ pub fn judge_again_notes(mut notes: Vec<Note>, run: std::ops::Range<usize>, key_
             band
         })
         .collect();
-    let told = told(&verdict);
+    let told = told_again(&verdict, &notes);
     let endings = endings(&verdict);
     notes.truncate(run.end);
     notes.drain(..run.start);
@@ -566,7 +567,29 @@ mod tests {
         assert_eq!(again, serde_json::to_string(&want).unwrap());
         assert_eq!(want.verdict.outcome, cantor_core::Outcome::Heard);
         assert_eq!((want.notes.len(), want.ribbon.len(), want.ribbon[0].index), (3, 3, 1));
+        // Sung from the take's own frames over the same notes, each is heard as it was in the
+        // take; told beside the take, and its marks told as a run's are; each band of a note of
+        // the run, as judged.
+        let chant = notes_from_gabc(gabc, 0.5);
+        for i in 1..4 {
+            let (a, w) = (want.verdict.relative[i].expect("heard"), judged.verdict.relative[i].expect("heard"));
+            assert!((a - w).abs() < 30.0, "note {i}: {a} sung again, {w} in the take");
+        }
+        assert_eq!(want.summary, cantor_core::again(&judged.verdict, &want.verdict, 1..4));
         assert!(!want.summary.is_empty());
+        assert_eq!(want.told, told_again(&want.verdict, &chant));
+        for (k, band) in want.ribbon.iter().enumerate() {
+            assert_eq!(band.index, 1 + k);
+            assert_eq!(band.cents, want.verdict.relative[1 + k]);
+        }
+        // The chant's last note is of it, and none past it.
+        let last = chant.len() as u32 - 1;
+        assert!(again_with(1, last, key) > 0);
+        assert_eq!(again_with(1, last + 1, key), -1);
+        ear_bytes(before.len() as u32);
+        BYTES.with(|b| b.borrow_mut().copy_from_slice(before.as_bytes()));
+        assert!(ear_again_key(before.len() as u32, 1, last).is_finite());
+        assert!(ear_again_key(before.len() as u32, 1, last + 1).is_nan());
         // The take before cut short cannot be read.
         ear_bytes(both.len() as u32);
         BYTES.with(|b| b.borrow_mut().copy_from_slice(&both));
