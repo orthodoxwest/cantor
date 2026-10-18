@@ -1,8 +1,9 @@
 // The singer's last take played back against the score, the cursor on each note where it was
 // due in the take: from the audio the ear keeps for sending, decoded once by the page, through a
 // buffer source and a gain. The whole take, or only a run of its notes, from a moment before the
-// first.
-import type { Cursor } from "./cursor";
+// first. A chant's aligned recording plays back the same way, the cursor on each note where the
+// recording sang it.
+import type { Cursor, Voice } from "./cursor";
 import type { Score } from "./score";
 import { noteAt, type Timed } from "./timing";
 
@@ -46,6 +47,8 @@ export class Replay {
     /** Told, as the take plays, which note it is in (null in a pause or outside the notes
      * played) and how many seconds into the take; null once it has stopped. */
     private readonly onAt: (at: { note: number | null; t: number } | null) => void = () => {},
+    /** Whose sound it plays, the cursor drawn in its colour. */
+    private readonly voice: Exclude<Voice, "guide"> = "take",
   ) {}
 
   /** Plays `buffer`, a take whose notes were judged at `times` (in seconds of the take, as many
@@ -161,7 +164,7 @@ export class Replay {
   }
 
   /** Puts the cursor where the take is, `t` seconds into it: on the note due then, at the bar in
-   * a pause, hidden before note `from` and after the last of `times`; drawn as the take's. */
+   * a pause, hidden before note `from` and after the last of `times`; drawn in its voice's colour. */
   private follow(times: readonly Timed[], from: number, t: number): void {
     const first = times[from];
     const last = times.at(-1);
@@ -174,11 +177,11 @@ export class Replay {
     const { timeline } = this.score;
     const bar = t >= at.start + at.duration ? timeline.pauses.find((p) => p.beforeNote === i + 1 && p.bar)?.bar : undefined;
     this.onAt({ note: t >= at.start + at.duration ? null : i, t });
-    if (bar) return this.cursor.show(bar.cx, this.score.line(bar.line), null, true);
+    if (bar) return this.cursor.show(bar.cx, this.score.line(bar.line), null, this.voice);
     // The ear's notes are the score's; were they ever counted apart, the cursor goes.
     const note = timeline.notes[i];
     if (!note) return this.cursor.hide();
     if (this.visited.at(-1) !== note.id) this.visited.push(note.id);
-    this.cursor.show(note.cx, this.score.line(note.line), note.id, true);
+    this.cursor.show(note.cx, this.score.line(note.line), note.id, this.voice);
   }
 }

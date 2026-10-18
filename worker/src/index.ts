@@ -34,8 +34,12 @@ app.get("/api/chants", async (c) => {
   return c.json(results);
 });
 
+/** Where a private chant's aligned recording is kept as sound, put there with its ribbon by the
+ * private content's seeding: FLAC, at the times its ribbon's bands are measured from. */
+const recordingKey = (slug: string) => `recordings/${slug}.flac`;
+
 // One chant with its GABC; a private one is not found by a stranger, and comes with its aligned
-// recording's ribbon when it has one.
+// recording's ribbon when it has one, and where the recording's sound is kept, where to hear it.
 app.get("/api/chants/:slug", async (c) => {
   const slug = c.req.param("slug");
   const row = await c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM chants WHERE slug = ?`)
@@ -63,7 +67,34 @@ app.get("/api/chants/:slug", async (c) => {
       return null;
     }
   })();
-  return c.json(Array.isArray(parsed) ? { ...chant, recording: parsed } : chant);
+  if (!Array.isArray(parsed)) return c.json(chant);
+  // Without its sound the ribbon is still drawn; a store that fails to answer is as without it.
+  const sound = await c.env.TAKES.head(recordingKey(slug)).catch(() => null);
+  return c.json({ ...chant, recording: parsed, ...(sound ? { audio: `/api/chants/${encodeURIComponent(slug)}/recording` } : {}) });
+});
+
+// A private chant's aligned recording as sound, to a known caller, for a chant served with its
+// ribbon.
+app.get("/api/chants/:slug/recording", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
+  const slug = c.req.param("slug");
+  const row = (await identity(c.req.raw.headers, c.env))
+    ? await c.env.DB.prepare("SELECT 1 AS found FROM private_chants WHERE slug = ? AND recording IS NOT NULL").bind(slug).first<{ found: number }>()
+    : null;
+  const object = row && (await c.env.TAKES.get(recordingKey(slug)));
+  if (!object) return c.json({ error: "not found" }, 404);
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "audio/flac",
+      "Content-Length": String(object.size),
+      ETag: object.httpEtag,
+      "Cache-Control": "private, max-age=3600",
+      Vary: "Cookie, Cf-Access-Jwt-Assertion",
+      "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex",
+    },
+  });
 });
 
 interface PointingRow {

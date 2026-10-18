@@ -57,6 +57,42 @@ describe("api", () => {
     await env.DB.prepare("UPDATE private_chants SET recording = NULL WHERE slug = 'private-test'").run();
   });
 
+  it("says where to hear a private chant's recording once its sound is kept, and gives it to a known caller only", async () => {
+    const student = { "X-Dev-User": "student" };
+    const served = async (slug: string) => (await get(`/api/chants/${slug}`, student)).json<{ audio?: string }>();
+    expect(await served("private-sung")).not.toHaveProperty("audio");
+    expect((await get("/api/chants/private-sung/recording", student)).status).toBe(404);
+    const sound = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 1, 2, 3]);
+    await env.TAKES.put("recordings/private-sung.flac", sound);
+    // A chant with no recording is not heard by its sound alone, nor a public one.
+    await env.TAKES.put("recordings/private-test.flac", sound);
+    await env.TAKES.put("recordings/ubi-caritas.flac", sound);
+    try {
+      expect((await served("private-sung")).audio).toBe("/api/chants/private-sung/recording");
+      expect(await served("private-test")).not.toHaveProperty("audio");
+      expect(await (await get("/api/chants/ubi-caritas")).json<object>()).not.toHaveProperty("audio");
+      const res = await get("/api/chants/private-sung/recording", student);
+      expect(res.status).toBe(200);
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(sound);
+      expect(res.headers.get("Content-Type")).toBe("audio/flac");
+      expect(res.headers.get("Content-Length")).toBe(String(sound.length));
+      expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
+      expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+      for (const [path, headers] of [
+        ["/api/chants/private-sung/recording", undefined],
+        ["/api/chants/private-test/recording", student],
+        ["/api/chants/ubi-caritas/recording", student],
+        ["/api/chants/missing/recording", student],
+      ] as const) {
+        const hidden = await get(path, headers);
+        expect(hidden.status, path).toBe(404);
+        expect(hidden.headers.get("Cache-Control")).toBe("private, no-store");
+      }
+    } finally {
+      await env.TAKES.delete(["recordings/private-sung.flac", "recordings/private-test.flac", "recordings/ubi-caritas.flac"]);
+    }
+  });
+
   it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {
     const to = async (next: string) => (await get(`/signin?next=${encodeURIComponent(next)}`)).headers.get("Location");
     expect(await to("/library?q=light#lumen-gentium")).toBe("/library?q=light#lumen-gentium");

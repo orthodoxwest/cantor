@@ -24,6 +24,8 @@ export interface FullChant extends LibraryChant {
   /** An aligned recording of the chant, as the core's ribbon of it (`cantor recording`): only a
    * private chant has one. */
   recording?: Band[];
+  /** Where the recording's sound is heard from, once it is kept: only with `recording`. */
+  audio?: string;
 }
 
 const ROMAN = ["", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii"];
@@ -205,8 +207,9 @@ export function chant(slug: string): Promise<FullChant | null> {
       .then(async (res) => {
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`the library answered ${res.status}`);
-        const row = (await res.json()) as Row & { gabc: string; recording?: Band[] };
-        return { ...fromRow(row), gabc: row.gabc, ...(row.recording ? { recording: row.recording } : {}) };
+        const row = (await res.json()) as Row & { gabc: string; recording?: Band[]; audio?: string };
+        const recorded = row.recording ? { recording: row.recording, ...(row.audio ? { audio: row.audio } : {}) } : {};
+        return { ...fromRow(row), gabc: row.gabc, ...recorded };
       })
       .catch((error: unknown) => {
         chants.delete(slug);

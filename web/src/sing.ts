@@ -14,6 +14,7 @@ import { audioContext } from "./audio";
 import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
 import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
+import { recordedTimes, recordingSound } from "./recording";
 import { Replay } from "./replay";
 import { grewOver, grown, outside, saidIn, viewOf } from "./again";
 import { opening, stepCell } from "./grid";
@@ -1829,9 +1830,11 @@ function choose(i: number): void {
 }
 
 // What plays, one thing at a time: the guide (Play; beside a take Guide once, Repeat over and
-// over), the take (Yours), or both in turn (Compare, and a card's Hear the step).
+// over), the take (Yours), or both in turn (Compare, and a card's Hear the step); and where the
+// chant has an aligned recording whose sound is kept, the recording (Recording).
 const compareButton = byId<HTMLButtonElement>("compare");
 const hearButton = byId<HTMLButtonElement>("hear");
+const recordingButton = byId<HTMLButtonElement>("recording");
 const repeatButton = byId<HTMLButtonElement>("repeat");
 /** Counts plays, so a play stopped while it starts, or waits between its parts, does not go on. */
 let plays = 0;
@@ -1846,8 +1849,9 @@ function stopPlay(): void {
   playing = null;
   playingBack = null;
   replay.stop();
+  recordingReplay.stop();
   guide?.stop();
-  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton]) button.setAttribute("aria-pressed", "false");
+  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, recordingButton]) button.setAttribute("aria-pressed", "false");
   letSleep("play");
 }
 
@@ -1857,9 +1861,9 @@ function stopHear(): void {
   if (playing?.take) stopPlay();
 }
 
-/** Starts a play with `button` pressed, `take` if the take will sound in it and `moved` if the
- * guide will sing away from the Pitch; its run. A drone would cover the take, and clash with the
- * guide moved, so it stops for either. */
+/** Starts a play with `button` pressed, `take` if the take (or the recording) will sound in it
+ * and `moved` if the guide will sing away from the Pitch; its run. A drone would cover the take,
+ * and clash with the guide moved, so it stops for either. */
 function begin(button: HTMLButtonElement, take: boolean, moved: boolean): number {
   stopPlay();
   stopPitch();
@@ -1913,6 +1917,42 @@ const replay = new Replay(
     renameBands();
   },
 );
+// Recording plays the chant's aligned recording over the run chosen, or the whole chant, once,
+// the cursor where the recording sang each note: in its own key, as it was sung, and the whole
+// chant from just before its first note, so not what is spoken before it on the recording. Its
+// sound is fetched and decoded the first time it is heard.
+const recordingReplay = new Replay(score, cursor, () => recordingButton.setAttribute("aria-pressed", "false"), undefined, "recording");
+/** When the recording sang each note of the chant as the library gave it, where it has the
+ * recording's sound; null where it has none. */
+const recordingAt = found?.audio ? recordedTimes(recording, score.timeline.notes.length) : null;
+const recordingAudio = found?.audio && recordingAt ? recordingSound(found.audio) : null;
+/** Whether the recording is of the chant on the page: the chant as the library gave it. */
+const recordable = () => recordingAudio !== null && score.source === piece.gabc;
+/** Offers the recording beside the chant it is of. */
+function offerRecording(): void {
+  recordingButton.hidden = !recordable();
+}
+offerRecording();
+
+/** Plays the recording over the run chosen, or from its first note to its last, once. */
+async function hearRecording(): Promise<void> {
+  const times = recordingAt;
+  if (!recordable() || !recordingAudio || !times) return;
+  quieten();
+  const run = begin(recordingButton, true, false);
+  try {
+    const ctx = await audioContext();
+    const buffer = await recordingAudio(ctx);
+    if (!going(run)) return;
+    await recordingReplay.play(ctx, buffer, times, loop ?? [0, times.length - 1]);
+  } catch (error) {
+    if (!going(run)) return;
+    stopPlay();
+    return setStatus(`The recording could not be played: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (going(run)) stopPlay();
+}
+
 /** The take shown, as it may be heard again: when each note judged was due in it, which for a
  * take stopped short is fewer notes than the chant's, and the seconds a pulse it was sung at. */
 let replayable: Heardback | null = null;
@@ -2050,6 +2090,7 @@ function toggle(button: HTMLButtonElement, start: () => Promise<void>): void {
   });
 }
 toggle(hearButton, hear);
+toggle(recordingButton, hearRecording);
 toggle(compareButton, () => compare(loop, compareButton));
 toggle(repeatButton, () => {
   setStatus("");
@@ -2196,7 +2237,7 @@ function startTaking(): number {
   stopPitch();
   stopDrone(false);
   listener.stop();
-  playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = true;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = recordingButton.disabled = true;
   speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = true;
   holdChant(true);
   takeButton.textContent = "Stop";
@@ -2504,7 +2545,7 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = droneButton.disabled = takeButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   compareButton.disabled = repeatButton.disabled = !guide;
-  hearButton.disabled = stepButton.disabled = false;
+  hearButton.disabled = stepButton.disabled = recordingButton.disabled = false;
   sendButton.disabled = sending;
   readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
@@ -2562,6 +2603,10 @@ if (test) {
     get replayed() {
       return { visited: replay.visited, playing: replay.playing, decodes };
     },
+    /** The notes the cursor has marked in the recording's latest play, and whether it plays. */
+    get recorded() {
+      return { visited: recordingReplay.visited, playing: recordingReplay.playing };
+    },
     /** The run looped, by note index, or null. */
     get loop() {
       return loop;
@@ -2617,6 +2662,7 @@ if (test) {
         setLoop(null);
         offerReplay(null);
         score.setChant(new Chant(gabc));
+        offerRecording();
       }
       if (guide) guide.gabc = gabc;
       // Through the Speed select, as a singer would, adding the pulse to it if it is not there.
@@ -2634,6 +2680,7 @@ if (test) {
         setLoop(null);
         offerReplay(null);
         score.setChant(new Chant(gabc));
+        offerRecording();
       }
       const finding = findKept(gabc);
       const since = forgettings;
