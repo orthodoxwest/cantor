@@ -1193,6 +1193,17 @@ const NONE_JUDGED = "You stopped the take before its first phrase was sung throu
 function quieten(): void {
   if (status.textContent === NONE_HEARD || status.textContent === NONE_JUDGED) setStatus("");
 }
+/** What the status says of a recording that could not be had, before why. */
+const UNPLAYED = "The recording could not be played";
+/** What the status says while the recording's sound is first fetched, over what it said, which
+ * it says again once the sound comes or the play is stopped. */
+const FETCHING = "Fetching the recording…";
+let saidBeforeFetching: { text: string; news: boolean } | null = null;
+function unsayFetching(): void {
+  const said = saidBeforeFetching;
+  saidBeforeFetching = null;
+  if (said && status.textContent === FETCHING) setStatus(said.text, said.news);
+}
 const failedListening = (error: unknown) =>
   setStatus(`Listening failed: ${error instanceof Error ? error.message : String(error)}`);
 /** Counts takes, so a take stopped while it is starting does not go on. */
@@ -1854,6 +1865,7 @@ function stopPlay(): void {
   guide?.stop();
   for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, recordingButton]) button.setAttribute("aria-pressed", "false");
   letSleep("play");
+  unsayFetching();
 }
 
 /** Stops the take sounding, alone or after the guide; the guide alone (and a drone under it)
@@ -1935,30 +1947,30 @@ function offerRecording(): void {
 }
 offerRecording();
 
-/** Plays the recording over the run chosen, or from its first note to its last, once. As Play,
- * it lets go of what the status said, a recording that could not be had included; while its
- * sound is first fetched, the status says so. */
+/** Plays the recording over the run chosen, or from its first note to its last, once. As Yours,
+ * it lets go of what the status said of what there was none of to hear, and of a recording that
+ * could not be had; while its sound is first fetched, the status says so. */
 async function hearRecording(): Promise<void> {
   const times = recordingAt;
   if (!recordable() || !recordingAudio || !times) return;
-  setStatus("");
+  quieten();
+  if (status.textContent?.startsWith(UNPLAYED)) setStatus("");
   const run = begin(recordingButton, true, false);
-  const fetching = recordingAudio.kept() ? "" : "Fetching the recording…";
-  if (fetching) setStatus(fetching, true);
-  const fetched = () => {
-    if (fetching && status.textContent === fetching) setStatus("");
-  };
+  if (!recordingAudio.kept()) {
+    saidBeforeFetching = { text: status.textContent ?? "", news: !status.classList.contains("error") };
+    setStatus(FETCHING, true);
+  }
   try {
     const ctx = await audioContext();
     const buffer = await recordingAudio.sound(ctx);
-    fetched();
+    // A play stopped meanwhile has let go of the line.
     if (!going(run)) return;
+    unsayFetching();
     await recordingReplay.play(ctx, buffer, times, loop ?? [0, times.length - 1]);
   } catch (error) {
-    fetched();
     if (!going(run)) return;
     stopPlay();
-    return setStatus(`The recording could not be played: ${error instanceof Error ? error.message : String(error)}`);
+    return setStatus(`${UNPLAYED}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (going(run)) stopPlay();
 }

@@ -86,6 +86,31 @@ describe("api", () => {
       expect(again.status).toBe(304);
       expect(await again.arrayBuffer()).toHaveProperty("byteLength", 0);
       expect(again.headers.get("ETag")).toBe(etag);
+      // Asked only that: other conditions, or a copy not named as the store names one, get it all.
+      const conditions: Record<string, string>[] = [{ "If-Match": '"other"' }, { "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" }, { "If-None-Match": "unquoted" }];
+      for (const condition of conditions) {
+        const whole = await get("/api/chants/private-sung/recording", { ...student, ...condition });
+        expect(whole.status, JSON.stringify(condition)).toBe(200);
+        expect(new Uint8Array(await whole.arrayBuffer())).toEqual(sound);
+      }
+      // A stranger is turned away before anything is looked up.
+      const calls: string[] = [];
+      const counted = <T extends object>(name: string, target: T): T =>
+        new Proxy(target, {
+          get(t, prop) {
+            const value = Reflect.get(t, prop) as unknown;
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              calls.push(`${name}.${String(prop)}`);
+              return (value as (...a: unknown[]) => unknown).apply(t, args);
+            };
+          },
+        });
+      const watched = { ...env, DB: counted("DB", env.DB), TAKES: counted("TAKES", env.TAKES) } as Env;
+      expect((await get("/api/chants/private-sung/recording", undefined, watched)).status).toBe(404);
+      expect(calls).toEqual([]);
+      expect((await get("/api/chants/private-sung/recording", student, watched)).status).toBe(200);
+      expect(calls).toContain("TAKES.get");
       for (const [path, headers] of [
         ["/api/chants/private-sung/recording", undefined],
         ["/api/chants/private-test/recording", student],

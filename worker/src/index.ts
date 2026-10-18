@@ -93,7 +93,14 @@ app.get("/api/chants/:slug/recording", async (c) => {
     known && !shadowed
       ? await c.env.DB.prepare("SELECT recording FROM private_chants WHERE slug = ?").bind(slug).first<{ recording: string | null }>()
       : null;
-  const object = row && bandsOf(row.recording) ? await c.env.TAKES.get(recordingKey(slug), { onlyIf: c.req.raw.headers }) : null;
+  // Whether the caller's copy is the sound as kept is all that is asked of the store: one it
+  // cannot read is as none.
+  const copy = c.req.header("If-None-Match");
+  const key = recordingKey(slug);
+  const object =
+    row && bandsOf(row.recording)
+      ? await (copy ? c.env.TAKES.get(key, { onlyIf: new Headers({ "If-None-Match": copy }) }).catch(() => c.env.TAKES.get(key)) : c.env.TAKES.get(key))
+      : null;
   if (!object) return c.json({ error: "not found" }, 404);
   const headers = {
     ETag: object.httpEtag,
