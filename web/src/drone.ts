@@ -50,6 +50,9 @@ export function modeNumber(mode: string | null | undefined): number | null {
 
 /** Of a tone's loudness, the share of each partial from the first: soft, reedy, not a sine. */
 const PARTIALS = [1, 0.35, 0.12, 0.05];
+/** The tone's loudness at level 1, as the root of its mean square: its partials' over their
+ * peak, which [`droneLoop`] scales it by. */
+export const TONE_RMS = Math.sqrt(PARTIALS.reduce((sum, a) => sum + a * a, 0) / 2) / PARTIALS.reduce((a, b) => a + b, 0);
 /** About how long the looped buffer lasts, in seconds. */
 const LOOP = 1;
 const LEVEL = 0.08;
@@ -78,13 +81,17 @@ export function droneLoop(freq: number, rate: number): Float32Array<ArrayBuffer>
 export class Drone {
   /** Drones not yet silent, fading ones included. */
   static readonly sounding = new Set<Drone>();
+  /** When it began, in the context's time. */
+  readonly began: number;
   private readonly source: AudioBufferSourceNode;
   private readonly gain: GainNode;
   private fading = false;
 
   constructor(
     private readonly ctx: AudioContext,
+    /** As MIDI, any fraction of a semitone. */
     readonly midi: number,
+    level = LEVEL,
   ) {
     const freq = 440 * 2 ** ((midi - 69) / 12);
     const samples = droneLoop(freq, ctx.sampleRate);
@@ -93,9 +100,9 @@ export class Drone {
     this.gain = ctx.createGain();
     // Silent, should its schedule ever be cancelled before it begins.
     this.gain.gain.value = 0;
-    const now = ctx.currentTime;
+    const now = (this.began = ctx.currentTime);
     this.gain.gain.setValueAtTime(0, now);
-    this.gain.gain.linearRampToValueAtTime(LEVEL, now + FADE_IN);
+    this.gain.gain.linearRampToValueAtTime(level, now + FADE_IN);
     this.gain.connect(ctx.destination);
     this.source = ctx.createBufferSource();
     this.source.buffer = buffer;

@@ -25,6 +25,9 @@ export interface Band {
   start_s?: number;
   end_s?: number;
   cents: number | null;
+  /** Where the judge put the note, as MIDI, in the octave the singer held it; none when it was
+   * not heard, in a take as the Worker keeps it, and in a recording seeded before bands said it. */
+  target_midi?: number | null;
   trace: Array<[number, number]>;
 }
 
