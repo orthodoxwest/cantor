@@ -138,6 +138,116 @@ describe("api", () => {
     }
   });
 
+  it("gives a chant rendered in a cantor's voice from its GABC as served, once its sound is kept, to a known caller only", async () => {
+    const student = { "X-Dev-User": "student" };
+    const sha256 = async (text: string) =>
+      [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const gabcOf = async (table: string, slug: string) => (await env.DB.prepare(`SELECT gabc FROM ${table} WHERE slug = ?`).bind(slug).first<{ gabc: string }>())!.gabc;
+    const ubi = await gabcOf("chants", "ubi-caritas");
+    const render = async (slug: string, gabc: string) =>
+      env.DB.prepare("INSERT INTO renderings (slug, gabc_sha256, pulse, transpose, zero) VALUES (?, ?, 0.5, -3, 0.08)").bind(slug, await sha256(gabc)).run();
+    const served = async (slug: string, headers?: HeadersInit, bindings: Env = env) => {
+      const res = await get(`/api/chants/${slug}`, headers, bindings);
+      return { res, body: await res.json<{ rendering?: unknown; recording?: unknown; gabc: string }>() };
+    };
+    await render("ubi-caritas", ubi);
+    await render("private-sung", await gabcOf("private_chants", "private-sung"));
+    const sound = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 4, 5, 6]);
+    try {
+      // Without its sound, none.
+      expect((await served("ubi-caritas", student)).body).not.toHaveProperty("rendering");
+      expect((await get("/api/chants/ubi-caritas/rendering", student)).status).toBe(404);
+      const kept = await env.TAKES.put("renderings/ubi-caritas.flac", sound);
+      const keptPrivate = await env.TAKES.put("renderings/private-sung.flac", sound);
+      // A public chant comes with it to a known caller, named for the sound as kept, and that
+      // answer is kept for no one else.
+      const known = await served("ubi-caritas", student);
+      expect(known.body.rendering).toEqual({ audio: `/api/chants/ubi-caritas/rendering?v=${kept!.etag}`, pulse: 0.5, transpose: -3, zero: 0.08 });
+      expect(known.body.gabc).toBe(ubi);
+      expect(known.res.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(known.res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+      // To a stranger it is the chant as it was, kept for all.
+      const stranger = await served("ubi-caritas");
+      expect(stranger.body).not.toHaveProperty("rendering");
+      expect(stranger.res.headers.get("Cache-Control")).toBe("public, max-age=300");
+      expect(stranger.res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
+      // A private chant comes with it beside its recording.
+      const hidden = await served("private-sung", student);
+      expect(hidden.body.rendering).toEqual({ audio: `/api/chants/private-sung/rendering?v=${keptPrivate!.etag}`, pulse: 0.5, transpose: -3, zero: 0.08 });
+      expect(hidden.body.recording).toHaveLength(1);
+      // Its sound, as a recording's is given.
+      const res = await get("/api/chants/ubi-caritas/rendering", student);
+      expect(res.status).toBe(200);
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(sound);
+      expect(res.headers.get("Content-Type")).toBe("audio/flac");
+      expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
+      expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+      const again = await get("/api/chants/ubi-caritas/rendering", { ...student, "If-None-Match": res.headers.get("ETag")! });
+      expect(again.status).toBe(304);
+      expect((await get("/api/chants/private-sung/rendering", student)).status).toBe(200);
+      // A stranger is turned away before anything is looked up, and has the chant without asking
+      // the store of sounds.
+      const calls: string[] = [];
+      const counted = <T extends object>(name: string, target: T): T =>
+        new Proxy(target, {
+          get(t, prop) {
+            const value = Reflect.get(t, prop) as unknown;
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              calls.push(`${name}.${String(prop)}`);
+              return (value as (...a: unknown[]) => unknown).apply(t, args);
+            };
+          },
+        });
+      const watched = { ...env, DB: counted("DB", env.DB), TAKES: counted("TAKES", env.TAKES) } as Env;
+      expect((await get("/api/chants/ubi-caritas/rendering", undefined, watched)).status).toBe(404);
+      expect(calls).toEqual([]);
+      expect((await served("ubi-caritas", undefined, watched)).body).not.toHaveProperty("rendering");
+      expect(calls.filter((call) => call.startsWith("TAKES"))).toEqual([]);
+      for (const [path, headers] of [
+        ["/api/chants/ubi-caritas/rendering", undefined],
+        ["/api/chants/private-sung/rendering", undefined],
+        ["/api/chants/crux-fidelis/rendering", student],
+        ["/api/chants/missing/rendering", student],
+      ] as const) {
+        const none = await get(path, headers);
+        expect(none.status, path).toBe(404);
+        expect(none.headers.get("Cache-Control")).toBe("private, no-store");
+        expect(none.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
+      }
+      // A store of renderings that fails to answer is as none: the chant is still served.
+      const broken = {
+        ...env,
+        DB: new Proxy(env.DB, {
+          get(t, prop) {
+            const value = Reflect.get(t, prop) as unknown;
+            if (prop !== "prepare") return typeof value === "function" ? (value as () => unknown).bind(t) : value;
+            return (sql: string) => t.prepare(sql.replace("FROM renderings", "FROM no_such_table"));
+          },
+        }),
+      } as Env;
+      const unanswered = await served("ubi-caritas", student, broken);
+      expect(unanswered.res.status).toBe(200);
+      expect(unanswered.body).not.toHaveProperty("rendering");
+      expect((await get("/api/chants/ubi-caritas/rendering", student, broken)).status).toBe(404);
+      // A chant corrected since it was rendered is not heard as it was.
+      await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(ubi.replace("(h) (::)", "(g) (::)")).run();
+      const corrected = await served("ubi-caritas", student);
+      expect(corrected.body).not.toHaveProperty("rendering");
+      expect(corrected.res.headers.get("Cache-Control")).toBe("public, max-age=300");
+      expect((await get("/api/chants/ubi-caritas/rendering", student)).status).toBe(404);
+      // Under a public chant of the same slug, that chant is the one served, and it was not rendered.
+      await env.DB.prepare("INSERT INTO chants (slug, title, gabc) VALUES ('private-sung', 'Shadow', '(c4) A(f) (::)')").run();
+      expect((await served("private-sung", student)).body).not.toHaveProperty("rendering");
+      expect((await get("/api/chants/private-sung/rendering", student)).status).toBe(404);
+    } finally {
+      await env.DB.prepare("DELETE FROM chants WHERE slug = 'private-sung'").run();
+      await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(ubi).run();
+      await env.DB.prepare("DELETE FROM renderings").run();
+      await env.TAKES.delete(["renderings/ubi-caritas.flac", "renderings/private-sung.flac"]);
+    }
+  });
+
   it("sends a visitor who signs in back to a page on this site, and nowhere else", async () => {
     const to = async (next: string) => (await get(`/signin?next=${encodeURIComponent(next)}`)).headers.get("Location");
     expect(await to("/library?q=light#lumen-gentium")).toBe("/library?q=light#lumen-gentium");

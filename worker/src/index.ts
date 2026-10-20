@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import pkg from "../package.json";
 import diagnostics from "./diagnostics";
 import { identity } from "./identity";
@@ -49,21 +49,63 @@ function bandsOf(recording: string | null): unknown[] | null {
   }
 }
 
+/** Where a chant rendered in a voice made from a cantor's is kept as sound, put there with its
+ * row of `renderings` by the private content's voice scripts: FLAC, sung from the GABC the row
+ * names by its SHA-256. */
+const renderingKey = (slug: string) => `renderings/${slug}.flac`;
+
+interface RenderingRow {
+  gabc_sha256: string;
+  pulse: number;
+  transpose: number;
+  zero: number;
+}
+
+/** The SHA-256 of `text` as UTF-8, in hex. */
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** How the chant `gabc` was rendered, where it was rendered from that very GABC: one rendered
+ * before the chant was corrected is not of it. A store that fails to answer is as none. */
+async function renderingOf(env: Env, slug: string, gabc: string): Promise<RenderingRow | null> {
+  const row = await env.DB.prepare("SELECT gabc_sha256, pulse, transpose, zero FROM renderings WHERE slug = ?")
+    .bind(slug)
+    .first<RenderingRow>()
+    .catch(() => null);
+  return row && row.gabc_sha256 === (await sha256(gabc)) ? row : null;
+}
+
+/** The chant's rendering as the page hears it, once its sound is kept: where to hear it from,
+ * named for the sound as kept, and how it was sung. Nothing without its sound, or a store that
+ * fails to answer. */
+async function rendered(env: Env, slug: string, how: RenderingRow | null): Promise<{ rendering?: object }> {
+  const sound = how && (await env.TAKES.head(renderingKey(slug)).catch(() => null));
+  if (!how || !sound) return {};
+  const audio = `/api/chants/${encodeURIComponent(slug)}/rendering?v=${encodeURIComponent(sound.etag)}`;
+  return { rendering: { audio, pulse: how.pulse, transpose: how.transpose, zero: how.zero } };
+}
+
 // One chant with its GABC; a private one is not found by a stranger, and comes with its aligned
 // recording's ribbon when it has one, and where the recording's sound is kept, where to hear it:
-// named for the sound as kept, so that a sound put again is not heard from a copy of the last.
+// named for the sound as kept, so that a sound put again is not heard from a copy of the last. A
+// chant rendered in a cantor's voice comes with its rendering, to a known caller only.
 app.get("/api/chants/:slug", async (c) => {
   const slug = c.req.param("slug");
+  c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
   const row = await c.env.DB.prepare(`SELECT ${CHANT}, gabc FROM chants WHERE slug = ?`)
     .bind(slug)
     .first<ChantRow & { gabc: string }>();
   if (row) {
-    c.header("Cache-Control", "public, max-age=300");
-    return c.json(row);
+    // The same for every caller but its rendering: who asks is looked up only where it has one.
+    const how = await renderingOf(c.env, slug, row.gabc);
+    const sung = how && (await identity(c.req.raw.headers, c.env)) ? await rendered(c.env, slug, how) : {};
+    c.header("Cache-Control", sung.rendering ? "private, no-store" : "public, max-age=300");
+    return c.json({ ...row, ...sung });
   }
   // From here the answer depends on who asks, found or not.
   c.header("Cache-Control", "private, no-store");
-  c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
   const hidden = (await identity(c.req.raw.headers, c.env))
     ? await c.env.DB.prepare(`SELECT ${CHANT}, gabc, recording FROM private_chants WHERE slug = ?`)
         .bind(slug)
@@ -71,36 +113,27 @@ app.get("/api/chants/:slug", async (c) => {
     : null;
   if (!hidden) return c.json({ error: "not found" }, 404);
   const { recording, ...chant } = hidden;
+  const sung = await rendered(c.env, slug, await renderingOf(c.env, slug, chant.gabc));
   const bands = bandsOf(recording);
-  if (!bands) return c.json(chant);
+  if (!bands) return c.json({ ...chant, ...sung });
   // Without its sound the ribbon is still drawn; a store that fails to answer is as without it.
   const sound = await c.env.TAKES.head(recordingKey(slug)).catch(() => null);
   const audio = sound && `/api/chants/${encodeURIComponent(slug)}/recording?v=${encodeURIComponent(sound.etag)}`;
-  return c.json({ ...chant, recording: bands, ...(audio ? { audio } : {}) });
+  return c.json({ ...chant, recording: bands, ...(audio ? { audio } : {}), ...sung });
 });
 
-// A private chant's aligned recording as sound, to a known caller, where its chant is served with
-// its ribbon (so not under a public chant of the same slug), and to the page's own fetch only:
-// another site's cannot tell a sound from none. A copy the caller has of it unchanged is kept.
-app.get("/api/chants/:slug/recording", async (c) => {
+/** The sound kept at `key`, where the caller may hear it (`heard`), to the page's own fetch only:
+ * another site's cannot tell a sound from none. A copy the caller has of it unchanged is kept;
+ * whether it is the sound as kept is all that is asked of the store, and one it cannot read is as
+ * none. */
+async function soundAt(c: Context<{ Bindings: Env }>, key: string, heard: boolean): Promise<Response> {
   c.header("Cache-Control", "private, no-store");
   c.header("Vary", "Cookie, Cf-Access-Jwt-Assertion");
   c.header("Cross-Origin-Resource-Policy", "same-origin");
-  const slug = c.req.param("slug");
-  const known = await identity(c.req.raw.headers, c.env);
-  const shadowed = known && (await c.env.DB.prepare("SELECT 1 AS found FROM chants WHERE slug = ?").bind(slug).first());
-  const row =
-    known && !shadowed
-      ? await c.env.DB.prepare("SELECT recording FROM private_chants WHERE slug = ?").bind(slug).first<{ recording: string | null }>()
-      : null;
-  // Whether the caller's copy is the sound as kept is all that is asked of the store: one it
-  // cannot read is as none.
   const copy = c.req.header("If-None-Match");
-  const key = recordingKey(slug);
-  const object =
-    row && bandsOf(row.recording)
-      ? await (copy ? c.env.TAKES.get(key, { onlyIf: new Headers({ "If-None-Match": copy }) }).catch(() => c.env.TAKES.get(key)) : c.env.TAKES.get(key))
-      : null;
+  const object = heard
+    ? await (copy ? c.env.TAKES.get(key, { onlyIf: new Headers({ "If-None-Match": copy }) }).catch(() => c.env.TAKES.get(key)) : c.env.TAKES.get(key))
+    : null;
   if (!object) return c.json({ error: "not found" }, 404);
   const headers = {
     ETag: object.httpEtag,
@@ -113,6 +146,29 @@ app.get("/api/chants/:slug/recording", async (c) => {
   // Without a body, the copy the caller has is the sound as kept.
   if (!("body" in object)) return new Response(null, { status: 304, headers });
   return new Response((object as R2ObjectBody).body, { headers: { ...headers, "Content-Type": "audio/flac", "Content-Length": String(object.size) } });
+}
+
+// A private chant's aligned recording as sound, to a known caller, where its chant is served with
+// its ribbon (so not under a public chant of the same slug).
+app.get("/api/chants/:slug/recording", async (c) => {
+  const slug = c.req.param("slug");
+  const known = await identity(c.req.raw.headers, c.env);
+  const shadowed = known && (await c.env.DB.prepare("SELECT 1 AS found FROM chants WHERE slug = ?").bind(slug).first());
+  const row =
+    known && !shadowed
+      ? await c.env.DB.prepare("SELECT recording FROM private_chants WHERE slug = ?").bind(slug).first<{ recording: string | null }>()
+      : null;
+  return soundAt(c, recordingKey(slug), !!row && bandsOf(row.recording) !== null);
+});
+
+// A chant's rendering as sound, to a known caller, where its chant is served with it: rendered
+// from the GABC of the chant served by its slug, public or else private.
+app.get("/api/chants/:slug/rendering", async (c) => {
+  const slug = c.req.param("slug");
+  const known = await identity(c.req.raw.headers, c.env);
+  const gabcOf = (table: string) => c.env.DB.prepare(`SELECT gabc FROM ${table} WHERE slug = ?`).bind(slug).first<{ gabc: string }>();
+  const chant = known ? ((await gabcOf("chants")) ?? (await gabcOf("private_chants"))) : null;
+  return soundAt(c, renderingKey(slug), !!chant && (await renderingOf(c.env, slug, chant.gabc)) !== null);
 });
 
 interface PointingRow {

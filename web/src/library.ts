@@ -26,6 +26,19 @@ export interface FullChant extends LibraryChant {
   recording?: Band[];
   /** Where the recording's sound is heard from, once it is kept: only with `recording`. */
   audio?: string;
+  /** The chant sung in a voice made from a cantor's, given to a signed-in visitor once its sound
+   * is kept. */
+  rendering?: Rendering;
+}
+
+/** A chant rendered off line, from its GABC as the library gives it, in a voice made from a
+ * cantor's: where its sound is heard from, the seconds a pulse and the semitones from the GABC's
+ * pitch it was sung at, and the second of its sound at which the chant's first pulse falls. */
+export interface Rendering {
+  audio: string;
+  pulse: number;
+  transpose: number;
+  zero: number;
 }
 
 const ROMAN = ["", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii"];
@@ -207,9 +220,9 @@ export function chant(slug: string): Promise<FullChant | null> {
       .then(async (res) => {
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`the library answered ${res.status}`);
-        const row = (await res.json()) as Row & { gabc: string; recording?: Band[]; audio?: string };
+        const row = (await res.json()) as Row & { gabc: string; recording?: Band[]; audio?: string; rendering?: Rendering };
         const recorded = row.recording ? { recording: row.recording, ...(row.audio ? { audio: row.audio } : {}) } : {};
-        return { ...fromRow(row), gabc: row.gabc, ...recorded };
+        return { ...fromRow(row), gabc: row.gabc, ...recorded, ...(row.rendering ? { rendering: row.rendering } : {}) };
       })
       .catch((error: unknown) => {
         chants.delete(slug);

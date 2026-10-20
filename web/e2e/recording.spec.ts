@@ -424,3 +424,164 @@ test("on a phone, a take with no take shown keeps the bar to one row", async ({ 
   expect(await top("Stop")).toBe(await top("Play"));
   await expect(page.locator("#recording")).toBeVisible({ timeout: 15_000 });
 });
+
+// A chant rendered in a voice made from a cantor's: Sung plays it as Recording plays a recording,
+// its notes where the page times them at the rendering's pulse, from the second its first pulse
+// falls at.
+const RENDERING = { audio: "/api/chants/rendered/rendering", pulse: 0.5, transpose: -3, zero: 0.1 };
+
+/** Opens a chant rendered, with a recording too if `recorded`, its rendering's sound served as
+ * `audio` answers, or none given if `audio` is null; counts the fetches of the sound. */
+async function rendered(
+  page: Page,
+  { audio = (route) => route.fulfill({ body: sine(8), contentType: "audio/flac" }), recorded = false }: { audio?: ((route: Route) => Promise<void>) | null; recorded?: boolean } = {},
+): Promise<{ fetches: () => number; ids: number[] }> {
+  let fetches = 0;
+  await page.route("**/api/chants/rendered", (route) =>
+    route.fulfill({
+      json: {
+        slug: "rendered",
+        title: "Amen",
+        name: null,
+        mode: null,
+        kind: null,
+        book: null,
+        source: null,
+        url: null,
+        words: "Amen alleluia",
+        gabc: PHRASES,
+        ...(recorded ? { recording: RECORDED, audio: "/api/chants/voiced/recording" } : {}),
+        ...(audio ? { rendering: RENDERING } : {}),
+      },
+    }),
+  );
+  if (recorded) await page.route("**/api/chants/voiced/recording", (route) => route.fulfill({ body: sine(8), contentType: "audio/flac" }));
+  if (audio)
+    await page.route("**/api/chants/rendered/rendering", (route) => {
+      fetches++;
+      return audio(route);
+    });
+  await page.goto("/sing.html?test=1&chant=rendered");
+  await page.waitForFunction(() => window.__cantor);
+  const ids = await page.evaluate(() => window.__cantor.timeline.notes.map((n) => n.id));
+  return { fetches: () => fetches, ids };
+}
+
+test("a chant's rendering plays over the phrase chosen, once, the cursor in the guide's colour where it sang each note, and the whole of it", async ({ page }) => {
+  const starts = await startsOf(page);
+  const { fetches, ids } = await rendered(page);
+  const sung = page.getByRole("button", { name: "Sung" });
+  await expect(sung).toBeVisible();
+  await expect(sung).toHaveAttribute("title", "This chant sung in a voice made from a cantor's, over the phrase chosen or the whole chant, once, at the speed and in the key it was made at");
+  const times = await page.evaluate(() => window.__cantor.timed(0.5));
+  await page.locator(`#score [data-note~="${ids[3]}"]`).first().click();
+  expect(await page.evaluate(() => window.__cantor.loop)).toEqual([2, 5]);
+  await sung.click();
+  await expect(sung).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  await expect(page.locator("#score .cursor:is(.recording, .take)")).toHaveCount(0);
+  await expect(page.locator("#score:is(.hearing, .hearing-recording)")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing), { timeout: 10_000 }).toBe(false);
+  await expect(sung).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.rendered.visited)).toEqual(ids.slice(2, 6));
+  await expect(page.locator("#score .cursor")).toBeHidden();
+  // Sounded from a moment before the phrase's first note to a moment after its last, where the
+  // page times them, 0.1 s on.
+  const [phrase] = await starts();
+  expect(phrase![0]).toBeCloseTo(0.1 + times[2]!.start - 0.3, 2);
+  expect(phrase![0] + phrase![1]).toBeCloseTo(0.1 + times[5]!.start + times[5]!.duration + 0.4, 2);
+  // The whole chant is the whole of the sound; fetched once.
+  await page.getByRole("button", { name: "Whole chant" }).click();
+  await sung.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing), { timeout: 15_000 }).toBe(false);
+  expect(await page.evaluate(() => window.__cantor.rendered.visited)).toEqual(ids);
+  const whole = (await starts())[1]!;
+  expect(whole[0]).toBe(0);
+  expect(whole[1]).toBeCloseTo(8, 2);
+  expect(fetches()).toBe(1);
+  // Pressed again while it plays, it stops; the guide stops it too.
+  await sung.click();
+  await expect(page.locator("#score .cursor")).toBeVisible();
+  await sung.click();
+  await expect(sung).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.rendered.playing)).toBe(false);
+  await sung.click();
+  await expect(sung).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(sung).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.rendered.playing)).toBe(false);
+});
+
+test("while the rendering's sound is first fetched the status says so, and a rendering whose sound cannot be had says so and is asked for again", async ({ page }) => {
+  let missing = true;
+  const { fetches } = await rendered(page, { audio: (route) => (missing ? route.fulfill({ status: 404, json: { error: "not found" } }) : route.fulfill({ body: sine(8), contentType: "audio/flac" })) });
+  const log = await statusLog(page);
+  await page.reload();
+  await page.waitForFunction(() => window.__cantor);
+  const sung = page.getByRole("button", { name: "Sung" });
+  const status = page.locator("#status");
+  await sung.click();
+  await expect(status).toHaveText("The sung chant could not be played: the library answered 404");
+  expect(await log.said()).toContain("Fetching the sung chant…");
+  await expect(sung).toHaveAttribute("aria-pressed", "false");
+  missing = false;
+  await sung.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing)).toBe(true);
+  // What could not be played is not said while it plays.
+  await expect(status).toHaveText("");
+  expect(fetches()).toBe(2);
+});
+
+test("a rendering is not offered without its sound, nor beside another chant put on the page", async ({ page }) => {
+  await rendered(page, { audio: null });
+  await expect(page.locator("#rendering")).toBeHidden();
+  await page.unrouteAll();
+  await rendered(page);
+  await expect(page.locator("#rendering")).toBeVisible();
+  await expect(page.locator("#recording")).toBeHidden();
+  await page.evaluate(() => window.__cantor.practise("(c4) Lo(g) (::)", 0.5));
+  await expect(page.locator("#rendering")).toBeHidden();
+  await page.evaluate((gabc) => window.__cantor.practise(gabc, 0.5), PHRASES);
+  await expect(page.locator("#rendering")).toBeVisible();
+});
+
+test("on a phone the bar has Play and Sung, then the rest; beside a take Sung is among the voices; and in a take it goes", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await rendered(page);
+  const top = (name: string) => page.getByRole("button", { name, exact: true }).evaluate((el) => Math.round(el.getBoundingClientRect().top));
+  const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
+  expect(await top("Sung")).toBe(await top("Play"));
+  expect(await top("Start note")).toBeGreaterThan(await top("Play"));
+  expect(await fits()).toBe(true);
+  await besideTake(page);
+  expect(await top("Sung")).toBe(await top("Compare"));
+  expect(await top("Repeat")).toBeGreaterThan(await top("Compare"));
+  expect(await fits()).toBe(true);
+  await page.getByRole("button", { name: "Sing a take" }).click();
+  await expect(page.locator("#rendering")).toBeHidden();
+  expect(await top("Stop")).toBe(await top("Play"));
+  await expect(page.locator("#rendering")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#rendering")).toBeEnabled();
+});
+
+test("beside a recording, Sung and Recording each stop the other, and the bar fits on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await rendered(page, { recorded: true });
+  const sung = page.getByRole("button", { name: "Sung" });
+  const recording = page.getByRole("button", { name: "Recording" });
+  const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
+  expect(await fits()).toBe(true);
+  await sung.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing)).toBe(true);
+  await recording.click();
+  await expect(page.locator("#score .cursor.recording")).toBeVisible();
+  await expect(sung).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.rendered.playing)).toBe(false);
+  await sung.click();
+  await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing)).toBe(true);
+  await expect(recording).toHaveAttribute("aria-pressed", "false");
+  expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
+  await sung.click();
+  await besideTake(page);
+  expect(await fits()).toBe(true);
+});

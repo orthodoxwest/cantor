@@ -14,7 +14,7 @@ import { audioContext } from "./audio";
 import { letSleep, stayAwake } from "./awake";
 import { Drone, droneNote, modeNumber } from "./drone";
 import { melismaNeumes, phraseOf, syllableRuns, tapLoop } from "./loop";
-import { recordedTimes, recordingSound } from "./recording";
+import { recordedTimes, recordingSound, renderedTimes } from "./recording";
 import { Replay } from "./replay";
 import { grewOver, grown, outside, saidIn, viewOf } from "./again";
 import { opening, stepCell } from "./grid";
@@ -956,10 +956,11 @@ onNews((news) => {
   if (drawn) steadily(drawResult);
 });
 
-// The guide sings anew from where it is next played; the take and the recording, each in its own
-// key, play on.
+// The guide sings anew from where it is next played; the take, the recording and the rendering,
+// each in its own key, play on.
 inKeyBox.addEventListener("change", () => {
-  if (playing && playing.button !== hearButton && playing.button !== recordingButton) stopPlay();
+  const button = playing?.button;
+  if (button && button !== hearButton && !VOICED.some((voiced) => voiced.button === button)) stopPlay();
 });
 
 // A take shown may be sent, by a signed-in singer: the button gives a link to it.
@@ -1193,16 +1194,14 @@ const NONE_JUDGED = "You stopped the take before its first phrase was sung throu
 function quieten(): void {
   if (status.textContent === NONE_HEARD || status.textContent === NONE_JUDGED) setStatus("");
 }
-/** What the status says of a recording that could not be had, before why. */
-const UNPLAYED = "The recording could not be played";
-/** What the status says while the recording's sound is first fetched, over what it said, which
- * it says again once the sound comes or the play is stopped. */
-const FETCHING = "Fetching the recording…";
-let saidBeforeFetching: { text: string; news: boolean } | null = null;
+/** What the status said before it said that a sound of the chant (its recording, or its
+ * rendering) was first being fetched, `fetching`; it says it again once the sound comes or the
+ * play is stopped. */
+let saidBeforeFetching: { text: string; news: boolean; fetching: string } | null = null;
 function unsayFetching(): void {
   const said = saidBeforeFetching;
   saidBeforeFetching = null;
-  if (said && status.textContent === FETCHING) setStatus(said.text, said.news);
+  if (said && status.textContent === said.fetching) setStatus(said.text, said.news);
 }
 const failedListening = (error: unknown) =>
   setStatus(`Listening failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1842,11 +1841,13 @@ function choose(i: number): void {
 }
 
 // What plays, one thing at a time: the guide (Play; beside a take Guide once, Repeat over and
-// over), the take (Yours), or both in turn (Compare, and a card's Hear the step); and where the
-// chant has an aligned recording whose sound is kept, the recording (Recording).
+// over), the take (Yours), or both in turn (Compare, and a card's Hear the step); where the
+// chant has an aligned recording whose sound is kept, the recording (Recording); and where it was
+// rendered in a voice made from a cantor's, the rendering (Sung).
 const compareButton = byId<HTMLButtonElement>("compare");
 const hearButton = byId<HTMLButtonElement>("hear");
 const recordingButton = byId<HTMLButtonElement>("recording");
+const renderingButton = byId<HTMLButtonElement>("rendering");
 const repeatButton = byId<HTMLButtonElement>("repeat");
 /** Counts plays, so a play stopped while it starts, or waits between its parts, does not go on. */
 let plays = 0;
@@ -1861,9 +1862,9 @@ function stopPlay(): void {
   playing = null;
   playingBack = null;
   replay.stop();
-  recordingReplay.stop();
+  for (const voiced of VOICED) voiced.replay.stop();
   guide?.stop();
-  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, recordingButton]) button.setAttribute("aria-pressed", "false");
+  for (const button of [playButton, repeatButton, hearButton, compareButton, stepButton, recordingButton, renderingButton]) button.setAttribute("aria-pressed", "false");
   letSleep("play");
   unsayFetching();
 }
@@ -1932,45 +1933,72 @@ const replay = new Replay(
 );
 // Recording plays the chant's aligned recording over the run chosen, or the whole chant, once,
 // the cursor where the recording sang each note: in its own key, as it was sung, and the whole
-// chant from just before its first note, so not what is spoken before it on the recording. Its
-// sound is fetched and decoded the first time it is heard.
-const recordingReplay = new Replay(score, cursor, () => recordingButton.setAttribute("aria-pressed", "false"), undefined, "recording");
-/** When the recording sang each note of the chant as the library gave it, where it has the
- * recording's sound; null where it has none. */
-const recordingAt = found?.audio ? recordedTimes(recording, score.timeline.notes.length) : null;
-const recordingAudio = found?.audio && recordingAt ? recordingSound(found.audio) : null;
-/** Whether the recording is of the chant on the page: the chant as the library gave it. */
-const recordable = () => recordingAudio !== null && score.source === piece.gabc;
-/** Offers the recording beside the chant it is of. */
-function offerRecording(): void {
-  recordingButton.hidden = !recordable();
+// chant from just before its first note, so not what is spoken before it on the recording. Sung
+// plays the chant's rendering in a cantor's voice the same way, at its own speed and in its own
+// key, the cursor in the guide's colour, and the whole chant as rendered. Each sound is fetched
+// and decoded the first time it is heard.
+interface Voiced {
+  button: HTMLButtonElement;
+  replay: Replay;
+  /** When it sang each note of the chant as the library gave it; null where that is not known. */
+  times: Timed[] | null;
+  audio: ReturnType<typeof recordingSound> | null;
+  /** Whether the whole chant is heard from just before its first note to just after its last,
+   * and not the whole of the sound. */
+  trimmed: boolean;
+  /** What the status says while its sound is first fetched, and of it when it cannot be had,
+   * before why. */
+  fetching: string;
+  unplayed: string;
 }
-offerRecording();
+/** A sound of the chant kept at `audio`, timed at `times`. */
+function voicedFrom(button: HTMLButtonElement, voice: "recording" | "guide", audio: string | undefined, times: Timed[] | null, words: Pick<Voiced, "trimmed" | "fetching" | "unplayed">): Voiced {
+  const replay = new Replay(score, cursor, () => button.setAttribute("aria-pressed", "false"), undefined, voice);
+  return { button, replay, times, audio: audio && times ? recordingSound(audio) : null, ...words };
+}
+const recordingVoiced = voicedFrom(recordingButton, "recording", found?.audio, recordedTimes(recording, score.timeline.notes.length), {
+  trimmed: true,
+  fetching: "Fetching the recording…",
+  unplayed: "The recording could not be played",
+});
+const renderingVoiced = voicedFrom(renderingButton, "guide", found?.rendering?.audio, found?.rendering ? renderedTimes(score.timeline.notes, found.rendering) : null, {
+  trimmed: false,
+  fetching: "Fetching the sung chant…",
+  unplayed: "The sung chant could not be played",
+});
+const VOICED = [recordingVoiced, renderingVoiced];
+/** Whether `voiced` is of the chant on the page: the chant as the library gave it. */
+const offered = (voiced: Voiced) => voiced.audio !== null && score.source === piece.gabc;
+/** Offers each sound beside the chant it is of. */
+function offerVoiced(): void {
+  for (const voiced of VOICED) voiced.button.hidden = !offered(voiced);
+}
+offerVoiced();
 
-/** Plays the recording over the run chosen, or from its first note to its last, once. As Yours,
- * it lets go of what the status said of what there was none of to hear, and of a recording that
- * could not be had; while its sound is first fetched, the status says so. */
-async function hearRecording(): Promise<void> {
-  const times = recordingAt;
-  if (!recordable() || !recordingAudio || !times) return;
+/** Plays `voiced` over the run chosen, or the whole chant, once. As Yours, it lets go of what the
+ * status said of what there was none of to hear, and of a sound that could not be had; while its
+ * sound is first fetched, the status says so. */
+async function hearVoiced(voiced: Voiced): Promise<void> {
+  const { times, audio } = voiced;
+  if (!offered(voiced) || !audio || !times) return;
   quieten();
-  if (status.textContent?.startsWith(UNPLAYED)) setStatus("");
-  const run = begin(recordingButton, true, false);
-  if (!recordingAudio.kept()) {
-    saidBeforeFetching = { text: status.textContent ?? "", news: !status.classList.contains("error") };
-    setStatus(FETCHING, true);
+  if (VOICED.some((other) => status.textContent?.startsWith(other.unplayed))) setStatus("");
+  const run = begin(voiced.button, true, false);
+  if (!audio.kept()) {
+    saidBeforeFetching = { text: status.textContent ?? "", news: !status.classList.contains("error"), fetching: voiced.fetching };
+    setStatus(voiced.fetching, true);
   }
   try {
     const ctx = await audioContext();
-    const buffer = await recordingAudio.sound(ctx);
+    const buffer = await audio.sound(ctx);
     // A play stopped meanwhile has let go of the line.
     if (!going(run)) return;
     unsayFetching();
-    await recordingReplay.play(ctx, buffer, times, loop ?? [0, times.length - 1]);
+    await voiced.replay.play(ctx, buffer, times, loop ?? (voiced.trimmed ? [0, times.length - 1] : undefined));
   } catch (error) {
     if (!going(run)) return;
     stopPlay();
-    return setStatus(`${UNPLAYED}: ${error instanceof Error ? error.message : String(error)}`);
+    return setStatus(`${voiced.unplayed}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (going(run)) stopPlay();
 }
@@ -2112,7 +2140,7 @@ function toggle(button: HTMLButtonElement, start: () => Promise<void>): void {
   });
 }
 toggle(hearButton, hear);
-toggle(recordingButton, hearRecording);
+for (const sound of VOICED) toggle(sound.button, () => hearVoiced(sound));
 toggle(compareButton, () => compare(loop, compareButton));
 toggle(repeatButton, () => {
   setStatus("");
@@ -2259,7 +2287,7 @@ function startTaking(): number {
   stopPitch();
   stopDrone(false);
   listener.stop();
-  playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = recordingButton.disabled = true;
+  playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = recordingButton.disabled = renderingButton.disabled = true;
   speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = true;
   holdChant(true);
   takeButton.textContent = "Stop";
@@ -2567,7 +2595,7 @@ function endTake(): void {
   playButton.disabled = noteButton.disabled = droneButton.disabled = takeButton.disabled = !guide;
   takeButton.textContent = "Sing a take";
   compareButton.disabled = repeatButton.disabled = !guide;
-  hearButton.disabled = stepButton.disabled = recordingButton.disabled = false;
+  hearButton.disabled = stepButton.disabled = recordingButton.disabled = renderingButton.disabled = false;
   sendButton.disabled = sending;
   readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
@@ -2628,7 +2656,11 @@ if (test) {
     /** The notes the cursor has marked in the recording's latest play, whether it plays, and
      * whether its sound is kept. */
     get recorded() {
-      return { visited: recordingReplay.visited, playing: recordingReplay.playing, kept: recordingAudio?.kept() ?? false };
+      return { visited: recordingVoiced.replay.visited, playing: recordingVoiced.replay.playing, kept: recordingVoiced.audio?.kept() ?? false };
+    },
+    /** The same of the rendering. */
+    get rendered() {
+      return { visited: renderingVoiced.replay.visited, playing: renderingVoiced.replay.playing, kept: renderingVoiced.audio?.kept() ?? false };
     },
     /** The run looped, by note index, or null. */
     get loop() {
@@ -2685,7 +2717,7 @@ if (test) {
         setLoop(null);
         offerReplay(null);
         score.setChant(new Chant(gabc));
-        offerRecording();
+        offerVoiced();
       }
       if (guide) guide.gabc = gabc;
       // Through the Speed select, as a singer would, adding the pulse to it if it is not there.
@@ -2703,7 +2735,7 @@ if (test) {
         setLoop(null);
         offerReplay(null);
         score.setChant(new Chant(gabc));
-        offerRecording();
+        offerVoiced();
       }
       const finding = findKept(gabc);
       const since = forgettings;
