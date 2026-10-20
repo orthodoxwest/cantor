@@ -148,17 +148,24 @@ describe("api", () => {
       env.DB.prepare("INSERT INTO renderings (slug, gabc_sha256, pulse, transpose, zero) VALUES (?, ?, 0.5, -3, 0.08)").bind(slug, await sha256(gabc)).run();
     const served = async (slug: string, headers?: HeadersInit, bindings: Env = env) => {
       const res = await get(`/api/chants/${slug}`, headers, bindings);
-      return { res, body: await res.json<{ rendering?: unknown; recording?: unknown; gabc: string }>() };
+      return { res, body: await res.json<{ rendering?: { audio: string }; recording?: unknown; gabc: string }>() };
     };
+    const sungGabc = await gabcOf("private_chants", "private-sung");
     await render("ubi-caritas", ubi);
-    await render("private-sung", await gabcOf("private_chants", "private-sung"));
+    await render("private-sung", sungGabc);
     const sound = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 4, 5, 6]);
+    // Kept under the SHA-256 of the GABC it was sung from.
+    const keyOf = async (slug: string, gabc: string) => `renderings/${slug}/${await sha256(gabc)}.flac`;
     try {
       // Without its sound, none.
       expect((await served("ubi-caritas", student)).body).not.toHaveProperty("rendering");
       expect((await get("/api/chants/ubi-caritas/rendering", student)).status).toBe(404);
-      const kept = await env.TAKES.put("renderings/ubi-caritas.flac", sound);
-      const keptPrivate = await env.TAKES.put("renderings/private-sung.flac", sound);
+      // A sound kept under the slug alone, or another GABC's, is not this chant's.
+      await env.TAKES.put("renderings/ubi-caritas.flac", sound);
+      await env.TAKES.put(await keyOf("ubi-caritas", "(c4) A(f) (::)"), sound);
+      expect((await served("ubi-caritas", student)).body).not.toHaveProperty("rendering");
+      const kept = await env.TAKES.put(await keyOf("ubi-caritas", ubi), sound);
+      const keptPrivate = await env.TAKES.put(await keyOf("private-sung", sungGabc), sound);
       // A public chant comes with it to a known caller, named for the sound as kept, and that
       // answer is kept for no one else.
       const known = await served("ubi-caritas", student);
@@ -184,6 +191,13 @@ describe("api", () => {
       expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
       const again = await get("/api/chants/ubi-caritas/rendering", { ...student, "If-None-Match": res.headers.get("ETag")! });
       expect(again.status).toBe(304);
+      // Asked for by the name the chant gave it, it is heard; by a name no longer kept, a page
+      // that would time another sound as the last has none. So too a recording.
+      expect((await get(known.body.rendering!.audio, student)).status).toBe(200);
+      expect((await get("/api/chants/ubi-caritas/rendering?v=stale", student)).status).toBe(404);
+      const recorded = await env.TAKES.put("recordings/private-sung.flac", sound);
+      expect((await get(`/api/chants/private-sung/recording?v=${recorded!.etag}`, student)).status).toBe(200);
+      expect((await get("/api/chants/private-sung/recording?v=stale", student)).status).toBe(404);
       expect((await get("/api/chants/private-sung/rendering", student)).status).toBe(200);
       // A stranger is turned away before anything is looked up, and has the chant without asking
       // the store of sounds.
@@ -230,12 +244,24 @@ describe("api", () => {
       expect(unanswered.res.status).toBe(200);
       expect(unanswered.body).not.toHaveProperty("rendering");
       expect((await get("/api/chants/ubi-caritas/rendering", student, broken)).status).toBe(404);
-      // A chant corrected since it was rendered is not heard as it was.
-      await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(ubi.replace("(h) (::)", "(g) (::)")).run();
+      // A chant corrected since it was rendered is not heard as it was, public or private, nor
+      // once its row names the corrected GABC before that GABC's sound is kept.
+      const fixed = ubi.replace("(h) (::)", "(g) (::)");
+      await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(fixed).run();
       const corrected = await served("ubi-caritas", student);
       expect(corrected.body).not.toHaveProperty("rendering");
       expect(corrected.res.headers.get("Cache-Control")).toBe("public, max-age=300");
       expect((await get("/api/chants/ubi-caritas/rendering", student)).status).toBe(404);
+      await env.DB.prepare("UPDATE renderings SET gabc_sha256 = ? WHERE slug = 'ubi-caritas'").bind(await sha256(fixed)).run();
+      expect((await served("ubi-caritas", student)).body).not.toHaveProperty("rendering");
+      expect((await get("/api/chants/ubi-caritas/rendering", student)).status).toBe(404);
+      await env.DB.prepare("UPDATE private_chants SET gabc = ? WHERE slug = 'private-sung'").bind(sungGabc.replace("(f) (::)", "(g) (::)")).run();
+      const privately = await served("private-sung", student);
+      expect(privately.body).not.toHaveProperty("rendering");
+      expect(privately.body.recording).toHaveLength(1);
+      expect((await get("/api/chants/private-sung/rendering", student)).status).toBe(404);
+      await env.DB.prepare("UPDATE private_chants SET gabc = ? WHERE slug = 'private-sung'").bind(sungGabc).run();
+      expect((await get("/api/chants/private-sung/rendering", student)).status).toBe(200);
       // Under a public chant of the same slug, that chant is the one served, and it was not rendered.
       await env.DB.prepare("INSERT INTO chants (slug, title, gabc) VALUES ('private-sung', 'Shadow', '(c4) A(f) (::)')").run();
       expect((await served("private-sung", student)).body).not.toHaveProperty("rendering");
@@ -243,8 +269,10 @@ describe("api", () => {
     } finally {
       await env.DB.prepare("DELETE FROM chants WHERE slug = 'private-sung'").run();
       await env.DB.prepare("UPDATE chants SET gabc = ? WHERE slug = 'ubi-caritas'").bind(ubi).run();
+      await env.DB.prepare("UPDATE private_chants SET gabc = ? WHERE slug = 'private-sung'").bind(sungGabc).run();
       await env.DB.prepare("DELETE FROM renderings").run();
-      await env.TAKES.delete(["renderings/ubi-caritas.flac", "renderings/private-sung.flac"]);
+      const { objects } = await env.TAKES.list({ prefix: "renderings/" });
+      await env.TAKES.delete([...objects.map((o) => o.key), "recordings/private-sung.flac"]);
     }
   });
 

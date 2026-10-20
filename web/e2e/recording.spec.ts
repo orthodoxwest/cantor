@@ -564,13 +564,10 @@ test("on a phone the bar has Play and Sung, then the rest; beside a take Sung is
   await expect(page.locator("#rendering")).toBeEnabled();
 });
 
-test("beside a recording, Sung and Recording each stop the other, and the bar fits on a phone", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 640 });
+test("beside a recording, Sung and Recording each stop the other", async ({ page }) => {
   await rendered(page, { recorded: true });
   const sung = page.getByRole("button", { name: "Sung" });
   const recording = page.getByRole("button", { name: "Recording" });
-  const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
-  expect(await fits()).toBe(true);
   await sung.click();
   await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing)).toBe(true);
   await recording.click();
@@ -581,7 +578,36 @@ test("beside a recording, Sung and Recording each stop the other, and the bar fi
   await expect.poll(() => page.evaluate(() => window.__cantor.rendered.playing)).toBe(true);
   await expect(recording).toHaveAttribute("aria-pressed", "false");
   expect(await page.evaluate(() => window.__cantor.recorded.playing)).toBe(false);
-  await sung.click();
-  await besideTake(page);
-  expect(await fits()).toBe(true);
 });
+
+// With both a recording and a rendering: before a take, Play and the two, then the rest, until
+// all six fit in a row; beside one, the five voices in a row, or on a phone the four, Sung
+// opening the next.
+for (const [width, before, beside] of [
+  [320, ["Play Recording Sung", "Start note Drone Sing a take"], ["Compare Guide Yours Recording", "Sung Repeat Drone Sing a take"]],
+  [500, ["Play Recording Sung", "Start note Drone Sing a take"], ["Compare Guide Yours Recording", "Sung Repeat Drone Sing a take"]],
+  [650, ["Play Recording Sung", "Start note Drone Sing a take"], ["Compare Guide Yours Recording Sung", "Repeat Drone Sing a take"]],
+  [700, ["Play Recording Sung Start note Drone Sing a take"], ["Compare Guide Yours Recording Sung", "Repeat Drone Sing a take"]],
+  [1024, ["Play Recording Sung Start note Drone Sing a take"], ["Compare Guide Yours Recording Sung", "Repeat Start note Drone Sing a take"]],
+] as const) {
+  test(`at ${width} px, beside a recording, the bar keeps Sung in its rows of voices, and fits`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 700 });
+    await rendered(page, { recorded: true });
+    const rows = () =>
+      page.locator(".bar-in > button").evaluateAll((els) => {
+        const at = new Map<number, string[]>();
+        for (const el of els) {
+          if ((el as HTMLElement).offsetParent === null) continue;
+          const top = Math.round(el.getBoundingClientRect().top);
+          at.set(top, [...(at.get(top) ?? []), el.textContent!.trim()]);
+        }
+        return [...at.entries()].sort(([a], [b]) => a - b).map(([, names]) => names.join(" "));
+      });
+    const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
+    expect(await rows()).toEqual(before);
+    expect(await fits()).toBe(true);
+    await besideTake(page);
+    expect(await rows()).toEqual(beside);
+    expect(await fits()).toBe(true);
+  });
+}

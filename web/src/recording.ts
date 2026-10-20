@@ -26,8 +26,9 @@ export function renderedTimes(notes: readonly TimelineNote[], { pulse, zero }: P
   return timed(notes, pulse).map(({ start, duration }) => ({ start: zero + start, duration }));
 }
 
-/** The recording's sound at `url`, fetched and decoded the first time it is heard and kept for
- * the next (`kept` once it is in hand); one that failed is fetched again the next time. */
+/** The sound at `url`, the recording's or the rendering's, fetched and decoded the first time it
+ * is heard and kept for the next (`kept` once it is in hand); one that failed is fetched again the
+ * next time. */
 export function recordingSound(url: string): { sound: (ctx: BaseAudioContext) => Promise<AudioBuffer>; kept: () => boolean } {
   let decoded: Promise<AudioBuffer> | null = null;
   let kept = false;

@@ -1875,9 +1875,9 @@ function stopHear(): void {
   if (playing?.take) stopPlay();
 }
 
-/** Starts a play with `button` pressed, `take` if the take (or the recording) will sound in it
- * and `moved` if the guide will sing away from the Pitch; its run. A drone would cover the take,
- * and clash with the guide moved, so it stops for either. */
+/** Starts a play with `button` pressed, `take` if the take (or the recording, or the rendering)
+ * will sound in it and `moved` if the guide will sing away from the Pitch; its run. A drone would
+ * cover the take, and clash with the guide moved, so it stops for either. */
 function begin(button: HTMLButtonElement, take: boolean, moved: boolean): number {
   stopPlay();
   stopPitch();
