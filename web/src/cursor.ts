@@ -4,8 +4,8 @@
 import type { LineBox } from "neuma";
 import type { Score } from "./score";
 
-/** Whose voice the cursor follows: the guide's, the singer's take played back, or a recording
- * of the chant. */
+/** Whose voice the cursor follows: the guide's (the page's, or the chant's rendering in a
+ * cantor's voice), the singer's take played back, or a recording of the chant. */
 export type Voice = "guide" | "take" | "recording";
 
 export class Cursor {

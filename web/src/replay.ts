@@ -2,7 +2,7 @@
 // due in the take: from the audio the ear keeps for sending, decoded once by the page, through a
 // buffer source and a gain. The whole take, or only a run of its notes, from a moment before the
 // first. A chant's aligned recording plays back the same way, the cursor on each note where the
-// recording sang it.
+// recording sang it, and its rendering in a cantor's voice, the cursor in the guide's colour.
 import type { Cursor, Voice } from "./cursor";
 import type { Score } from "./score";
 import { noteAt, type Timed } from "./timing";
@@ -48,7 +48,7 @@ export class Replay {
      * played) and how many seconds into the take; null once it has stopped. */
     private readonly onAt: (at: { note: number | null; t: number } | null) => void = () => {},
     /** Whose sound it plays, the cursor drawn in its colour. */
-    private readonly voice: Exclude<Voice, "guide"> = "take",
+    private readonly voice: Voice = "take",
   ) {}
 
   /** Plays `buffer`, a take whose notes were judged at `times` (in seconds of the take, as many

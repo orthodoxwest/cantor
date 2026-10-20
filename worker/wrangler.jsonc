@@ -27,8 +27,8 @@
     "ACCESS_TEAM": "https://odd-sound-2cc5.cloudflareaccess.com",
     "ACCESS_AUD": "8d88c4c5e22059269fe76a28f29ce5811131e23095dc2b9a9e599b50187f0c75"
   },
-  // Student takes, and the private chants' aligned recordings as sound; the bucket exists on the
-  // account.
+  // Student takes, the private chants' aligned recordings as sound, and the chants rendered in a
+  // voice made from a cantor's; the bucket exists on the account.
   "r2_buckets": [{ "binding": "TAKES", "bucket_name": "cantor-takes" }],
   "workers_dev": true
 }
