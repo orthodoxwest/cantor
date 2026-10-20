@@ -195,6 +195,10 @@ describe("api", () => {
       // that would time another sound as the last has none. So too a recording.
       expect((await get(known.body.rendering!.audio, student)).status).toBe(200);
       expect((await get("/api/chants/ubi-caritas/rendering?v=stale", student)).status).toBe(404);
+      // As a browser asks again for the copy it has: unchanged, kept; by a stale name, none.
+      const etag = res.headers.get("ETag")!;
+      expect((await get(known.body.rendering!.audio, { ...student, "If-None-Match": etag })).status).toBe(304);
+      expect((await get("/api/chants/ubi-caritas/rendering?v=stale", { ...student, "If-None-Match": etag })).status).toBe(404);
       const recorded = await env.TAKES.put("recordings/private-sung.flac", sound);
       expect((await get(`/api/chants/private-sung/recording?v=${recorded!.etag}`, student)).status).toBe(200);
       expect((await get("/api/chants/private-sung/recording?v=stale", student)).status).toBe(404);

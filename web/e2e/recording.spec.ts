@@ -593,8 +593,10 @@ for (const [width, before, beside] of [
   test(`at ${width} px, beside a recording, the bar keeps Sung in its rows of voices, and fits`, async ({ page }) => {
     await page.setViewportSize({ width, height: 700 });
     await rendered(page, { recorded: true });
-    const rows = () =>
-      page.locator(".bar-in > button").evaluateAll((els) => {
+    // Measured in the page's own face, once it has loaded.
+    const rows = async () => {
+      await page.evaluate(() => document.fonts.ready);
+      return page.locator(".bar-in > button").evaluateAll((els) => {
         const at = new Map<number, string[]>();
         for (const el of els) {
           if ((el as HTMLElement).offsetParent === null) continue;
@@ -603,6 +605,7 @@ for (const [width, before, beside] of [
         }
         return [...at.entries()].sort(([a], [b]) => a - b).map(([, names]) => names.join(" "));
       });
+    };
     const fits = () => page.evaluate(() => [...document.querySelectorAll(".bar .btn")].every((el) => (el as HTMLElement).offsetParent === null || el.getBoundingClientRect().right <= innerWidth));
     expect(await rows()).toEqual(before);
     expect(await fits()).toBe(true);
