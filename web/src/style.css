@@ -257,38 +257,22 @@ a {
     color: var(--text);
   }
 }
-/* On a phone the brand keeps only its cross. */
-@media (max-width: 479.98px) {
-  .brand {
-    font-size: 0;
-    letter-spacing: 0;
-  }
-  .brand .cross {
-    font-size: 0.95rem;
-    margin: 0;
+/* On a phone the pages take a row of their own under the brand, spread across it: four pages, a
+ * sign-in and the switch do not fit one row of a 320px phone. */
+@media (max-width: 599.98px) {
+  .beam-in {
+    flex-wrap: wrap;
+    row-gap: 0.55rem;
   }
   .beam nav {
-    gap: 1rem;
-  }
-  /* With signing in offered too, everything draws in a little to fit a 320px phone. */
-  .beam-in.offers-signin {
-    gap: 0.7rem;
-  }
-  .beam-in.offers-signin nav {
-    gap: 0.7rem;
-  }
-  .beam-in.offers-signin nav a,
-  .signin {
-    font-size: 0.74rem;
-    letter-spacing: 0.02em;
-  }
-}
-
-/* The narrowest phones draw in a little more. */
-@media (max-width: 379.98px) {
-  .beam-in.offers-signin,
-  .beam-in.offers-signin nav {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: space-between;
     gap: 0.5rem;
+  }
+  .beam nav a {
+    padding-block: 0.55rem;
+    margin-block: -0.4rem -0.55rem;
   }
 }
 

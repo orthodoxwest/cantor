@@ -78,10 +78,11 @@ test("every page has the same pages in its header", async ({ page }) => {
     ["/", "Psalms"],
     ["/library", "Library"],
     ["/sing", "Practice"],
+    ["/editor", "Editor"],
   ] as const) {
     await page.goto(path);
     const nav = page.getByRole("navigation", { name: "Pages" });
-    await expect(nav.getByRole("link")).toHaveText(["Psalms", "Library", "Practice"]);
+    await expect(nav.getByRole("link")).toHaveText(["Psalms", "Library", "Practice", "Editor"]);
     await expect(nav.locator("[aria-current=page]")).toHaveText(current);
   }
 });
@@ -106,7 +107,7 @@ test("a visitor the site does not know is offered a sign-in that returns them to
   await page.goto("/library#lumen-gentium");
   const signIn = page.getByRole("link", { name: "Sign in" });
   await expect(signIn).toHaveAttribute("href", "/signin?next=%2Flibrary%23lumen-gentium");
-  await expect(page.getByRole("navigation", { name: "Pages" }).getByRole("link")).toHaveCount(3);
+  await expect(page.getByRole("navigation", { name: "Pages" }).getByRole("link")).toHaveCount(4);
 });
 
 test("a signed-in visitor is not offered a sign-in", async ({ page }) => {

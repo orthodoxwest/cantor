@@ -1,0 +1,158 @@
+/* The editor: the source in a monospaced well, its problems under it, the score engraved
+ * below; then the guide, each example's GABC beside its engraving. */
+:root {
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.source {
+  display: block;
+  width: 100%;
+  min-height: 9.5rem;
+  resize: vertical;
+  padding: 0.7rem 0.85rem;
+  font-family: var(--mono);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  background: var(--surface);
+  border-color: var(--gold-line);
+  tab-size: 2;
+}
+/* 16px or more, so a phone does not zoom in on the field. */
+@media (max-width: 719.98px) {
+  .source {
+    font-size: 1rem;
+  }
+}
+
+.problems {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+.problems li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.problems .where {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--serif);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+.problems .error .where {
+  color: var(--rubric);
+}
+.problems .warning .where {
+  color: var(--unsure);
+}
+.problems .fix {
+  min-height: 2.2rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.92rem;
+}
+
+#score {
+  margin: 1.4rem 0 0.5rem;
+  min-height: 6rem;
+  cursor: text;
+}
+@media (min-width: 1000px) {
+  #score {
+    --w: min(58rem, 100vw - 6rem);
+    width: var(--w);
+    margin-inline: calc(50% - var(--w) / 2);
+  }
+}
+
+/* The guide. */
+.guide {
+  margin-top: 2.5rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--gold-line);
+}
+.guide h2 {
+  font-size: 1.6rem;
+  line-height: 1.2;
+  color: var(--rubric);
+  margin-bottom: 0.6rem;
+}
+.guide h3 {
+  font-size: 1.22rem;
+  line-height: 1.3;
+  margin: 0 0 0.2rem;
+}
+.guide p {
+  margin: 0 0 0.7rem;
+}
+.step {
+  padding: 1.1rem 0 1.2rem;
+  border-bottom: 1px solid var(--border);
+}
+code {
+  font-family: var(--mono);
+  font-size: 0.84em;
+  background: var(--wash);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+.example {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+.example .code {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.example .code code {
+  background: none;
+  padding: 0;
+}
+.example .engraved {
+  line-height: 0;
+  color: var(--text);
+}
+.example .engraved svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.engraved .neuma-initial,
+.engraved .neuma-lyric.mark,
+.engraved .neuma-rubric {
+  fill: var(--rubric);
+}
+.engraved .neuma-staff,
+.engraved .neuma-bar {
+  fill: color-mix(in srgb, var(--text) 58%, var(--bg));
+}
+.example .try {
+  justify-self: start;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.98rem;
+}
+.more-reading {
+  margin-top: 1.2rem;
+  font-style: italic;
+  color: var(--muted);
+}
