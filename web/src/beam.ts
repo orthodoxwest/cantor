@@ -13,6 +13,5 @@ export async function offerSignIn(): Promise<void> {
   here();
   // The page's address changes as it is used (a piece opened, a psalm pointed); the link follows.
   for (const event of ["pointerdown", "focus", "contextmenu", "click"]) a.addEventListener(event, here);
-  beam.classList.add("offers-signin");
   beam.append(a);
 }

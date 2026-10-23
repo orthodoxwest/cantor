@@ -10,7 +10,7 @@ test("the editor engraves GABC as it is typed, and offers the fix for a problem"
   const problem = page.locator("#problems li");
   await expect(problem).toHaveCount(1);
   await expect(problem).toContainText("never close");
-  await problem.getByRole("button", { name: "Insert `)`" }).click();
+  await problem.getByRole("button", { name: "Insert )" }).click();
   await expect(source).toHaveValue("(c4) Al(f)le(gh)lu(h)ia.(g)");
   await expect(problem).toHaveCount(0);
   await expect(page.locator("#score")).toContainText("lu");
@@ -24,16 +24,16 @@ test("a note tapped in the score selects its source", async ({ page }) => {
   await page.goto("/editor");
   const source = page.getByLabel("GABC source");
   await source.fill("(c4) A(f) B(hg) C(e)");
-  const svg = page.locator("#score svg");
-  await expect(svg).toBeVisible();
-  // The middle syllable's first notehead, found by where neuma drew it.
-  const box = await page.evaluate(() => {
-    const host = document.getElementById("score")!.getBoundingClientRect();
-    const notes = [...document.querySelectorAll("#score use[data-note]")].map((e) => e.getBoundingClientRect());
-    const n = notes[1]!;
-    return { x: n.x + n.width / 2 - host.x, y: n.y + n.height / 2 - host.y };
+  // Engraved on the next frame: wait for it before finding a note.
+  await expect(page.locator("#score")).toContainText("B");
+  // The middle syllable's first notehead, found by where neuma drew it and tapped in the same
+  // task, so a relayout (a scrollbar coming or going) cannot move it in between.
+  await page.evaluate(() => {
+    const n = document.querySelectorAll("#score use[data-note]")[1]!.getBoundingClientRect();
+    const at = { clientX: n.x + n.width / 2, clientY: n.y + n.height / 2, bubbles: true };
+    document.getElementById("score")!.dispatchEvent(new MouseEvent("click", at));
   });
-  await page.locator("#score").click({ position: box });
+  await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
   const selected = await source.evaluate((t: HTMLTextAreaElement) => t.value.slice(t.selectionStart, t.selectionEnd));
   expect(selected).toBe("h");
 });
@@ -44,7 +44,21 @@ test("the guide's examples are engraved, and Try it puts one in the editor", asy
   await expect(examples).toHaveCount(6);
   await expect(examples.first().locator(".engraved svg")).toBeVisible();
   await examples.nth(1).getByRole("button", { name: "Try it" }).click();
-  await expect(page.getByLabel("GABC source")).toHaveValue("(c4) do(h) ti(g) la(f) sol(e) fa(d) (::)");
+  const source = page.getByLabel("GABC source");
+  await expect(source).toHaveValue("(c4) do(j) ti(i) la(h) sol(g) fa(f) (::)");
+});
+
+test("an example tried does not replace the visitor's own GABC kept for next time", async ({ page }) => {
+  await page.goto("/editor");
+  const source = page.getByLabel("GABC source");
+  await source.fill("(c4) Mine(f)");
+  await expect(page.locator("#score")).toContainText("ine");
+  await page.locator(".example").first().getByRole("button", { name: "Try it" }).click();
+  await expect(source).toHaveValue("(c4) Al(f)le(g)lu(h)ia.(g)");
+  await page.reload();
+  await expect(source).toHaveValue("(c4) Mine(f)");
+  await page.getByRole("button", { name: "Start again" }).click();
+  await expect(source).toHaveValue(/^name:Ubi caritas;/);
 });
 
 test("the editor fits a 320px phone", async ({ page }) => {

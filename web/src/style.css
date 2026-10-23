@@ -270,9 +270,10 @@ a {
     justify-content: space-between;
     gap: 0.5rem;
   }
+  /* The current page's rule lands on the beam's hairline, as on a wider screen. */
   .beam nav a {
-    padding-block: 0.55rem;
-    margin-block: -0.4rem -0.55rem;
+    padding-block: 0.55rem 0.76rem;
+    margin-block: -0.4rem -0.76rem;
   }
 }
 
