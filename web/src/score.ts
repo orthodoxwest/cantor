@@ -72,7 +72,11 @@ export class Score {
   /** What the engraving shows at a point of the host, while no strips are open (see neuma's
    * `sourceAt`). */
   sourceAt(x: number, y: number): SourceElement | null {
-    return this.strips ? null : this.page.sourceAt(x, y);
+    if (this.strips) return null;
+    // A line wider than the host (a long word on a phone) is drawn shrunk to fit.
+    const drawn = this.host.querySelector("svg")?.getBoundingClientRect().width;
+    const k = drawn ? this.page.width / drawn : 1;
+    return this.page.sourceAt(x * k, y * k);
   }
 
   /** Lays out at the host's width; nothing changes when the width is the same. */

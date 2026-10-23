@@ -67,6 +67,10 @@
   border-bottom: 1px solid var(--border);
   color: var(--muted);
 }
+.problems li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .problems .where {
   appearance: none;
   background: none;

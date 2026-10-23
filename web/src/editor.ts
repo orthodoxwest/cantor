@@ -106,10 +106,12 @@ function replace(start: number, end: number, text: string): void {
 els.problems.addEventListener("click", (e) => {
   const button = (e.target as Element).closest<HTMLButtonElement>("button");
   if (!button) return;
-  // The problems answer for the source as last engraved; one typed since is engraved first.
+  // The problems answer for the source as last engraved; after a keystroke not yet engraved,
+  // the list is drawn again for what is there now rather than acting on the old one.
   if (score.source !== els.source.value) {
     cancelAnimationFrame(frame);
     engrave();
+    return;
   }
   const at = problems[Number(button.dataset.at)];
   if (at) {
