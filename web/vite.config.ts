@@ -7,7 +7,7 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 // The pages, by the clean paths the site links to; Cloudflare's assets serve /library from
 // library.html, and this does the same in dev and preview.
-const PAGES = ["library", "sing", "diagnostics"];
+const PAGES = ["library", "sing", "editor", "diagnostics"];
 // Without the Worker, dev and preview answer the library's two routes from the public chants
 // content/build.mjs writes; private rows only ever come from the Worker.
 const LIBRARY = here("../content/dist/library.json");
@@ -71,6 +71,7 @@ export default defineConfig({
         main: here("index.html"),
         library: here("library.html"),
         sing: here("sing.html"),
+        editor: here("editor.html"),
         take: here("take.html"),
         diagnostics: here("diagnostics.html"),
         worklet: here("src/worklet/processor.ts"),

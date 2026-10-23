@@ -1,6 +1,6 @@
 // The engraved chant in its host, laid out again whenever the host's width changes. After a
 // take, a strip opens under each staff line for the ribbon (ribbon.ts).
-import type { Chant, LineBox, LinesPage, Timeline, View } from "neuma";
+import type { Chant, Diagnostic, LineBox, LinesPage, SourceElement, Timeline, View } from "neuma";
 import { STRIP } from "./ribbon";
 
 /** Where things go once the strips are open: each line's strip, and how far each line's
@@ -44,6 +44,11 @@ export class Score {
     return this.chant.source;
   }
 
+  /** What neuma finds wrong with the GABC shown. */
+  get diagnostics(): Diagnostic[] {
+    return this.chant.diagnostics;
+  }
+
   /** Shows another chant. */
   setChant(chant: Chant): void {
     this.view.free();
@@ -54,6 +59,24 @@ export class Score {
     this.page = this.view.layout(this.host.clientWidth);
     this.timeline = this.page.timeline();
     this.render();
+  }
+
+  /** Shows the chant's GABC changed to `gabc`, as an editor does on each keystroke, reusing
+   * the lines that did not change. */
+  update(gabc: string): void {
+    if (!this.chant.update(gabc)) return;
+    this.strips = null;
+    this.relayout();
+  }
+
+  /** What the engraving shows at a point of the host, while no strips are open (see neuma's
+   * `sourceAt`). */
+  sourceAt(x: number, y: number): SourceElement | null {
+    if (this.strips) return null;
+    // A line wider than the host (a long word on a phone) is drawn shrunk to fit.
+    const drawn = this.host.querySelector("svg")?.getBoundingClientRect().width;
+    const k = drawn ? this.page.width / drawn : 1;
+    return this.page.sourceAt(x * k, y * k);
   }
 
   /** Lays out at the host's width; nothing changes when the width is the same. */

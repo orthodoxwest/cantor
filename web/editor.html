@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      // The reader's own choice of light or dark, before the page is drawn; otherwise the system's.
+      try {
+        const theme = localStorage.getItem("theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
+    <script src="/theme.js" defer></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Editor · Cantor</title>
+    <meta name="description" content="Write chant in GABC and see it engraved as you type, with a short guide to the notation." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" />
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/editor.css" />
+  </head>
+  <body>
+    <header class="beam">
+      <div class="beam-in">
+        <a class="brand" href="/"><span class="cross" aria-hidden="true">✠</span>Cantor</a>
+        <nav aria-label="Pages">
+          <a href="/">Psalms</a>
+          <a href="/library">Library</a>
+          <a href="/sing">Practice</a>
+          <a href="/editor" aria-current="page">Editor</a>
+        </nav>
+        <button type="button" class="theme" id="theme" aria-label="Light or dark" title="Light or dark">
+          <svg class="moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 1.4a6.6 6.6 0 1 0 4 10.9A5.6 5.6 0 0 1 10.6 1.4z" /></svg>
+          <svg class="sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.1" /><path d="M8 .9v2.2M8 12.9v2.2M.9 8h2.2M12.9 8h2.2M3 3l1.5 1.5M11.5 11.5 13 13M3 13l1.5-1.5M11.5 4.5 13 3" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <p class="titulus">Editor</p>
+      <h1 class="title">Write in GABC</h1>
+      <p class="lede">Type chant in GABC and the score is engraved as you go. Tap a note to find it in the source. New to GABC? The guide below starts from nothing.</p>
+
+      <label class="sr" for="source">GABC source</label>
+      <textarea id="source" class="source" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" rows="4" placeholder="(c4) Al(f)le(g)lu(h)ia.(g)"></textarea>
+      <div class="under">
+        <ul class="problems" id="problems"></ul>
+        <button type="button" class="again" id="again">Start again</button>
+      </div>
+      <p class="sr" id="heard" aria-live="polite"></p>
+      <div id="score" class="score"></div>
+      <p class="status" id="status" aria-live="polite"></p>
+
+      <section class="guide" id="guide" aria-labelledby="guide-title">
+        <p class="titulus">A short guide</p>
+        <h2 id="guide-title">GABC in six steps</h2>
+        <p>GABC is the plain-text way of writing square notation that Gregorio and GregoBase use, and that every score in this site's library is written in. You write the words, and after each syllable, in brackets, the notes it is sung to. Each example below is engraved as written; <em>Try it</em> puts it in the editor (undo brings back what you had).</p>
+
+        <article class="step">
+          <h3>1. Words, then notes</h3>
+          <p>Each syllable is followed by its notes in brackets. The syllables of one word run together; a space starts a new word. The first bracket of the score holds the clef.</p>
+          <div class="example" data-gabc="(c4) Al(f)le(g)lu(h)ia.(g)"></div>
+        </article>
+
+        <article class="step">
+          <h3>2. Pitches are letters</h3>
+          <p>The letters <code>a</code> to <code>m</code> are the lines and spaces of the staff, from below it upward: <code>d</code> is the bottom line, <code>e</code> the space above it, and so on to <code>j</code> on the top line; <code>a</code> to <code>c</code> lie below the staff and <code>k</code> to <code>m</code> above it. The clef says where <i>do</i> sits: <code>c4</code> puts it on the fourth line (so <code>j</code> is <i>do</i>), <code>c3</code> on the third (<code>h</code>), and <code>f3</code> puts <i>fa</i> on the third.</p>
+          <div class="example" data-initial="0" data-gabc="(c4) do(j) ti(i) la(h) sol(g) fa(f) (::)"></div>
+        </article>
+
+        <article class="step">
+          <h3>3. Several notes, one syllable</h3>
+          <p>Letters written together in one bracket make a neume, sung on the one syllable and drawn joined. Rising notes join into a podatus (<code>fg</code>), falling ones into a clivis (<code>hg</code>), and up-and-down into a torculus (<code>ghg</code>). A capital letter is a diamond note, for quick falling runs: <code>hGF</code>. A <code>/</code> inside the bracket breaks the neume into pieces with a small gap (<code>//</code> or a space gives a bigger one).</p>
+          <div class="example" data-gabc="(c4) Ky(fg)ri(hg)e(ghg) e(hGF)lé(gh/hg)i(fe)son.(f)"></div>
+        </article>
+
+        <article class="step">
+          <h3>4. Bars and breath</h3>
+          <p>Bars go in their own brackets: <code>(,)</code> a quarter bar for a breath, <code>(;)</code> a half bar for a short pause, <code>(:)</code> a full bar at the end of a phrase, and <code>(::)</code> the double bar at the end of a piece. A <code>*</code> in the words marks a division: in an antiphon, where the choir takes over from the cantor; in a psalm verse, the pause in the middle.</p>
+          <div class="example" data-gabc="(c4) Glo(f)ry(g) be(h) to(h) the(g) Fa(h)ther,(h) (,) and(h) to(g) the(f) Son, *(g) (:) and(h) to(g) the(h) Ho(g)ly(f) Ghost.(f) (::)"></div>
+        </article>
+
+        <article class="step">
+          <h3>5. Marks on the notes</h3>
+          <p>A sign after a letter changes how it is sung or drawn: <code>.</code> a dot that doubles the note, <code>_</code> an episema that lengthens it a little, <code>v</code> a virga (a note with a stem), <code>w</code> a quilisma (the jagged note in a rising group), <code>~</code> a liquescent, a small note where the voice glides through a consonant such as <i>l</i>, <i>m</i> or <i>n</i>, and <code>s</code> a stropha, often three on one pitch. A letter and <code>x</code> put a flat on that line or space, to the end of the word or the next bar: under <code>c4</code>, <code>(ixi)</code> sings <i>ti</i> flat.</p>
+          <div class="example" data-gabc="(c4) Ho(f.)ly(g_) God,(hv) ho(fgwh)ly(hg~) and(ixi) might(hsss)y.(h.) (::)"></div>
+        </article>
+
+        <article class="step">
+          <h3>6. The header</h3>
+          <p>A file can start with lines that describe it, each <code>key:value;</code>, ended by a line holding only <code>%%</code>. <code>name</code> names the piece (Gregorio expects at least that), and <code>mode</code> its mode, which is printed over the initial. The first letter of the words becomes the large initial; as in the printed books, the letter after it is written as a capital too, so <code>WHere</code>. A line starting with <code>%</code> is a comment. The editor engraves a score with or without a header.</p>
+          <div class="example" data-gabc="name:Ubi caritas;&#10;mode:6;&#10;%%&#10;(c4) WHere(f) cha(gh)ri(hg)ty(h) and(ixi) love(hg) are,(hg) (,) there(f) is(fg) God.(g) (::)"></div>
+        </article>
+
+        <p class="more-reading">For the whole of the notation, see Gregorio's <a href="https://gregorio-project.github.io/gabc/" rel="noopener">GABC reference</a>.</p>
+      </section>
+    </main>
+
+    <div class="bar" id="bar">
+      <div class="bar-in">
+        <button type="button" class="btn primary" id="play" aria-pressed="false" disabled>Play</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="copy">Copy GABC</button>
+      </div>
+    </div>
+    <script type="module" src="/src/editor.ts"></script>
+  </body>
+</html>
