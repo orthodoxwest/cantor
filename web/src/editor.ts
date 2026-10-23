@@ -49,7 +49,9 @@ function keep(gabc: string): void {
 
 await init();
 
-els.source.value = kept() ?? START;
+// Anything typed while the engine loaded stays.
+const early = els.source.value !== "";
+if (!early) els.source.value = kept() ?? START;
 const score = new Score(els.score, new Chant(els.source.value), SCALE);
 const cursor = new Cursor(score);
 
@@ -125,7 +127,7 @@ els.problems.addEventListener("click", (e) => {
 
 /** Whether the source is the visitor's own, to be kept; a guide's example put in is not, until
  * it is edited. */
-let own = false;
+let own = early;
 /** Set while an example is put in. */
 let putting = false;
 
