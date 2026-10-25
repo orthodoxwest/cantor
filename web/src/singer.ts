@@ -2,7 +2,8 @@
 // table, either the neutral vowel it makes itself or a voice file of recorded vowels, which is
 // private and loaded at runtime from a URL the page is given. `sing` renders the part a chunk
 // at a time just ahead of the audio clock, so a long chant never schedules more than a couple
-// of seconds at once. It needs no score or cursor, so any page can sing a list of notes.
+// of seconds at once. It needs no score or cursor, so any page can sing a list of notes. The
+// made voice sings doubled an octave below, for the many men the guide sits high for.
 import type { TimelineNote } from "neuma";
 import { timed } from "./timing";
 
@@ -23,9 +24,9 @@ const WASM_URL = `${import.meta.env.BASE_URL}cantor.wasm`;
 const CHUNK = 0.5;
 const AHEAD = 1.5;
 const LEVEL = 0.25;
-/** Each layer's gain when the voice is doubled an octave below, so the two together sound
- * about as loud as one. */
-const DOUBLED = 0.7;
+/** The octave below's gain beside the voice, which is left as it is: a phone's speaker hardly
+ * plays the octave below, so the guide is no quieter there. */
+const BELOW = 0.7;
 
 /** A note to sing: its pitch (MIDI), start and length in seconds, the indexes of the word and
  * syllable it belongs to, and the syllable's text. Notes of one syllable share its indexes. */
@@ -212,6 +213,9 @@ export interface SingOptions {
   /** Told when a chunk could not be sung after the start, once the voice is silenced; without
    * it the error is thrown. One that fails at the start rejects `sing` instead. */
   onError?: (error: unknown) => void;
+  /** Whether the voice is doubled an octave below; as the table is ([`VoiceTable.doubled`])
+   * when omitted. */
+  below?: boolean;
 }
 
 /** `notes` an octave below. */
@@ -242,7 +246,6 @@ export class Singing {
     // Chunks start on whole sample frames counted from here, so they meet exactly.
     const frame0 = Math.ceil((ctx.currentTime + 0.05) * rate);
     const total = Math.max(0, ...parts.map((p) => p.length(rate)));
-    const layer = parts.length > 1 ? DOUBLED : 1;
     this.start = frame0 / rate;
     this.end = (frame0 + total) / rate;
     let out = output;
@@ -259,7 +262,7 @@ export class Singing {
       if (!this.parts) return;
       const horizon = ctx.currentTime * rate - frame0 + AHEAD * rate;
       for (const [from, len] of chunksDue(next, horizon, size, total)) {
-        const samples = mix(this.parts.map((p) => p.sing(rate, from, len)), layer);
+        const samples = mix(this.parts.map((p) => p.sing(rate, from, len)));
         const buffer = ctx.createBuffer(1, len, rate);
         buffer.copyToChannel(samples, 0);
         const src = ctx.createBufferSource();
@@ -321,11 +324,12 @@ export class Singing {
   }
 }
 
-/** The sum of `layers`, each scaled by `gain`; the one layer as it is when there is one. */
-export function mix(layers: Float32Array<ArrayBuffer>[], gain: number): Float32Array<ArrayBuffer> {
-  if (layers.length === 1 && gain === 1) return layers[0]!;
-  const out = new Float32Array(layers[0]?.length ?? 0);
-  for (const layer of layers) for (let i = 0; i < out.length; i++) out[i]! += gain * (layer[i] ?? 0);
+/** The voice (the first of `layers`) as it is, plus the rest, each at [`BELOW`]. */
+export function mix(layers: Float32Array<ArrayBuffer>[]): Float32Array<ArrayBuffer> {
+  const [first, ...rest] = layers;
+  if (!rest.length) return first!;
+  const out = first!.slice();
+  for (const layer of rest) for (let i = 0; i < out.length; i++) out[i]! += BELOW * (layer[i] ?? 0);
   return out;
 }
 
@@ -334,7 +338,7 @@ export async function sing(ctx: AudioContext, notes: readonly SungNote[], option
   const table = options.table ?? (await neutralTable());
   await table.renew();
   const parts = [table.part(notes, options.gabc)];
-  if (table.doubled) {
+  if (options.below ?? table.doubled) {
     try {
       parts.push(table.part(octaveBelow(notes), options.gabc));
     } catch (error) {

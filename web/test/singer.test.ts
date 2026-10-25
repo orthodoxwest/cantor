@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunksDue, fromTimeline, mix, notesText, octaveBelow, octaveShift, Part, Singing } from "../src/singer";
+import { chunksDue, fromTimeline, mix, notesText, octaveBelow, octaveShift, Part, sing, Singing, type SungNote, VoiceTable } from "../src/singer";
 
 describe("fromTimeline and notesText", () => {
   it("time a run from its first pulse and write one tab-separated line per note", () => {
@@ -49,10 +49,13 @@ describe("octaveBelow and mix", () => {
     expect(notes[0]!.midi).toBe(60);
   });
 
-  it("add the layers, each at the gain given, and leave one layer alone", () => {
+  it("leave the voice as it is and add the octave below at 0.7", () => {
     const one = new Float32Array([0.5, -0.25]);
-    expect(mix([one], 1)).toBe(one);
-    expect([...mix([one, new Float32Array([0.25, 0.25])], 0.5)]).toEqual([0.375, 0]);
+    expect(mix([one])).toBe(one);
+    const mixed = mix([one, new Float32Array([0.5, 0.25])]);
+    expect(mixed[0]).toBeCloseTo(0.85, 6);
+    expect(mixed[1]).toBeCloseTo(-0.075, 6);
+    expect([...one]).toEqual([0.5, -0.25]);
   });
 });
 
@@ -124,6 +127,41 @@ describe("Singing", () => {
     expect(nodes).toHaveLength(1 + singing.chunks.length);
     singing.stop();
     expect(freed).toEqual([7, 8]);
+  });
+
+  // A table that hands out the setup's parts, 7 then 8, and records the notes each was made
+  // for; `failSecond` makes the second refuse.
+  function table(doubled: boolean, renderer: ReturnType<typeof setup>["renderer"], failSecond = false) {
+    const asked: number[][] = [];
+    const t = {
+      doubled,
+      renew: async () => {},
+      part: (notes: readonly SungNote[]) => {
+        asked.push(notes.map((n) => n.midi));
+        if (asked.length === 2 && failSecond) throw new WebAssembly.RuntimeError("unreachable");
+        return new Part(renderer as unknown as ConstructorParameters<typeof Part>[0], 6 + asked.length);
+      },
+    };
+    return { table: t as unknown as VoiceTable, asked };
+  }
+  const notes: SungNote[] = [{ midi: 60, start: 0, duration: 1, word: 0, syllable: 0, text: "A" }];
+
+  it("sings the made voice doubled an octave below, and a cantor's voice alone", async () => {
+    for (const doubled of [true, false]) {
+      const { ctx, renderer, freed } = setup(0, "trap");
+      const { table: t, asked } = table(doubled, renderer);
+      const singing = await sing(ctx as unknown as AudioContext, notes, { table: t });
+      expect(asked).toEqual(doubled ? [[60], [48]] : [[60]]);
+      singing.stop();
+      expect(freed).toEqual(doubled ? [7, 8] : [7]);
+    }
+  });
+
+  it("lets the first part go when the octave below cannot be made", async () => {
+    const { ctx, renderer, freed } = setup(0, "trap");
+    const { table: t } = table(true, renderer, true);
+    await expect(sing(ctx as unknown as AudioContext, notes, { table: t })).rejects.toThrow();
+    expect(freed).toEqual([7]);
   });
 
   for (const failure of ["trap", "audio"] as const) {

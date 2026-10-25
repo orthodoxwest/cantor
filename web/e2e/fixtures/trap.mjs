@@ -1,6 +1,7 @@
 // Runs in the page, before its scripts: cantor.wasm traps for real on the fourth chunk it is
 // asked to sing, by being asked for more samples than it can hold, as a renderer out of memory
-// would. A chunk is counted once however many layers sing it (a doubled voice sings two).
+// would. A chunk is counted once however many layers sing it (a doubled voice sings two), by
+// its first sample changing: enough for one part sung at a time.
 // Other modules are left alone.
 export function trapFourthChunk() {
   const instantiate = WebAssembly.instantiate.bind(WebAssembly);
