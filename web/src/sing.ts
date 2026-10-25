@@ -3,7 +3,7 @@ import { Cursor } from "./cursor";
 import { Guide, PULSE } from "./guide";
 import { type Entry, Listener } from "./listen";
 import DEFAULT_GABC from "../../content/chants/lumen-gentium.gabc?raw";
-import { escape, finds, highlight, kicker, library, chant as findChant, terms, type LibraryChant } from "./library";
+import { escape, finds, highlight, kicker, library, marked, chant as findChant, terms, type LibraryChant } from "./library";
 import { describePitch, noteName } from "./notes";
 import { drawMarks, type Mark } from "./marks";
 import { SCALE, Score } from "./score";
@@ -87,7 +87,7 @@ function drawFound(): void {
     .map(
       (c) => `<li><a href="${escape(practice(c.slug))}"${c.slug === piece.slug ? ' aria-current="page"' : ""}>
   <span class="name">${highlight(c.title, ts)}${c.name ? ` <span class="latin">${highlight(c.name, ts)}</span>` : ""}</span>
-  <span class="kicker">${escape(kicker(c))}</span></a></li>`,
+  <span class="kicker">${escape(marked(c))}</span></a></li>`,
     )
     .join("");
   foundList.hidden = !matches.length;

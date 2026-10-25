@@ -215,6 +215,28 @@ test("the library narrows to the pieces approved for the AWRV, and the address k
   await only.uncheck();
   await expect(page).toHaveURL(/\/library$/);
   expect(Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0])).toBeGreaterThan(2);
+
+  // Going forward comes to the piece's address, which chose only the approved pieces; back
+  // again to the one that did not.
+  await page.goForward();
+  await expect(page).toHaveURL(/\/library\?awrv#lumen-gentium$/);
+  await expect(only).toBeChecked();
+  await page.goBack();
+  await expect(page.locator("#browse")).toBeVisible();
+  await expect(only).not.toBeChecked();
+
+  // A kind the approved pieces have none of shows them all, and comes back with the rest.
+  await only.uncheck();
+  await page.getByRole("button", { name: /^Hymns/ }).click();
+  await only.check();
+  await expect(page.getByRole("button", { name: /^All2$/ })).toHaveAttribute("aria-pressed", "true");
+  await only.uncheck();
+  await expect(page.getByRole("button", { name: /^Hymns/ })).toHaveAttribute("aria-pressed", "true");
+
+  // An address that says no does not choose them.
+  await page.goto("/library?awrv=0");
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  await expect(only).not.toBeChecked();
 });
 
 test("the library offers no choice of approved pieces while none is marked", async ({ page }) => {

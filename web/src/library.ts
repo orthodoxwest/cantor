@@ -103,6 +103,9 @@ export const byMass = (a: LibraryChant, b: LibraryChant) =>
 /** The kind as a heading word ("Antiphon"), or null. */
 export const kindName = (kind: OfficePartKind | null): string | null => (kind && KINDS[kind]) ?? null;
 
+/** The kicker, with "AWRV approved" after it for a piece that is: what a search for "awrv" found. */
+export const marked = (c: Pick<LibraryChant, "kind" | "mode" | "name" | "awrv">): string => [kicker(c), c.awrv && "AWRV approved"].filter(Boolean).join(" · ");
+
 /** "Antiphon · Mode viii", "Mass VIII (De Angelis) · Kyrie · Mode v", or what of it is known. */
 export function kicker(chant: Pick<LibraryChant, "kind" | "mode" | "name">): string {
   return [massName(chant), kindName(chant.kind), chant.mode && `Mode ${chant.mode}`].filter(Boolean).join(" · ");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approval, byMass, byTitle, finds, highlight, kicker, massName, terms, type LibraryChant } from "../src/library";
+import { approval, byMass, byTitle, finds, highlight, kicker, marked, massName, terms, type LibraryChant } from "../src/library";
 
 describe("the library's order", () => {
   it("files titles by their words, past a leading versicle sign or number", () => {
@@ -113,5 +113,7 @@ describe("approval for the AWRV", () => {
     expect(finds(piece(true), terms("awrv approved"))).toBe(true);
     expect(finds(piece(false), terms("awrv"))).toBe(false);
     expect(finds(piece(null), terms("awrv"))).toBe(false);
+    expect(marked(piece(true))).toBe("Antiphon · AWRV approved");
+    expect(marked(piece(false))).toBe("Antiphon");
   });
 });

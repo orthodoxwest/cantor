@@ -4,7 +4,7 @@
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
 import { Guide } from "./guide";
-import { byMass, chant as fetchChant, escape, finds, highlight, isOrdinary, kicker, kindName, library, terms, type FullChant, type LibraryChant } from "./library";
+import { byMass, chant as fetchChant, escape, finds, highlight, isOrdinary, kindName, library, marked, terms, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
 import { offerSignIn } from "./beam";
 import { neutralTable } from "./singer";
@@ -53,6 +53,8 @@ let limit = PAGE;
 
 const ALL = "";
 let kind = ALL;
+/** The kind the visitor chose, which comes back when the pieces browsed have it again. */
+let chosenKind = ALL;
 
 /** The movements of the Mass are browsed together, a Mass's in the order they are sung. */
 const MASS = "Mass";
@@ -63,15 +65,20 @@ const plural = (k: string) => (k === MASS ? "Mass settings" : k.endsWith("y") ? 
 // The choice to see only those is offered once any piece is marked, and kept in the address
 // (?awrv) so that a link to the library shares it.
 const approved = chants.filter((c) => c.awrv === true);
-let approvedOnly = approved.length > 0 && new URLSearchParams(location.search).has("awrv");
+/** Whether the address asks for only the approved pieces: ?awrv, but not ?awrv=0 or ?awrv=no. */
+const askedApproved = () => {
+  const v = new URLSearchParams(location.search).get("awrv");
+  return approved.length > 0 && v !== null && v !== "0" && v.toLowerCase() !== "no";
+};
+let approvedOnly = askedApproved();
 /** The pieces browsed: all, or only those approved. */
 const browsed = () => (approvedOnly ? approved : chants);
 
 function drawKinds(): void {
   const pieces = browsed();
   const kinds = [...new Set(pieces.map(kindOf))].sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
-  // A kind none of the pieces browsed is of goes, and with it its choice.
-  if (!kinds.includes(kind)) kind = ALL;
+  // A kind none of the pieces browsed is of shows them all, until it is among them again.
+  kind = kinds.includes(chosenKind) ? chosenKind : ALL;
   const chip = (value: string, label: string, n: number) =>
     `<button type="button" class="kind" data-kind="${escape(value)}" aria-pressed="${kind === value}">${escape(label)}<span class="n">${n}</span></button>`;
   const all: [string, string, number][] = [
@@ -88,7 +95,7 @@ function drawKinds(): void {
 
 /** Shows `k`'s pieces, the chips and the list agreeing. */
 function chooseKind(k: string): void {
-  kind = k;
+  kind = chosenKind = k;
   for (const b of els.kinds.querySelectorAll<HTMLButtonElement>("[data-kind]"))
     b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
   els.pickKind.value = kind;
@@ -135,9 +142,6 @@ function chooseApproved(only: boolean): void {
   drawKinds();
   drawResults();
 }
-
-/** "AWRV approved", beside the kicker of a piece that is. */
-const marked = (c: LibraryChant) => [kicker(c), c.awrv && "AWRV approved"].filter(Boolean).join(" · ");
 
 function drawResults(): void {
   const q = terms(els.q.value);
@@ -277,7 +281,7 @@ els.play.addEventListener("click", () => {
 
 function route(): void {
   // Going back or forward may come to an address that chose otherwise.
-  const only = approved.length > 0 && new URLSearchParams(location.search).has("awrv");
+  const only = askedApproved();
   if (only !== approvedOnly) {
     approvedOnly = els.approved.checked = only;
     drawKinds();
@@ -318,7 +322,7 @@ if (loaded) {
   window.addEventListener("popstate", route);
   els.approvedOnly.hidden = approved.length === 0;
   els.approved.checked = approvedOnly;
-  els.approvedN.textContent = String(approved.length);
+  els.approvedN.textContent = `(${approved.length})`;
   drawKinds();
   drawResults();
   route();
