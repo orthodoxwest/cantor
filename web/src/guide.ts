@@ -32,6 +32,8 @@ export interface PlayOptions {
   transpose?: number;
   /** Seconds a pulse, for this play alone; [`Guide.pulse`] when omitted. */
   pulse?: number;
+  /** Whether the voice is doubled an octave below; as its table is when omitted. */
+  below?: boolean;
 }
 
 /** A play under way: when its pulse 0 falls on the audio clock, how long after that its
@@ -96,7 +98,7 @@ export class Guide {
 
   /** Plays the chant, sung (unless `voice` is false) and followed by the cursor; resolves
    * once it has started, or with null if it did not. */
-  async play({ voice = true, lead = 0, range, transpose, pulse = this.pulse }: PlayOptions = {}): Promise<Started | null> {
+  async play({ voice = true, lead = 0, range, transpose, pulse = this.pulse, below }: PlayOptions = {}): Promise<Started | null> {
     if (this.playing) return null;
     this.playing = true;
     const play = ++this.plays;
@@ -113,7 +115,7 @@ export class Guide {
       const base = all[from]?.start ?? 0;
       const run = range ? all.slice(from, to + 1).map((n) => ({ ...n, start: n.start - base })) : all;
       this.latest = run;
-      if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError });
+      if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError, below });
     } catch (error) {
       this.fail(play, error);
       return null;

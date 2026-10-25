@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunksDue, fromTimeline, notesText, octaveShift, Part, Singing } from "../src/singer";
+import { chunksDue, fromTimeline, mix, notesText, octaveBelow, octaveShift, Part, sing, Singing, type SungNote, VoiceTable } from "../src/singer";
 
 describe("fromTimeline and notesText", () => {
   it("time a run from its first pulse and write one tab-separated line per note", () => {
@@ -42,6 +42,23 @@ describe("octaveShift", () => {
   });
 });
 
+describe("octaveBelow and mix", () => {
+  it("sing the same notes an octave lower, at the same times", () => {
+    const notes = [{ midi: 60, start: 0.5, duration: 1, word: 0, syllable: 0, text: "Glo" }];
+    expect(octaveBelow(notes)).toEqual([{ ...notes[0], midi: 48 }]);
+    expect(notes[0]!.midi).toBe(60);
+  });
+
+  it("leave the voice as it is and add the octave below at 0.7", () => {
+    const one = new Float32Array([0.5, -0.25]);
+    expect(mix([one])).toBe(one);
+    const mixed = mix([one, new Float32Array([0.5, 0.25])]);
+    expect(mixed[0]).toBeCloseTo(0.85, 6);
+    expect(mixed[1]).toBeCloseTo(-0.075, 6);
+    expect([...one]).toEqual([0.5, -0.25]);
+  });
+});
+
 describe("chunksDue", () => {
   it("covers the part once, chunk by chunk, up to the horizon", () => {
     expect(chunksDue(0, 250, 100, 1000)).toEqual([
@@ -64,7 +81,8 @@ describe("Singing", () => {
     const freed: number[] = [];
     const wasm = {
       memory: new WebAssembly.Memory({ initial: 1 }),
-      cantor_part_length: () => 32_000,
+      // The second part one test adds, 8, lasts 5 s.
+      cantor_part_length: (handle: number) => (handle === 8 ? 40_000 : 32_000),
       cantor_sing: () => {
         if (++calls === failAt && failure === "trap") {
           trapped = true;
@@ -100,13 +118,59 @@ describe("Singing", () => {
     vi.useRealTimers();
   });
 
+  it("sings two parts as one, for as long as the longer lasts, and lets both go", () => {
+    const { ctx, part, renderer, freed, nodes } = setup(0, "trap");
+    const longer = new Part(renderer as unknown as ConstructorParameters<typeof Part>[0], 8);
+    const singing = new Singing(ctx as unknown as AudioContext, [part, longer], undefined);
+    expect(singing.end).toBeCloseTo(singing.start + 5, 9);
+    // The gain and one source a chunk.
+    expect(nodes).toHaveLength(1 + singing.chunks.length);
+    singing.stop();
+    expect(freed).toEqual([7, 8]);
+  });
+
+  // A table that hands out the setup's parts, 7 then 8, and records the notes each was made
+  // for; `failSecond` makes the second refuse.
+  function table(doubled: boolean, renderer: ReturnType<typeof setup>["renderer"], failSecond = false) {
+    const asked: number[][] = [];
+    const t = {
+      doubled,
+      renew: async () => {},
+      part: (notes: readonly SungNote[]) => {
+        asked.push(notes.map((n) => n.midi));
+        if (asked.length === 2 && failSecond) throw new WebAssembly.RuntimeError("unreachable");
+        return new Part(renderer as unknown as ConstructorParameters<typeof Part>[0], 6 + asked.length);
+      },
+    };
+    return { table: t as unknown as VoiceTable, asked };
+  }
+  const notes: SungNote[] = [{ midi: 60, start: 0, duration: 1, word: 0, syllable: 0, text: "A" }];
+
+  it("sings the made voice doubled an octave below, and a cantor's voice alone", async () => {
+    for (const doubled of [true, false]) {
+      const { ctx, renderer, freed } = setup(0, "trap");
+      const { table: t, asked } = table(doubled, renderer);
+      const singing = await sing(ctx as unknown as AudioContext, notes, { table: t });
+      expect(asked).toEqual(doubled ? [[60], [48]] : [[60]]);
+      singing.stop();
+      expect(freed).toEqual(doubled ? [7, 8] : [7]);
+    }
+  });
+
+  it("lets the first part go when the octave below cannot be made", async () => {
+    const { ctx, renderer, freed } = setup(0, "trap");
+    const { table: t } = table(true, renderer, true);
+    await expect(sing(ctx as unknown as AudioContext, notes, { table: t })).rejects.toThrow();
+    expect(freed).toEqual([7]);
+  });
+
   for (const failure of ["trap", "audio"] as const) {
     // A trapped renderer is not asked to free the part; it is replaced whole.
     const freedAfter = failure === "trap" ? [] : [7];
 
     it(`silences what is scheduled when the first fill fails (${failure})`, () => {
       const { ctx, part, renderer, freed, nodes } = setup(2, failure);
-      expect(() => new Singing(ctx as unknown as AudioContext, part, undefined)).toThrow();
+      expect(() => new Singing(ctx as unknown as AudioContext, [part], undefined)).toThrow();
       // The gain and the one chunk scheduled.
       expect(nodes).toHaveLength(2);
       expect(nodes.every((n) => n.disconnected)).toBe(true);
@@ -118,7 +182,7 @@ describe("Singing", () => {
       vi.useFakeTimers();
       const { ctx, part, freed, nodes, calls } = setup(4, failure);
       const errors: unknown[] = [];
-      const singing = new Singing(ctx as unknown as AudioContext, part, undefined, (e) => errors.push(e));
+      const singing = new Singing(ctx as unknown as AudioContext, [part], undefined, (e) => errors.push(e));
       expect(singing.chunks).toHaveLength(3);
       ctx.currentTime = 1;
       vi.advanceTimersByTime(250);

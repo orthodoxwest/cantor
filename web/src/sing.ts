@@ -2177,7 +2177,9 @@ if (!guide) {
 
 // A scored take. The guide through the speaker would reach the microphone, so it is never
 // scored: with headphones the guide sings the take in the singer's ears; without, it gives
-// the opening notes (the first and the reciting tone) and then the cursor alone leads.
+// the opening notes (the first and the reciting tone) and then the cursor alone leads. The
+// guide in headphones sings undoubled, as the listening gates model what leaks from it: the
+// octave below, leaked loud, moves a judgement there (`make eval`'s control-wrong-singer).
 const takeButton = byId<HTMLButtonElement>("take");
 const modeText = byId<HTMLSpanElement>("mode");
 const modeLine = modeText.parentElement!;
@@ -2337,7 +2339,7 @@ async function takeScored(): Promise<void> {
     readout.textContent = "–";
     const prompt = worn ? "Begin with the guide." : "Begin when the cursor appears.";
     setStatus(prompt, true);
-    const started = await guide.play({ voice: worn, lead: LEAD });
+    const started = await guide.play({ voice: worn, lead: LEAD, below: false });
     if (!going()) return;
     // A guide that did not start, or failed, has said why.
     if (!started) return listener.stop();
@@ -2484,7 +2486,7 @@ async function takeAgain(): Promise<void> {
     setStatus(prompt, true);
     // In the key it is judged in, whether or not the guide sings in the singer's key beside the take.
     const pulse = guide.pulse;
-    const started = await guide.play({ voice: worn, lead: LEAD, range: run, transpose });
+    const started = await guide.play({ voice: worn, lead: LEAD, range: run, transpose, below: false });
     if (!going()) return;
     if (!started) return listener.stop();
     void wait(started.origin + started.first - ctx.currentTime).then(() => {
