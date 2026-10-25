@@ -1,7 +1,9 @@
 // The psalm pointer: a psalm (or typed text) pointed for a tone, its accents moved by hand,
-// sung in the guide voice, and exported as text, GABC or SVG.
+// sung in the guide voice, and exported as text, GABC or SVG, or copied for Word: the verses with
+// the tone typed in the Meinrad font, or the notation as a picture.
 import { Chant, type PsalmDisplay, type TimelineNote, init, psalm, psalmDisplay, toneLabel, toneNames } from "neuma";
 import { GLORIA, type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
+import { meinrad, toneLine } from "./meinrad";
 import { Player } from "./player";
 import { offerSignIn } from "./beam";
 import { decode, encode } from "./share";
@@ -61,6 +63,7 @@ const els = {
   check: byId<HTMLButtonElement>("check"),
   status: byId<HTMLParagraphElement>("status"),
   verses: byId<HTMLDivElement>("verses"),
+  meinrad: byId<HTMLInputElement>("meinrad"),
   notation: byId<HTMLDetailsElement>("notation"),
   score: byId<HTMLDivElement>("score"),
 };
@@ -801,8 +804,11 @@ function download(name: string, type: string, body: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** The verses as a pointed psalter prints them, for a word processor: marks in red. */
-function richText(): string {
+/**
+ * The verses as a pointed psalter prints them, for a word processor: marks in red, and the tone
+ * line typed in the Meinrad font when `tone` is given, at the booklets' 36 points.
+ */
+function richText(tone: string | null): string {
   const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const red = "color:#a3211c";
   const verses = state.display!.verses.map((v) => {
@@ -817,28 +823,139 @@ function richText(): string {
     const num = v.number === null ? "" : `<span style="${red};font-size:smaller">${v.number}</span>&nbsp;`;
     return `<p style="margin:0 0 6pt">${num}${runs.join("")}</p>`;
   });
+  const line = tone === null ? "" : `<p style="margin:0 0 6pt;font-family:Meinrad;font-size:36pt;line-height:normal">${esc(tone)}</p>`;
   return (
     `<div style="font-family:'EB Garamond',Garamond,Georgia,serif;font-size:12pt">` +
     `<p style="margin:0 0 3pt"><b>${esc(heading())}</b></p>` +
-    `<p style="margin:0 0 9pt;${red}"><i>${esc(toneLabel(state.tone))}</i></p>${verses.join("")}</div>`
+    `<p style="margin:0 0 9pt;${red}"><i>${esc(toneLabel(state.tone))}</i></p>${line}${verses.join("")}</div>`
   );
 }
 
+/** Where the choice of the Meinrad tone line is remembered. */
+const MEINRAD_KEY = "cantor.meinrad";
+try {
+  els.meinrad.checked = localStorage.getItem(MEINRAD_KEY) === "on";
+} catch {
+  // A browser that keeps nothing leaves it off.
+}
+els.meinrad.addEventListener("change", () => {
+  try {
+    localStorage.setItem(MEINRAD_KEY, els.meinrad.checked ? "on" : "off");
+  } catch {
+    // Nor remembers it.
+  }
+});
+
+/** Psalms the tone line's slots are learned from, whatever psalm is shown: ten are enough to
+ * meet every open slot sung otherwise than once. */
+const PROBE = psalms
+  .slice(0, 10)
+  .map((p) => p.verses.join("\n"))
+  .join("\n");
+/** Each tone's Meinrad line, once learned; null when it can't be typed. */
+const meinradLines = new Map<string, string | null>();
+function meinradLine(): string | null {
+  if (!meinradLines.has(state.tone)) {
+    const line = toneChant ? toneLine(toneChant.source, state.tone, PROBE) : null;
+    meinradLines.set(state.tone, line && meinrad(line));
+  }
+  return meinradLines.get(state.tone)!;
+}
+
 byId("copy").addEventListener("click", async () => {
+  const tone = els.meinrad.checked ? meinradLine() : null;
+  // Plain text has no Meinrad font to show the keystrokes in, so it keeps to the words.
   const plainText = `${heading()}\n${toneLabel(state.tone)}\n\n${state.text}\n`;
+  const copied = els.meinrad.checked && tone === null ? "Copied without the Meinrad line, which this tone can't be typed in" : "Copied";
   try {
     if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
       await navigator.clipboard.write([
         new ClipboardItem({
-          "text/html": new Blob([richText()], { type: "text/html" }),
+          "text/html": new Blob([richText(tone)], { type: "text/html" }),
           "text/plain": new Blob([plainText], { type: "text/plain" }),
         }),
       ]);
     } else await navigator.clipboard.writeText(plainText);
-    els.status.textContent = "Copied: paste into Word or another editor.";
+    els.status.textContent = `${copied}: paste into Word or another editor.`;
   } catch {
     els.status.textContent = "The browser would not copy; use the Text download instead.";
   }
+});
+
+/** The most pixels a picture is drawn with: under what phones allow a canvas. */
+const PIXELS = 16e6;
+
+/** An engraving as a picture in black on white, up to three times its size, for the clipboard. */
+async function png(svg: string): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const scale = Math.min(3, Math.sqrt(PIXELS / (img.width * img.height)), 16384 / img.width, 16384 / img.height);
+    const canvas = Object.assign(document.createElement("canvas"), {
+      width: Math.ceil(img.width * scale),
+      height: Math.ceil(img.height * scale),
+    });
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no canvas");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("no picture"))), "image/png"),
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Copies an engraving as a picture: as SVG, which Word keeps sharp at any size, where the
+ * browser can put SVG on the clipboard, and as PNG. The item is made before anything waits, so
+ * Safari still counts the copy as the click's; if the PNG can't be drawn, the SVG goes alone.
+ */
+async function copyPicture(svg: string, what: string): Promise<void> {
+  // Ink in black, as on paper, whatever the page's theme.
+  const black = svg.replace(/currentColor/g, "#000");
+  const done = () => (els.status.textContent = `Copied the ${what} as a picture: paste into Word or another editor.`);
+  const failed = () => (els.status.textContent = "The browser would not copy a picture; use the SVG download instead.");
+  if (typeof ClipboardItem !== "function" || !navigator.clipboard.write) return void failed();
+  const svgBlob =
+    ClipboardItem.supports?.("image/svg+xml") === true ? new Blob([black], { type: "image/svg+xml" }) : null;
+  const picture = png(black);
+  picture.catch(() => {});
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem(svgBlob ? { "image/png": picture, "image/svg+xml": svgBlob } : { "image/png": picture }),
+    ]);
+    done();
+  } catch {
+    try {
+      if (!svgBlob) throw new Error("no picture");
+      await navigator.clipboard.write([new ClipboardItem({ "image/svg+xml": svgBlob })]);
+      done();
+    } catch {
+      failed();
+    }
+  }
+}
+
+/** A one-line page's SVG cut off after its last bar, where its ragged staff runs on empty. */
+function toLastBar(page: { svg: string; timeline(): { pauses: Array<{ bar: { x: number; w: number } | null }> } }): string {
+  const end = Math.max(0, ...page.timeline().pauses.map((p) => (p.bar ? p.bar.x + p.bar.w : 0)));
+  if (!end) return page.svg;
+  const width = (end + 2).toFixed(2);
+  return page.svg.replace(/^(<svg[^>]*?)width="[\d.]+"([^>]*?viewBox="0 0 )[\d.]+/, `$1width="${width}"$2${width}`);
+}
+
+byId("copy-tone").addEventListener("click", () => {
+  // Wide enough that every tone keeps to one line, whatever the screen, then cut to its end.
+  void copyPicture(toLastBar(toneChant!.layout(4000, { scale: 6, prefix: "tone", ids: false })), "tone");
+});
+
+byId("copy-score").addEventListener("click", () => {
+  void copyPicture(engraved().layout(900, { ids: false }).svg, "notation");
 });
 
 byId("download-text").addEventListener("click", () =>
