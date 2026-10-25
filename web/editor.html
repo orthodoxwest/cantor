@@ -54,7 +54,7 @@
 
       <section class="guide" id="guide" aria-labelledby="guide-title">
         <p class="titulus">A short guide</p>
-        <h2 id="guide-title">GABC in six steps</h2>
+        <h2 id="guide-title">GABC in seven steps</h2>
         <p>GABC is the plain-text way of writing square notation that Gregorio and GregoBase use, and that every score in this site's library is written in. You write the words, and after each syllable, in brackets, the notes it is sung to. Each example below is engraved as written; <em>Try it</em> puts it in the editor (undo brings back what you had).</p>
 
         <article class="step">
@@ -91,6 +91,12 @@
           <h3>6. The header</h3>
           <p>A file can start with lines that describe it, each <code>key:value;</code>, ended by a line holding only <code>%%</code>. <code>name</code> names the piece (Gregorio expects at least that), and <code>mode</code> its mode, which is printed over the initial. The first letter of the words becomes the large initial; as in the printed books, the letter after it is written as a capital too, so <code>WHere</code>. A line starting with <code>%</code> is a comment. The editor engraves a score with or without a header.</p>
           <div class="example" data-gabc="name:Ubi caritas;&#10;mode:6;&#10;%%&#10;(c4) WHere(f) cha(gh)ri(hg)ty(h) and(ixi) love(hg) are,(hg) (,) there(f) is(fg) God.(g) (::)"></div>
+        </article>
+
+        <article class="step">
+          <h3>7. Rubrics and signs</h3>
+          <p>Words the book prints in red, a direction such as <i>Bow.</i> or a verse number, go in <code>&lt;c&gt;</code> and <code>&lt;/c&gt;</code>; empty brackets after them, <code>()</code>, make them a syllable with no notes. <code>&lt;i&gt;</code> sets words in italic, as for <i>Ant.</i> <code>&lt;sp&gt;V/&lt;/sp&gt;</code> and <code>&lt;sp&gt;R/&lt;/sp&gt;</code> print the versicle and response signs ℣ and ℟, and <code>&lt;c&gt;✠&lt;/c&gt;()</code> the red cross where the sign of the cross is made.</p>
+          <div class="example" data-gabc="(c4) For(g) e(h)ver(g)more.(g.) (::) <c>Bow.</c>() All(h) glo(h)ry,(j) Lord,(j) to(j) thee.(h.) (::) <sp>V/</sp>. The(g) Lord(h) be(h) with(h) you.(g.) (::) <sp>R/</sp>. But(g) de(h)li(h)ver(h) us(h) from(h) <c>✠</c>() e(gh)vil.(g.) (::)"></div>
         </article>
 
         <p class="more-reading">For the whole of the notation, see Gregorio's <a href="https://gregorio-project.github.io/gabc/" rel="noopener">GABC reference</a>.</p>

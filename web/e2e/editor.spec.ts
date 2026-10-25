@@ -48,7 +48,7 @@ test("a note tapped in the score selects its source", async ({ page }) => {
 test("the guide's examples are engraved, and Try it puts one in the editor", async ({ page }) => {
   await open(page);
   const examples = page.locator(".example");
-  await expect(examples).toHaveCount(6);
+  await expect(examples).toHaveCount(7);
   await expect(examples.first().locator(".engraved svg")).toBeVisible();
   await examples.nth(1).getByRole("button", { name: "Try it" }).click();
   const source = page.getByLabel("GABC source");
