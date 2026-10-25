@@ -15,13 +15,15 @@ interface ChantRow {
   source: string | null;
   url: string | null;
   words: string | null;
+  /** Approved for use in the AWRV: 1, 0, or NULL while not yet reviewed. */
+  awrv: number | null;
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/api/health", (c) => c.json({ ok: true, version: pkg.version }));
 
-const CHANT = "slug, title, name, mode, kind, book, source, url, words";
+const CHANT = "slug, title, name, mode, kind, book, source, url, words, awrv";
 
 // The library: every public chant, and to a known caller the private ones too (booklet-derived,
 // like the pointings). A list that depends on the caller is never cached for others.

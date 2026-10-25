@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byMass, byTitle, finds, highlight, kicker, massName, terms, type LibraryChant } from "../src/library";
+import { approval, byMass, byTitle, finds, highlight, kicker, marked, massName, terms, type LibraryChant } from "../src/library";
 
 describe("the library's order", () => {
   it("files titles by their words, past a leading versicle sign or number", () => {
@@ -20,6 +20,7 @@ describe("the Mass settings", () => {
     source: null,
     url: null,
     words: "",
+    awrv: null,
   });
 
   it("names a movement's Mass by the number its name gives, never a Creed's", () => {
@@ -61,6 +62,7 @@ describe("searching the library", () => {
     source: null,
     url: null,
     words: "A light to lighten the Gentiles, and the glory of thy people Israel.",
+    awrv: null,
     ...over,
   });
   const found = (q: string, c = chant({})) => finds(c, terms(q));
@@ -98,5 +100,20 @@ describe("searching the library", () => {
     expect(highlight("Delight & <b>", terms("light"))).toBe("Delight &amp; &lt;b&gt;");
     expect(highlight("Psalm iii", terms("ii"))).toBe("Psalm iii");
     expect(highlight("Lighten light", terms("l light"))).toBe("<mark>Light</mark>en <mark>light</mark>");
+  });
+});
+
+describe("approval for the AWRV", () => {
+  it("reads it as the Worker keeps it and as the build writes it, and none as not yet reviewed", () => {
+    expect([1, true, 0, false, null, undefined].map(approval)).toEqual([true, true, false, false, null, null]);
+  });
+
+  it("finds an approved piece by the words AWRV approved, and no other", () => {
+    const piece = (awrv: boolean | null): LibraryChant => ({ slug: "s", title: "Behold", name: null, kind: "antiphon", mode: null, book: null, source: null, url: null, words: "", awrv });
+    expect(finds(piece(true), terms("awrv approved"))).toBe(true);
+    expect(finds(piece(false), terms("awrv"))).toBe(false);
+    expect(finds(piece(null), terms("awrv"))).toBe(false);
+    expect(marked(piece(true))).toBe("Antiphon · AWRV approved");
+    expect(marked(piece(false))).toBe("Antiphon");
   });
 });

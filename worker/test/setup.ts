@@ -1,5 +1,5 @@
-// Runs before each test file: the schema, then four chants (two private, one with a recording) and two made-up
-// pointings to read back.
+// Runs before each test file: the schema, then four chants (two private, one with a recording, one
+// approved for the AWRV) and two made-up pointings to read back.
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 
@@ -12,6 +12,11 @@ await env.DB.batch([
   insert("chants").bind("crux-fidelis", "Faithful Cross", "Crux fidelis", "1", "hymn", "test", "Faithful Cross", "name:Crux fidelis;\n%%\n(c4) FAith(d)ful(e) Cross,(gh) (::)"),
   insert("private_chants").bind("private-test", "Booklet antiphon", "Test", "ii", "antiphon", "booklet", "Booklet", "name:Test;\n%%\n(c4) BOok(f) (::)"),
   insert("private_chants").bind("private-sung", "Sung antiphon", null, "ii", "antiphon", "booklet", "Sung", "name:Sung;\n%%\n(c4) SUng(f) (::)"),
+]);
+// One chant approved for the AWRV, one reviewed and not, the rest not yet reviewed.
+await env.DB.batch([
+  env.DB.prepare("UPDATE chants SET awrv = 1 WHERE slug = 'crux-fidelis'"),
+  env.DB.prepare("UPDATE private_chants SET awrv = 0 WHERE slug = 'private-test'"),
 ]);
 await env.DB.prepare("UPDATE private_chants SET recording = ? WHERE slug = 'private-sung'")
   .bind('[{"index":0,"from_s":1.05,"to_s":1.5,"cents":-12.5,"trace":[[1.1,-10],[1.2,-14]]}]')

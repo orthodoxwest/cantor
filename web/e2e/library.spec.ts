@@ -179,3 +179,69 @@ test("on a phone the library's kinds are a list to pick from", async ({ page }) 
   // The page never scrolls sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test("the library narrows to the pieces approved for the AWRV, and the address keeps the choice", async ({ page }) => {
+  // The public chants, two of them marked approved.
+  const marked = new Set(["lumen-gentium", "ubi-caritas"]);
+  type Row = { slug: string; awrv: boolean | number | null };
+  const mark = (r: Row) => ({ ...r, awrv: marked.has(r.slug) ? 1 : r.awrv });
+  await page.route(/\/api\/chants(\/[^/]+)?$/, async (route) => {
+    const res = await route.fetch();
+    if (!res.ok()) return route.fulfill({ response: res });
+    const body = (await res.json()) as Row[] | Row;
+    await route.fulfill({ json: Array.isArray(body) ? body.map(mark) : mark(body) });
+  });
+  await page.goto("/library");
+  const items = page.locator("#results > li");
+  const only = page.getByLabel("Only pieces approved for the AWRV");
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  await expect(only).not.toBeChecked();
+  await only.check();
+  await expect(page.locator("#count")).toHaveText("2 pieces");
+  await expect(page).toHaveURL(/\/library\?awrv$/);
+  await expect(items.locator(".kicker")).toHaveText([/AWRV approved$/, /AWRV approved$/]);
+  await expect(page.getByRole("button", { name: /^All2$/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByPlaceholder("Search the words").fill("zzzz");
+  await expect(items).toHaveText(["No piece approved for the AWRV matches “zzzz”."]);
+  await page.getByPlaceholder("Search the words").fill("");
+
+  await page.reload();
+  await expect(only).toBeChecked();
+  await expect(page.locator("#count")).toHaveText("2 pieces");
+  await page.locator('#results a[href="#lumen-gentium"]').click();
+  await expect(page.locator("#piece-kicker")).toHaveText(/AWRV approved$/);
+  await page.locator("#back").click();
+  await expect(page).toHaveURL(/\/library\?awrv$/);
+  await only.uncheck();
+  await expect(page).toHaveURL(/\/library$/);
+  expect(Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0])).toBeGreaterThan(2);
+
+  // Going forward comes to the piece's address, which chose only the approved pieces; back
+  // again to the one that did not.
+  await page.goForward();
+  await expect(page).toHaveURL(/\/library\?awrv#lumen-gentium$/);
+  await expect(only).toBeChecked();
+  await page.goBack();
+  await expect(page.locator("#browse")).toBeVisible();
+  await expect(only).not.toBeChecked();
+
+  // A kind the approved pieces have none of shows them all, and comes back with the rest.
+  await only.uncheck();
+  await page.getByRole("button", { name: /^Hymns/ }).click();
+  await only.check();
+  await expect(page.getByRole("button", { name: /^All2$/ })).toHaveAttribute("aria-pressed", "true");
+  await only.uncheck();
+  await expect(page.getByRole("button", { name: /^Hymns/ })).toHaveAttribute("aria-pressed", "true");
+
+  // An address that says no does not choose them.
+  await page.goto("/library?awrv=0");
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  await expect(only).not.toBeChecked();
+});
+
+test("the library offers no choice of approved pieces while none is marked", async ({ page }) => {
+  await page.goto("/library?awrv");
+  await expect(page.locator("#count")).toHaveText(/^\d+ pieces$/);
+  await expect(page.getByLabel("Only pieces approved for the AWRV")).toBeHidden();
+  expect(Number((await page.locator("#count").textContent())?.match(/^\d+/)?.[0])).toBeGreaterThan(2);
+});
