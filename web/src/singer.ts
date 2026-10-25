@@ -23,6 +23,9 @@ const WASM_URL = `${import.meta.env.BASE_URL}cantor.wasm`;
 const CHUNK = 0.5;
 const AHEAD = 1.5;
 const LEVEL = 0.25;
+/** Each layer's gain when the voice is doubled an octave below, so the two together sound
+ * about as loud as one. */
+const DOUBLED = 0.7;
 
 /** A note to sing: its pitch (MIDI), start and length in seconds, the indexes of the word and
  * syllable it belongs to, and the syllable's text. Notes of one syllable share its indexes. */
@@ -206,9 +209,17 @@ export interface SingOptions {
   /** Told when a chunk could not be sung after the start, once the voice is silenced; without
    * it the error is thrown. One that fails at the start rejects `sing` instead. */
   onError?: (error: unknown) => void;
+  /** Whether the voice is doubled by itself an octave below, for lower voices. */
+  below?: boolean;
 }
 
-/** A part being sung; `stop` silences it. */
+/** `notes` an octave below. */
+export function octaveBelow(notes: readonly SungNote[]): SungNote[] {
+  return notes.map((n) => ({ ...n, midi: n.midi - 12 }));
+}
+
+/** A part being sung, alone or with others in step with it (the voice doubled); `stop`
+ * silences it. */
 export class Singing {
   /** The chunks scheduled so far, as [from, length, RMS]. */
   readonly chunks: Array<[number, number, number]> = [];
@@ -216,20 +227,21 @@ export class Singing {
   readonly start: number;
   readonly end: number;
   private readonly nodes: AudioNode[] = [];
-  private part: Part | null;
+  private parts: readonly Part[] | null;
   private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly ctx: AudioContext,
-    part: Part,
+    parts: readonly Part[],
     output: AudioNode | undefined,
     onError?: (error: unknown) => void,
   ) {
-    this.part = part;
+    this.parts = parts;
     const rate = ctx.sampleRate;
     // Chunks start on whole sample frames counted from here, so they meet exactly.
     const frame0 = Math.ceil((ctx.currentTime + 0.05) * rate);
-    const total = part.length(rate);
+    const total = Math.max(0, ...parts.map((p) => p.length(rate)));
+    const layer = parts.length > 1 ? DOUBLED : 1;
     this.start = frame0 / rate;
     this.end = (frame0 + total) / rate;
     let out = output;
@@ -243,10 +255,10 @@ export class Singing {
     const size = Math.round(CHUNK * rate);
     let next = 0;
     const fill = () => {
-      if (!this.part) return;
+      if (!this.parts) return;
       const horizon = ctx.currentTime * rate - frame0 + AHEAD * rate;
       for (const [from, len] of chunksDue(next, horizon, size, total)) {
-        const samples = this.part.sing(rate, from, len);
+        const samples = mix(this.parts.map((p) => p.sing(rate, from, len)), layer);
         const buffer = ctx.createBuffer(1, len, rate);
         buffer.copyToChannel(samples, 0);
         const src = ctx.createBufferSource();
@@ -272,7 +284,7 @@ export class Singing {
       this.stop();
       throw error;
     }
-    if (!this.part) return;
+    if (!this.parts) return;
     this.timer = setInterval(() => {
       try {
         fill();
@@ -296,21 +308,40 @@ export class Singing {
 
   private release(): void {
     clearInterval(this.timer);
-    const part = this.part;
-    this.part = null;
-    try {
-      part?.free();
-    } catch (error) {
-      console.error("singer:", error);
+    const parts = this.parts ?? [];
+    this.parts = null;
+    for (const part of parts) {
+      try {
+        part.free();
+      } catch (error) {
+        console.error("singer:", error);
+      }
     }
   }
+}
+
+/** The sum of `layers`, each scaled by `gain`; the one layer as it is when there is one. */
+export function mix(layers: Float32Array<ArrayBuffer>[], gain: number): Float32Array<ArrayBuffer> {
+  if (layers.length === 1 && gain === 1) return layers[0]!;
+  const out = new Float32Array(layers[0]?.length ?? 0);
+  for (const layer of layers) for (let i = 0; i < out.length; i++) out[i]! += gain * (layer[i] ?? 0);
+  return out;
 }
 
 /** Sings `notes` (times in seconds from a moment from now) on the audio context. */
 export async function sing(ctx: AudioContext, notes: readonly SungNote[], options: SingOptions = {}): Promise<Singing> {
   const table = options.table ?? (await neutralTable());
   await table.renew();
-  return new Singing(ctx, table.part(notes, options.gabc), options.output, options.onError);
+  const parts = [table.part(notes, options.gabc)];
+  if (options.below) {
+    try {
+      parts.push(table.part(octaveBelow(notes), options.gabc));
+    } catch (error) {
+      parts[0]!.free();
+      throw error;
+    }
+  }
+  return new Singing(ctx, parts, options.output, options.onError);
 }
 
 let neutral: Promise<VoiceTable> | undefined;

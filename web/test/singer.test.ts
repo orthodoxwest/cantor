@@ -1,6 +1,6 @@
 import type { TimelineNote } from "neuma";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunksDue, fromTimeline, notesText, octaveShift, Part, Singing } from "../src/singer";
+import { chunksDue, fromTimeline, mix, notesText, octaveBelow, octaveShift, Part, Singing } from "../src/singer";
 
 describe("fromTimeline and notesText", () => {
   it("time a run from its first pulse and write one tab-separated line per note", () => {
@@ -42,6 +42,20 @@ describe("octaveShift", () => {
   });
 });
 
+describe("octaveBelow and mix", () => {
+  it("sing the same notes an octave lower, at the same times", () => {
+    const notes = [{ midi: 60, start: 0.5, duration: 1, word: 0, syllable: 0, text: "Glo" }];
+    expect(octaveBelow(notes)).toEqual([{ ...notes[0], midi: 48 }]);
+    expect(notes[0]!.midi).toBe(60);
+  });
+
+  it("add the layers, each at the gain given, and leave one layer alone", () => {
+    const one = new Float32Array([0.5, -0.25]);
+    expect(mix([one], 1)).toBe(one);
+    expect([...mix([one, new Float32Array([0.25, 0.25])], 0.5)]).toEqual([0.375, 0]);
+  });
+});
+
 describe("chunksDue", () => {
   it("covers the part once, chunk by chunk, up to the horizon", () => {
     expect(chunksDue(0, 250, 100, 1000)).toEqual([
@@ -64,7 +78,8 @@ describe("Singing", () => {
     const freed: number[] = [];
     const wasm = {
       memory: new WebAssembly.Memory({ initial: 1 }),
-      cantor_part_length: () => 32_000,
+      // The second part one test adds, 8, lasts 5 s.
+      cantor_part_length: (handle: number) => (handle === 8 ? 40_000 : 32_000),
       cantor_sing: () => {
         if (++calls === failAt && failure === "trap") {
           trapped = true;
@@ -100,13 +115,24 @@ describe("Singing", () => {
     vi.useRealTimers();
   });
 
+  it("sings two parts as one, for as long as the longer lasts, and lets both go", () => {
+    const { ctx, part, renderer, freed, nodes } = setup(0, "trap");
+    const longer = new Part(renderer as unknown as ConstructorParameters<typeof Part>[0], 8);
+    const singing = new Singing(ctx as unknown as AudioContext, [part, longer], undefined);
+    expect(singing.end).toBeCloseTo(singing.start + 5, 9);
+    // The gain and one source a chunk.
+    expect(nodes).toHaveLength(1 + singing.chunks.length);
+    singing.stop();
+    expect(freed).toEqual([7, 8]);
+  });
+
   for (const failure of ["trap", "audio"] as const) {
     // A trapped renderer is not asked to free the part; it is replaced whole.
     const freedAfter = failure === "trap" ? [] : [7];
 
     it(`silences what is scheduled when the first fill fails (${failure})`, () => {
       const { ctx, part, renderer, freed, nodes } = setup(2, failure);
-      expect(() => new Singing(ctx as unknown as AudioContext, part, undefined)).toThrow();
+      expect(() => new Singing(ctx as unknown as AudioContext, [part], undefined)).toThrow();
       // The gain and the one chunk scheduled.
       expect(nodes).toHaveLength(2);
       expect(nodes.every((n) => n.disconnected)).toBe(true);
@@ -118,7 +144,7 @@ describe("Singing", () => {
       vi.useFakeTimers();
       const { ctx, part, freed, nodes, calls } = setup(4, failure);
       const errors: unknown[] = [];
-      const singing = new Singing(ctx as unknown as AudioContext, part, undefined, (e) => errors.push(e));
+      const singing = new Singing(ctx as unknown as AudioContext, [part], undefined, (e) => errors.push(e));
       expect(singing.chunks).toHaveLength(3);
       ctx.currentTime = 1;
       vi.advanceTimersByTime(250);
