@@ -165,6 +165,10 @@ function mark(id: number | null): void {
   marked = id;
   if (id !== null) for (const el of score.ink(id)) el.classList.add("cantor-current");
 }
+// The score drawn afresh (the page grew a scrollbar, a phone turned) keeps the tapped note marked.
+score.onRender = () => {
+  if (marked !== null) for (const el of score.ink(marked)) el.classList.add("cantor-current");
+};
 els.score.addEventListener("click", (e) => {
   if (guide?.playing) return;
   const box = els.score.getBoundingClientRect();

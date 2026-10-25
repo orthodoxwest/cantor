@@ -25,6 +25,8 @@ export class Score {
   private page: LinesPage;
   timeline: Timeline;
   private strips: Strips | null = null;
+  /** Told each time the engraving is drawn afresh, which carries no marks made on the last. */
+  onRender: (() => void) | null = null;
 
   /** `scale` is pixels per staff space (neuma's default is 6). */
   constructor(
@@ -137,6 +139,7 @@ export class Score {
     const old = this.host.querySelector("svg");
     if (old) old.outerHTML = svg;
     else this.host.insertAdjacentHTML("afterbegin", svg);
+    this.onRender?.();
   }
 
   /** The ink of one note (a neume may draw several notes in one element). */

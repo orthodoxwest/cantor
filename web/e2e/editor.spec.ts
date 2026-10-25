@@ -5,6 +5,8 @@ import { expect, type Page, test } from "@playwright/test";
 async function open(page: Page): Promise<void> {
   await page.goto("/editor");
   await expect(page.locator("#score svg")).toBeVisible();
+  // Fonts arriving change the page's height, and with a scrollbar its width and the layout.
+  await page.evaluate(() => document.fonts.ready);
 }
 
 test("the editor engraves GABC as it is typed, and offers the fix for a problem", async ({ page }) => {
@@ -30,8 +32,9 @@ test("a note tapped in the score selects its source", async ({ page }) => {
   await open(page);
   const source = page.getByLabel("GABC source");
   await source.fill("(c4) A(f) B(hg) C(e)");
-  // Engraved on the next frame: wait for it before finding a note.
-  await expect(page.locator("#score")).toContainText("B");
+  // Engraved on the next frame: wait for its four notes before finding one. (Its words won't
+  // do: the engraving's style names EB Garamond, so "B" is always in its text.)
+  await expect(page.locator("#score use[data-note]")).toHaveCount(4);
   // The middle syllable's first notehead, found by where neuma drew it and tapped in the same
   // task, so a relayout (a scrollbar coming or going) cannot move it in between.
   const selected = await page.evaluate(() => {
@@ -41,8 +44,8 @@ test("a note tapped in the score selects its source", async ({ page }) => {
     const t = document.getElementById("source") as HTMLTextAreaElement;
     return t.value.slice(t.selectionStart, t.selectionEnd);
   });
-  await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
   expect(selected).toBe("h");
+  await expect(page.locator("#score .cantor-current")).not.toHaveCount(0);
 });
 
 test("the guide's examples are engraved, and Try it puts one in the editor", async ({ page }) => {
