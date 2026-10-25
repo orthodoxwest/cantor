@@ -5,7 +5,6 @@
 import { Chant, type Diagnostic, init } from "neuma";
 import { offerSignIn } from "./beam";
 import { Cursor } from "./cursor";
-import { belowBox } from "./below";
 import { Guide } from "./guide";
 import { escape } from "./library";
 import { SCALE, Score } from "./score";
@@ -23,7 +22,6 @@ const els = {
   score: byId("score"),
   status: byId("status"),
   play: byId<HTMLButtonElement>("play"),
-  below: byId<HTMLInputElement>("below"),
   copy: byId<HTMLButtonElement>("copy"),
 };
 
@@ -206,15 +204,10 @@ void neutralTable().then(
       },
       onError: (message) => (els.status.textContent = message),
     });
-    guide.below = els.below.checked;
     els.play.disabled = false;
   },
   () => (els.status.textContent = "The guide voice could not load."),
 );
-
-belowBox(els.below, (below) => {
-  if (guide) guide.below = below;
-});
 
 els.play.addEventListener("click", () => {
   if (!guide) return;

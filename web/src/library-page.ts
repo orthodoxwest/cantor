@@ -3,7 +3,6 @@
 // and practised.
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
-import { belowBox } from "./below";
 import { Guide } from "./guide";
 import { byMass, chant as fetchChant, escape, finds, highlight, isOrdinary, kicker, kindName, library, terms, type FullChant, type LibraryChant } from "./library";
 import { SCALE, Score } from "./score";
@@ -39,7 +38,6 @@ const els = {
   source: byId("piece-source"),
   bar: byId("bar"),
   play: byId<HTMLButtonElement>("play"),
-  below: byId<HTMLInputElement>("below"),
   practise: byId<HTMLAnchorElement>("practise"),
   more: byId<HTMLButtonElement>("more"),
 };
@@ -224,7 +222,6 @@ async function show(c: FullChant, opening: number): Promise<void> {
     },
     onError: (message) => (els.status.textContent = message),
   });
-  guide.below = els.below.checked;
   els.play.disabled = false;
 }
 
@@ -245,10 +242,6 @@ els.play.addEventListener("click", () => {
   els.play.setAttribute("aria-pressed", "true");
   els.play.textContent = "Stop";
   void guide.play();
-});
-
-belowBox(els.below, (below) => {
-  if (guide) guide.below = below;
 });
 
 function route(): void {

@@ -483,13 +483,6 @@ input[type="checkbox"] {
 .bar .spacer {
   flex: 1;
 }
-/* Whether the guide is doubled an octave below (below.ts), wherever it sings. */
-label.below {
-  display: inline-flex;
-  gap: 0.4rem;
-  align-items: center;
-  white-space: nowrap;
-}
 
 .colophon {
   margin-top: 3rem;

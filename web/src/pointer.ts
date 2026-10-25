@@ -2,7 +2,6 @@
 // sung in the guide voice, and exported as text, GABC or SVG.
 import { Chant, type PsalmDisplay, type TimelineNote, init, psalm, psalmDisplay, toneLabel, toneNames } from "neuma";
 import { GLORIA, type Half, type HalfKey, halfKey, moveAccents, pointText, psalmText } from "./pointing";
-import { belowBox } from "./below";
 import { Player } from "./player";
 import { offerSignIn } from "./beam";
 import { decode, encode } from "./share";
@@ -58,7 +57,6 @@ const els = {
   play: byId<HTMLButtonElement>("play"),
   speed: byId<HTMLSelectElement>("speed"),
   pitch: byId<HTMLSelectElement>("pitch"),
-  below: byId<HTMLInputElement>("below"),
   undo: byId<HTMLButtonElement>("undo"),
   check: byId<HTMLButtonElement>("check"),
   status: byId<HTMLParagraphElement>("status"),
@@ -727,7 +725,6 @@ els.notation.addEventListener("toggle", () => {
 // ---- singing ------------------------------------------------------------------------------
 
 const player = new Player();
-belowBox(els.below);
 let sounding: HTMLElement | null = null;
 
 function sing(verse: number | null): void {
@@ -742,7 +739,6 @@ function sing(verse: number | null): void {
   void player.play(run, {
     pulse: Number(els.speed.value),
     transpose: state.transpose,
-    below: els.below.checked,
     clock: test ? () => performance.now() / 1000 : undefined,
     onNote: follow,
     onError: (message) => {

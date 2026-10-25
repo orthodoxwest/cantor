@@ -112,13 +112,16 @@ export class VoiceTable {
   private constructor(
     private renderer: Renderer,
     private readonly open: () => Promise<Renderer>,
+    /** Whether it sings doubled by itself an octave below: the made voice does,
+     * for the many men the guide sits high for; a voice from a cantor's recording does not. */
+    readonly doubled = false,
   ) {}
 
   /** The neutral voice: every syllable on one made vowel. */
   static async neutral(wasmUrl = WASM_URL): Promise<VoiceTable> {
     const module = await compile(wasmUrl);
     const open = async () => renderer(await instantiate(module), (wasm) => wasm.cantor_voice_neutral());
-    return new VoiceTable(await open(), open);
+    return new VoiceTable(await open(), open, true);
   }
 
   /** The voice file at `voiceUrl`, given up on after `timeoutMs`. */
@@ -209,8 +212,6 @@ export interface SingOptions {
   /** Told when a chunk could not be sung after the start, once the voice is silenced; without
    * it the error is thrown. One that fails at the start rejects `sing` instead. */
   onError?: (error: unknown) => void;
-  /** Whether the voice is doubled by itself an octave below, for lower voices. */
-  below?: boolean;
 }
 
 /** `notes` an octave below. */
@@ -333,7 +334,7 @@ export async function sing(ctx: AudioContext, notes: readonly SungNote[], option
   const table = options.table ?? (await neutralTable());
   await table.renew();
   const parts = [table.part(notes, options.gabc)];
-  if (options.below) {
+  if (table.doubled) {
     try {
       parts.push(table.part(octaveBelow(notes), options.gabc));
     } catch (error) {

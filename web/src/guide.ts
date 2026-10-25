@@ -48,8 +48,6 @@ export class Guide {
   pulse = PULSE;
   /** Semitones the chant is sung above where it is written. */
   transpose = 0;
-  /** Whether the voice is doubled an octave below. */
-  below = false;
   /** Ids of the notes the cursor has marked, in order. */
   readonly visited: number[] = [];
   /** The notes the latest play sang, or would have with the voice. */
@@ -115,7 +113,7 @@ export class Guide {
       const base = all[from]?.start ?? 0;
       const run = range ? all.slice(from, to + 1).map((n) => ({ ...n, start: n.start - base })) : all;
       this.latest = run;
-      if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError, below: this.below });
+      if (voice) singing = await sing(ctx, run.map((n) => ({ ...n, start: n.start + lead })), { table, gabc, onError });
     } catch (error) {
       this.fail(play, error);
       return null;

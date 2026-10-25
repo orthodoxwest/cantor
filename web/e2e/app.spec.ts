@@ -2092,23 +2092,6 @@ for (const [voice, query] of [
   });
 }
 
-test("Octave below doubles the guide, and the choice is kept", async ({ page }) => {
-  const errors: string[] = [];
-  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-  await open(page);
-  const below = page.getByRole("checkbox", { name: "Octave below" });
-  await expect(below).not.toBeChecked();
-  await below.check();
-  await page.getByRole("button", { name: "Play" }).click();
-  await expect.poll(() => page.evaluate(() => window.__cantor.chunks.length), { timeout: 10_000 }).toBeGreaterThan(2);
-  const chunks = await page.evaluate(() => window.__cantor.chunks);
-  chunks.forEach(([from], i) => i > 0 && expect(from).toBe(chunks[i - 1]![0] + chunks[i - 1]![1]));
-  expect(chunks.some(([, , rms]) => rms > 0.01)).toBe(true);
-  expect(errors).toEqual([]);
-  await page.reload();
-  await expect(page.getByRole("checkbox", { name: "Octave below" })).toBeChecked();
-});
-
 test("a renderer that traps stops the guide, which sings again on the next play", async ({ page }) => {
   const { trapFourthChunk } = await import("./fixtures/trap.mjs");
   await page.addInitScript(trapFourthChunk);

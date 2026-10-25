@@ -19,7 +19,6 @@ import { Replay } from "./replay";
 import { grewOver, grown, outside, saidIn, viewOf } from "./again";
 import { opening, stepCell } from "./grid";
 import { byPhrase, runOf, stepTo, sungOrder, writtenStep } from "./review";
-import { belowBox } from "./below";
 import { neutralTable, sing, type Singing, type SungNote, VoiceTable } from "./singer";
 import { headphonesIn, ONSET_WINDOW, throughHeard, timed, type Timed } from "./timing";
 import { anyKept, chantKey, forget, keep, type Kept, kept, notesOf, onNews, whenSung } from "./kept";
@@ -1298,7 +1297,7 @@ async function soundPitch(): Promise<void> {
   try {
     const ctx = await audioContext();
     if (press !== pitches) return;
-    const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source, onError: noteFailed, below: guide.below });
+    const cue = await sing(ctx, cueNotes(guide.notes()), { table, gabc: score.source, onError: noteFailed });
     if (press !== pitches) return cue.stop();
     pitching = cue;
     await wait(cue.end - ctx.currentTime);
@@ -1356,11 +1355,6 @@ async function startDrone(): Promise<void> {
 // timing, Start note and Drone all follow them; the clef's do is named when it moves. They
 // are kept in the address, and so in the links to the chants found.
 const speedSelect = byId<HTMLSelectElement>("speed");
-const belowCheck = byId<HTMLInputElement>("below");
-belowBox(belowCheck, (below) => {
-  if (guide) guide.below = below;
-});
-if (guide) guide.below = belowCheck.checked;
 /** The clef's do moved by 0 to 11 semitones, spelled as a singer would read the key. */
 const DO_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
 const pitchSelect = byId<HTMLSelectElement>("pitch");
@@ -2294,7 +2288,7 @@ function startTaking(): number {
   stopDrone(false);
   listener.stop();
   playButton.disabled = noteButton.disabled = droneButton.disabled = headphonesBox.disabled = recordingButton.disabled = renderingButton.disabled = true;
-  speedSelect.disabled = pitchSelect.disabled = belowCheck.disabled = unloopButton.disabled = true;
+  speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = true;
   holdChant(true);
   takeButton.textContent = "Stop";
   takeButton.title = "";
@@ -2332,7 +2326,6 @@ async function takeScored(): Promise<void> {
         table,
         gabc: score.source,
         onError: (error) => console.error("opening notes:", error),
-        below: guide.below,
       });
       if (!going()) return cue.stop();
       cueing = cue;
@@ -2477,7 +2470,6 @@ async function takeAgain(): Promise<void> {
         table,
         gabc: score.source,
         onError: (error) => console.error("opening notes:", error),
-        below: guide.below,
       });
       if (!going()) return cue.stop();
       cueing = cue;
@@ -2607,7 +2599,7 @@ function endTake(): void {
   sendButton.disabled = sending;
   readout.textContent = "–";
   readout.setAttribute("aria-live", "polite");
-  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = belowCheck.disabled = unloopButton.disabled = false;
+  headphonesBox.disabled = speedSelect.disabled = pitchSelect.disabled = unloopButton.disabled = false;
   holdChant(false);
   modeLine.hidden = !guide;
   drawChosen();

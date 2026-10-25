@@ -15,8 +15,6 @@ export interface PlayOptions {
   pulse: number;
   /** Semitones above the clef's do at C4. */
   transpose: number;
-  /** Whether the voice is doubled an octave below. */
-  below?: boolean;
   /** Seconds, for following along; defaults to the audio context's clock. */
   clock?: () => number;
   onNote: (note: TimelineNote | null) => void;
@@ -55,7 +53,7 @@ export class Player {
         this.stop();
       };
       sung = fromTimeline(notes, options.pulse, midi, notes[0]!.start);
-      singing = await sing(ctx, sung, { table, gabc: GABC, onError, below: options.below });
+      singing = await sing(ctx, sung, { table, gabc: GABC, onError });
     } catch (error) {
       console.error("pointer:", error);
       if (this.options !== options) return;
