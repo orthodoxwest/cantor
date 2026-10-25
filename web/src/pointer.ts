@@ -846,14 +846,27 @@ els.meinrad.addEventListener("change", () => {
   }
 });
 
-byId("copy").addEventListener("click", async () => {
-  let tone: string | null = null;
-  if (els.meinrad.checked) {
-    const line = toneChant && toneLine(toneChant.source, state.text, state.tone);
-    tone = line ? meinrad(line) : null;
+/** Psalms the tone line's slots are learned from, whatever psalm is shown: ten are enough to
+ * meet every open slot sung otherwise than once. */
+const PROBE = psalms
+  .slice(0, 10)
+  .map((p) => p.verses.join("\n"))
+  .join("\n");
+/** Each tone's Meinrad line, once learned; null when it can't be typed. */
+const meinradLines = new Map<string, string | null>();
+function meinradLine(): string | null {
+  if (!meinradLines.has(state.tone)) {
+    const line = toneChant ? toneLine(toneChant.source, state.tone, PROBE) : null;
+    meinradLines.set(state.tone, line && meinrad(line));
   }
-  const plainText = `${heading()}\n${toneLabel(state.tone)}\n${tone === null ? "" : `${tone}\n`}\n${state.text}\n`;
-  const copied = els.meinrad.checked && tone === null ? "Copied without the Meinrad line (this tone has notes its keyboard can't type)" : "Copied";
+  return meinradLines.get(state.tone)!;
+}
+
+byId("copy").addEventListener("click", async () => {
+  const tone = els.meinrad.checked ? meinradLine() : null;
+  // Plain text has no Meinrad font to show the keystrokes in, so it keeps to the words.
+  const plainText = `${heading()}\n${toneLabel(state.tone)}\n\n${state.text}\n`;
+  const copied = els.meinrad.checked && tone === null ? "Copied without the Meinrad line, which this tone can't be typed in" : "Copied";
   try {
     if (typeof ClipboardItem === "function" && navigator.clipboard.write) {
       await navigator.clipboard.write([
@@ -869,18 +882,23 @@ byId("copy").addEventListener("click", async () => {
   }
 });
 
-/** An engraving as a picture in black on white, `scale` times its size, for the clipboard. */
-async function png(svg: string, scale: number): Promise<Blob> {
+/** The most pixels a picture is drawn with: under what phones allow a canvas. */
+const PIXELS = 16e6;
+
+/** An engraving as a picture in black on white, up to three times its size, for the clipboard. */
+async function png(svg: string): Promise<Blob> {
   const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
     const img = new Image();
     img.src = url;
     await img.decode();
+    const scale = Math.min(3, Math.sqrt(PIXELS / (img.width * img.height)), 16384 / img.width, 16384 / img.height);
     const canvas = Object.assign(document.createElement("canvas"), {
       width: Math.ceil(img.width * scale),
       height: Math.ceil(img.height * scale),
     });
-    const ctx = canvas.getContext("2d")!;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no canvas");
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -894,21 +912,32 @@ async function png(svg: string, scale: number): Promise<Blob> {
 
 /**
  * Copies an engraving as a picture: as SVG, which Word keeps sharp at any size, where the
- * browser can put SVG on the clipboard, and always as PNG. The item is made before anything
- * waits, so Safari still counts the copy as the click's.
+ * browser can put SVG on the clipboard, and as PNG. The item is made before anything waits, so
+ * Safari still counts the copy as the click's; if the PNG can't be drawn, the SVG goes alone.
  */
 async function copyPicture(svg: string, what: string): Promise<void> {
   // Ink in black, as on paper, whatever the page's theme.
   const black = svg.replace(/currentColor/g, "#000");
-  const items: Record<string, Blob | Promise<Blob>> = { "image/png": png(black, 3) };
-  if (typeof ClipboardItem === "function" && ClipboardItem.supports?.("image/svg+xml"))
-    items["image/svg+xml"] = new Blob([black], { type: "image/svg+xml" });
+  const done = () => (els.status.textContent = `Copied the ${what} as a picture: paste into Word or another editor.`);
+  const failed = () => (els.status.textContent = "The browser would not copy a picture; use the SVG download instead.");
+  if (typeof ClipboardItem !== "function" || !navigator.clipboard.write) return void failed();
+  const svgBlob =
+    ClipboardItem.supports?.("image/svg+xml") === true ? new Blob([black], { type: "image/svg+xml" }) : null;
+  const picture = png(black);
+  picture.catch(() => {});
   try {
-    if (typeof ClipboardItem !== "function" || !navigator.clipboard.write) throw new Error("no clipboard");
-    await navigator.clipboard.write([new ClipboardItem(items)]);
-    els.status.textContent = `Copied the ${what} as a picture: paste into Word or another editor.`;
+    await navigator.clipboard.write([
+      new ClipboardItem(svgBlob ? { "image/png": picture, "image/svg+xml": svgBlob } : { "image/png": picture }),
+    ]);
+    done();
   } catch {
-    els.status.textContent = "The browser would not copy a picture; use the SVG download instead.";
+    try {
+      if (!svgBlob) throw new Error("no picture");
+      await navigator.clipboard.write([new ClipboardItem({ "image/svg+xml": svgBlob })]);
+      done();
+    } catch {
+      failed();
+    }
   }
 }
 
@@ -921,8 +950,8 @@ function toLastBar(page: { svg: string; timeline(): { pauses: Array<{ bar: { x: 
 }
 
 byId("copy-tone").addEventListener("click", () => {
-  const width = Math.min(els.toneScore.clientWidth || 600, 720);
-  void copyPicture(toLastBar(toneChant!.layout(width, { scale: 6, prefix: "tone", ids: false })), "tone");
+  // Wide enough that every tone keeps to one line, whatever the screen, then cut to its end.
+  void copyPicture(toLastBar(toneChant!.layout(4000, { scale: 6, prefix: "tone", ids: false })), "tone");
 });
 
 byId("copy-score").addEventListener("click", () => {

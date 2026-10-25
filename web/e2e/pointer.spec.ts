@@ -331,7 +331,7 @@ test("copies the tone typed in the Meinrad font above the verses, and remembers 
     const [item] = await navigator.clipboard.read();
     return (await item!.getType("text/html")).text();
   });
-  // Tone 8 G as the booklets type it, between the tone's name and the verses.
+  // Tone 8 G as Meinrad keystrokes, between the tone's name and the verses.
   expect(html).toContain(
     'font-family:Meinrad;font-size:36pt;line-height:normal">Bcgvvhvvkcv]ckckckc[c\uEBF4lcv\uEAB8cvkc]ckckckc[cjcvkcv\uEBF4hcv\uEAB5cvgc}</p>',
   );
@@ -358,6 +358,10 @@ test("copies the tone and the notation as pictures", async ({ page, context }) =
   // In black, whatever the theme, and cut off after the double bar.
   expect(tone.svg).not.toContain("currentColor");
   expect(tone.svg).not.toContain("data-note");
+  const width = Number(/^<svg[^>]*?width="([\d.]+)"/.exec(tone.svg)![1]);
+  expect(width).toBeGreaterThan(200);
+  expect(width).toBeLessThan(800);
+  expect(tone.svg).toContain(`viewBox="0 0 ${width.toFixed(2)} `);
   await page.getByRole("button", { name: "Copy notation as picture" }).click();
   await expect(page.locator("#status")).toContainText("Copied the notation as a picture");
   expect((await types()).svg).toContain("shépherd");

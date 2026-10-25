@@ -1,13 +1,12 @@
-// A psalm tone's line typed in the St Meinrad chant font, as the parish booklets print it under a
+// A psalm tone's line typed in the St Meinrad chant font, as Meinrad-set psalters print it under a
 // psalm's heading: the font draws each note from a keystroke, so the line pastes into Word as text
-// set in "Meinrad". The keyboard is the one cantor-content's Meinrad decoder reads (its NOTES.md):
-// one key per staff step, ten to a row, whatever the clef.
+// set in "Meinrad". The font's keyboard has one key per staff step, ten to a row, whatever the clef.
 import { psalm } from "neuma";
 
 /** A slot of the tone line: its neume, and its place in the tone. */
 export interface ToneSlot {
   neume: string;
-  /** "open" is a slot taking any number of syllables, none included, which the booklets print hollow. */
+  /** "open" is a slot taking any number of syllables, none included, which is printed hollow. */
   role: "intonation" | "tenor" | "preparatory" | "accent" | "open" | "ending";
 }
 
@@ -32,20 +31,33 @@ function placesOf(counts: number[], sung: Syllable[]): (string | null)[] {
   });
 }
 
-/** The neumes of GABC in order, each with the text before it. */
-const neumes = (gabc: string) => [...gabc.matchAll(/([^()]*)\(([^)]*)\)/g)].map((m) => ({ text: m[1]!.trim(), neume: m[2]! }));
+/** The neumes of GABC in order, each with the text before it, whose `$(` and `$)` are text. */
+const neumes = (gabc: string) =>
+  [...gabc.matchAll(/((?:\$.|[^()$])*)\(([^)]*)\)/g)].map((m) => ({ text: m[1]!.trim(), neume: m[2]! }));
 
 const CLEF_GABC = /^[cf]b?[1-4]$/;
 const BAR = /^(?:[,;:`]|::|;\d|[,;:]\?)$/;
 /** How many notes a GABC neume sings: its pitch letters, less those naming an alteration. */
 const noteCount = (neume: string) => neume.replace(/[a-mA-M][xy#]/g, "").match(/[a-mA-M]/g)?.length ?? 0;
 
+/** The most common of `votes`, or null for none. */
+const most = (votes: Map<string, number>) => [...votes].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+/**
+ * Halves that sing a slot other than once more often than this take it as open: a fixed slot
+ * is sung otherwise only where a half can't be matched cleanly, and an open one between two
+ * accents is sung once in most English halves but not in one in eight.
+ */
+const OPEN = 0.05;
+
 /**
  * The tone line as `Chant.fromTone` writes it (`gabc`), each slot given its place in the tone
- * from the psalm `text` set to the tone: the verses sing the slots, the open ones as often as a
- * half needs. A slot no verse sings is open. Null when the verses can't be matched to the line.
+ * from psalm text set to the tone (`probe`, intoned in every verse): the verses sing the slots,
+ * the open ones as often as a half needs, and each slot takes the place most verses give it.
+ * The line is the tone's, the same whatever psalm is shown. Null when the verses can't be
+ * matched to the line.
  */
-export function toneLine(gabc: string, text: string, tone: string): ToneLine | null {
+export function toneLine(gabc: string, tone: string, probe: string): ToneLine | null {
   const all = neumes(gabc);
   const clef = all[0]?.neume ?? "";
   const mid = all.findIndex((n) => n.text === "*");
@@ -55,9 +67,11 @@ export function toneLine(gabc: string, text: string, tone: string): ToneLine | n
     termination: all.slice(mid + 1).filter((n) => !BAR.test(n.neume)).map((n) => n.neume),
   };
 
-  // Each sung syllable of the text: its neume and its place in the tone.
-  const setting = psalm(text, tone);
+  // Each sung syllable of the probe: its neume and its place in the tone. A verse with a flex
+  // sings part of its intonation there, so it is left out.
+  const setting = psalm(probe, tone, { intone: "every" });
   const halves = new Map<string, Syllable[]>();
+  const flexed = new Set(setting.notes.filter((n) => n.part === "flex").map((n) => n.verse));
   let note = 0;
   for (const { neume } of neumes(setting.gabc.replace(/^[^%]*%%/s, ""))) {
     const count = CLEF_GABC.test(neume) ? 0 : noteCount(neume);
@@ -65,50 +79,50 @@ export function toneLine(gabc: string, text: string, tone: string): ToneLine | n
     const n = setting.notes[note];
     if (!n) return null;
     note += count;
-    if (n.part === "flex") continue;
+    if (flexed.has(n.verse)) continue;
     const key = `${n.verse}:${n.part}`;
     if (!halves.has(key)) halves.set(key, []);
     halves.get(key)!.push({ neume, role: n.role });
   }
   if (note !== setting.notes.length) return null;
 
-  const roles = { mediant: [] as (string | null)[], termination: [] as (string | null)[] };
-  const varies = { mediant: [] as boolean[], termination: [] as boolean[] };
-  for (const part of ["mediant", "termination"] as const) {
+  const build = (part: "mediant" | "termination"): ToneSlot[] | null => {
     const slots = line[part];
     const sungs = [...halves].filter(([key]) => key.endsWith(part)).map(([, sung]) => sung);
-    const known: (string | null)[] = slots.map(() => null);
+    const votes = () => slots.map(() => new Map<string, number>());
+    const vote = (into: Map<string, number>[], places: (string | null)[]) =>
+      places.forEach((r, i) => r !== null && into[i]!.set(r, (into[i]!.get(r) ?? 0) + 1));
     // Halves singing each slot after the tenor once name the slots' places; the rest are
     // matched to those, so an accent left with no open slot after it keeps its own place.
+    const clean = votes();
     for (const sung of sungs) {
-      const counts = align(slots, sung, known);
+      const counts = align(slots, sung, []);
       if (!counts) continue;
       const got = placesOf(counts, sung);
       const tenor = got.indexOf("tenor");
-      if (tenor >= 0 && counts.every((c, i) => c === 1 || i === tenor || (c === 0 && i < tenor)))
-        got.forEach((r, i) => (known[i] ??= r));
+      if (tenor >= 0 && counts.every((c, i) => c === 1 || i === tenor)) vote(clean, got);
     }
-    roles[part] = [...known];
-    varies[part] = slots.map(() => false);
+    const known = clean.map(most);
+    const rest = votes();
+    const other = slots.map(() => 0);
+    let matched = 0;
     for (const sung of sungs) {
       const counts = align(slots, sung, known);
       if (!counts) continue;
-      placesOf(counts, sung).forEach((r, i) => (roles[part][i] ??= r));
-      counts.forEach((c, i) => c !== 1 && (varies[part][i] = true));
+      matched++;
+      vote(rest, placesOf(counts, sung));
+      counts.forEach((c, i) => c !== 1 && other[i]!++);
     }
-  }
-
-  const build = (part: "mediant" | "termination"): ToneSlot[] | null => {
-    const slots = line[part];
-    const tenor = roles[part].indexOf("tenor");
-    if (tenor < 0) return null;
+    const roles = known.map((r, i) => r ?? most(rest[i]!));
+    const tenor = roles.indexOf("tenor");
+    if (tenor < 0 || !matched) return null;
     return slots.map((neume, i) => {
-      const r = roles[part][i];
+      const r = roles[i];
       if (i < tenor) return { neume, role: "intonation" };
       if (i === tenor) return { neume, role: "tenor" };
       if (r === "accent" || r === "preparatory") return { neume, role: r };
       // The last slot is the final note, though a half may sing it more than once.
-      const open = i < slots.length - 1 && (r === null || varies[part][i]);
+      const open = i < slots.length - 1 && (r === null || other[i]! / matched > OPEN);
       return { neume, role: open ? "open" : "ending" };
     });
   };
@@ -119,8 +133,8 @@ export function toneLine(gabc: string, text: string, tone: string): ToneLine | n
 
 /**
  * How many syllables of `sung` each slot takes, in order, or null if they can't be matched: a
- * slot takes syllables sung to its neume in one place in the tone, its `known` place if any. A slot taking other than
- * one costs, more the later it comes, so a half one syllable short leaves out the open slot
+ * slot takes syllables sung to its neume in one place in the tone, its `known` place if any.
+ * A slot taking other than one costs, more the later it comes, so a half one syllable short leaves out the open slot
  * before the final note rather than the final note.
  */
 function align(slots: string[], sung: Syllable[], known: (string | null)[]): number[] | null {
@@ -165,12 +179,12 @@ const HOME_UP = "ASDFGHJKL:";
 const TOP = "qwertyuiop";
 const VIRGA = "1234567890";
 const DIAMOND = "!@#$%^&*()";
-/** The dot beside a note at each position, in the space at or above it, as the booklets type it. */
+/** The dot beside a note at each position, in the space at or above it. */
 const DOT = " nmm,,..///";
 const CLEF: Record<string, string> = { c4: "B", c3: "V", c2: "C", f3: "X", f4: "Z" };
 const pua = (base: number, pos: number) => String.fromCharCode(base + pos);
 /** Private-use glyphs: an accent over the note after it, a hollow note, a flat, a quilisma, an oriscus. */
-const ACCENT = "";
+const ACCENT = "\uEBF4";
 const HOLLOW = 0xeab0;
 const FLAT = 0xec00;
 const QUILISMA = 0xea90;
@@ -229,7 +243,7 @@ const single = (n: Note) =>
 
 /**
  * The keys drawing a neume's notes as one figure where the font has it (pes, clivis, torculus,
- * porrectus), else note by note: a climacus is its virga and diamonds.
+ * porrectus, climacus), else note by note.
  */
 function figure(notes: Note[]): string {
   const [a, b, c] = notes;
@@ -241,6 +255,9 @@ function figure(notes: Note[]): string {
     return HOME[a.pos - 1]! + TOP[b.pos - 1]! + HOME[c.pos - 1]!;
   if (a && b && c && notes.length === 3 && plain && b.pos < a.pos && c.pos > b.pos && a.pos - b.pos <= 2)
     return pua(a.pos - b.pos === 1 ? PORRECTUS : PORRECTUS_WIDE, a.pos) + pua(STEM_DOWN, c.pos);
+  // A climacus's diamonds a hair after its virga, clear of its stem.
+  if (a?.shape === "virga" && b && notes.slice(1).every((n) => n.shape === "inclinatum"))
+    return single(a) + "x" + notes.slice(1).map(single).join("");
   return notes.map(single).join("");
 }
 
@@ -248,7 +265,8 @@ function figure(notes: Note[]): string {
 function slotKeys(slot: ToneSlot): string | null {
   const notes = parseNeume(slot.neume);
   if (!notes) return null;
-  const flats = notes.filter((n) => n.flat).map((n) => pua(FLAT, n.pos)).join("");
+  // A flat has its own width; a narrow space keeps it off the note.
+  const flats = notes.filter((n) => n.flat).map((n) => `${pua(FLAT, n.pos)}z`).join("");
   const hollow = slot.role === "open" && notes.length === 1 && notes[0]!.shape === "punctum";
   const body = hollow ? pua(HOLLOW, notes[0]!.pos) : figure(notes);
   // Dots follow the figure, each at the height of the note it follows: "gf.." dots both.
@@ -258,11 +276,10 @@ function slotKeys(slot: ToneSlot): string | null {
 }
 
 /**
- * The tone line as Meinrad keystrokes, as the booklets set it: the clef, the intonation to the
- * tenor, a bar,
- * the tenor three times, a quarter bar, the mediant's cadence, a bar; the tenor again, a quarter
- * bar, the termination's cadence and a double bar. Accents carry the booklets' accent sign and
- * open slots are hollow. `c` and `v` are the font's wide and narrow spaces. Null when a clef or
+ * The tone line as Meinrad keystrokes, as a Meinrad-set psalter lays it out: the clef, the
+ * intonation to the tenor, a bar, the tenor three times, a quarter bar, the mediant's cadence, a
+ * bar; the tenor again, a quarter bar, the termination's cadence and a double bar. Accents carry
+ * the font's accent sign and open slots are hollow. `c` and `v` are the font's wide and narrow spaces. Null when a clef or
  * neume isn't one the keyboard types.
  */
 export function meinrad(line: ToneLine): string | null {
