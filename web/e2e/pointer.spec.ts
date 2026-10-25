@@ -321,6 +321,48 @@ test("copies the pointing for a word processor", async ({ page, context }) => {
   expect(html).toContain("shépherd");
 });
 
+test("copies the tone typed in the Meinrad font above the verses, and remembers the choice", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await open(page);
+  await page.getByLabel("with the tone in Meinrad").check();
+  await page.getByRole("button", { name: "Copy for Word" }).click();
+  await expect(page.locator("#status")).toContainText("Copied");
+  const html = await page.evaluate(async () => {
+    const [item] = await navigator.clipboard.read();
+    return (await item!.getType("text/html")).text();
+  });
+  // Tone 8 G as the booklets type it, between the tone's name and the verses.
+  expect(html).toContain(
+    'font-family:Meinrad;font-size:36pt;line-height:normal">Bcgvvhvvkcv]ckckckc[c\uEBF4lcv\uEAB8cvkc]ckckckc[cjcvkcv\uEBF4hcv\uEAB5cvgc}</p>',
+  );
+  expect(html.indexOf("Tone 8 G")).toBeLessThan(html.indexOf("Meinrad"));
+  expect(html.indexOf("Meinrad")).toBeLessThan(html.indexOf("shépherd"));
+  await page.reload();
+  await expect(page.getByLabel("with the tone in Meinrad")).toBeChecked();
+});
+
+test("copies the tone and the notation as pictures", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await open(page);
+  const types = async () =>
+    page.evaluate(async () => {
+      const [item] = await navigator.clipboard.read();
+      const svg = item!.types.includes("image/svg+xml") ? await (await item!.getType("image/svg+xml")).text() : "";
+      return { types: [...item!.types].sort(), png: (await item!.getType("image/png")).size, svg };
+    });
+  await page.getByRole("button", { name: "Copy tone as picture" }).click();
+  await expect(page.locator("#status")).toContainText("Copied the tone as a picture");
+  const tone = await types();
+  expect(tone.types).toEqual(["image/png", "image/svg+xml"]);
+  expect(tone.png).toBeGreaterThan(1000);
+  // In black, whatever the theme, and cut off after the double bar.
+  expect(tone.svg).not.toContain("currentColor");
+  expect(tone.svg).not.toContain("data-note");
+  await page.getByRole("button", { name: "Copy notation as picture" }).click();
+  await expect(page.locator("#status")).toContainText("Copied the notation as a picture");
+  expect((await types()).svg).toContain("shépherd");
+});
+
 test("shows a booklet's pointing for those who may see it, and suggests its own otherwise", async ({ page }) => {
   await open(page);
   await expect(page.locator("#status")).toContainText("Suggested pointing");
