@@ -62,6 +62,31 @@
   border-color: var(--gold-line);
   color: var(--text);
 }
+/* The choice to see only the pieces approved for the AWRV, under the kinds on every screen. */
+.awrv-only {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: var(--tap);
+  color: var(--muted);
+  cursor: pointer;
+}
+.awrv-only[hidden] {
+  display: none;
+}
+.awrv-only input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  accent-color: var(--gold);
+}
+.awrv-only:has(input:checked) {
+  color: var(--text);
+}
+.awrv-only .n {
+  font-size: 0.82em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
 .count {
   margin: 1rem 0 0.3rem;
   font-size: 0.92rem;

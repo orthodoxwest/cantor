@@ -17,6 +17,9 @@ export interface LibraryChant {
   url: string | null;
   /** The sung words, for search. */
   words: string;
+  /** Whether the piece is approved for use in the AWRV, whose services keep to a subset of the
+   * tones and translations; null while it has not been reviewed. */
+  awrv: boolean | null;
 }
 
 export interface FullChant extends LibraryChant {
@@ -105,11 +108,16 @@ export function kicker(chant: Pick<LibraryChant, "kind" | "mode" | "name">): str
   return [massName(chant), kindName(chant.kind), chant.mode && `Mode ${chant.mode}`].filter(Boolean).join(" · ");
 }
 
-type Row = Omit<LibraryChant, "words"> & { words: string | null; mode: string | null };
+// The Worker gives approval as D1 keeps it (1, 0 or null), dev and preview as content/build.mjs
+// wrote it (true, false or null); a row from before it was kept has none.
+type Row = Omit<LibraryChant, "words" | "awrv"> & { words: string | null; mode: string | null; awrv?: boolean | number | null };
+
+/** Approval as the row gives it, as true, false or null. */
+export const approval = (v: Row["awrv"]): boolean | null => (v === true || v === 1 ? true : v === false || v === 0 ? false : null);
 
 function fromRow(row: Row): LibraryChant {
   const n = Number(row.mode);
-  return { ...row, mode: Number.isInteger(n) && n >= 1 && n <= 8 ? ROMAN[n]! : row.mode || null, words: row.words ?? "" };
+  return { ...row, mode: Number.isInteger(n) && n >= 1 && n <= 8 ? ROMAN[n]! : row.mode || null, words: row.words ?? "", awrv: approval(row.awrv) };
 }
 
 // Titles in the order a reader looks for them: case ignored, and a leading ℣, ℟ or number
@@ -142,13 +150,13 @@ const NUMERALS = new Set([...ROMAN.slice(1), "1", "2", "3", "4", "5", "6", "7", 
 export const terms = (q: string): string[] => wordsOf(q);
 
 const searched = new WeakMap<LibraryChant, string[]>();
-/** The words a chant is found by: its title, name and sung words, its Mass, its kind, and its
- * mode. */
+/** The words a chant is found by: its title, name and sung words, its Mass, its kind, its mode,
+ * and "AWRV approved" when it is. */
 function searchWords(c: LibraryChant): string[] {
   let words = searched.get(c);
   if (!words) {
     const n = ROMAN.indexOf(c.mode ?? "");
-    words = wordsOf([c.title, c.name, c.words, isOrdinary(c.kind) && "Mass", massName(c), kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n)].filter(Boolean).join(" "));
+    words = wordsOf([c.title, c.name, c.words, isOrdinary(c.kind) && "Mass", massName(c), kindName(c.kind), c.mode && `mode ${c.mode}`, n > 0 && String(n), c.awrv && "AWRV approved"].filter(Boolean).join(" "));
     searched.set(c, words);
   }
   return words;

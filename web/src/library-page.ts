@@ -1,5 +1,5 @@
 // The library page: the chants the visitor may see (library.ts), searched and browsed by kind,
-// each with its opening line in notation; a piece opens at #slug, to be heard in the guide voice
+// narrowed if wished to those approved for the AWRV, each with its opening line in notation; a piece opens at #slug, to be heard in the guide voice
 // and practised.
 import { Chant, init } from "neuma";
 import { Cursor } from "./cursor";
@@ -27,6 +27,9 @@ const els = {
   q: byId<HTMLInputElement>("q"),
   kinds: byId("kinds"),
   pickKind: byId<HTMLSelectElement>("pick-kind"),
+  approvedOnly: byId("awrv-only"),
+  approved: byId<HTMLInputElement>("approved"),
+  approvedN: byId("approved-n"),
   count: byId("count"),
   results: byId<HTMLOListElement>("results"),
   piece: byId("piece"),
@@ -54,15 +57,26 @@ let kind = ALL;
 /** The movements of the Mass are browsed together, a Mass's in the order they are sung. */
 const MASS = "Mass";
 const kindOf = (c: LibraryChant) => (isOrdinary(c.kind) ? MASS : (kindName(c.kind) ?? "Other"));
-const kinds = [...new Set(chants.map(kindOf))].sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
 const plural = (k: string) => (k === MASS ? "Mass settings" : k.endsWith("y") ? `${k.slice(0, -1)}ies` : `${k}s`);
 
+// The pieces approved for the AWRV, whose services keep to a subset of the tones and translations.
+// The choice to see only those is offered once any piece is marked, and kept in the address
+// (?awrv) so that a link to the library shares it.
+const approved = chants.filter((c) => c.awrv === true);
+let approvedOnly = approved.length > 0 && new URLSearchParams(location.search).has("awrv");
+/** The pieces browsed: all, or only those approved. */
+const browsed = () => (approvedOnly ? approved : chants);
+
 function drawKinds(): void {
+  const pieces = browsed();
+  const kinds = [...new Set(pieces.map(kindOf))].sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)));
+  // A kind none of the pieces browsed is of goes, and with it its choice.
+  if (!kinds.includes(kind)) kind = ALL;
   const chip = (value: string, label: string, n: number) =>
     `<button type="button" class="kind" data-kind="${escape(value)}" aria-pressed="${kind === value}">${escape(label)}<span class="n">${n}</span></button>`;
   const all: [string, string, number][] = [
-    [ALL, "All", chants.length],
-    ...kinds.map((k): [string, string, number] => [k, plural(k), chants.filter((c) => kindOf(c) === k).length]),
+    [ALL, "All", pieces.length],
+    ...kinds.map((k): [string, string, number] => [k, plural(k), pieces.filter((c) => kindOf(c) === k).length]),
   ];
   els.kinds.innerHTML = all.map(([value, label, n]) => chip(value, label, n)).join("");
   // A phone is shown the same kinds as a list to pick from, which takes one row and needs no
@@ -109,9 +123,25 @@ async function drawThumb(el: HTMLElement, slug: string): Promise<void> {
   chant.free();
 }
 
+/** Sees only the pieces approved for the AWRV, or all of them again. */
+function chooseApproved(only: boolean): void {
+  approvedOnly = only;
+  els.approved.checked = only;
+  const url = new URL(location.href);
+  if (only) url.searchParams.set("awrv", "");
+  else url.searchParams.delete("awrv");
+  history.replaceState(history.state, "", url.href.replace(/([?&]awrv)=(?=&|#|$)/, "$1"));
+  limit = PAGE;
+  drawKinds();
+  drawResults();
+}
+
+/** "AWRV approved", beside the kicker of a piece that is. */
+const marked = (c: LibraryChant) => [kicker(c), c.awrv && "AWRV approved"].filter(Boolean).join(" · ");
+
 function drawResults(): void {
   const q = terms(els.q.value);
-  const shown = chants.filter((c) => (kind === ALL || kindOf(c) === kind) && finds(c, q));
+  const shown = browsed().filter((c) => (kind === ALL || kindOf(c) === kind) && finds(c, q));
   if (kind === MASS) shown.sort(byMass);
   els.count.textContent = shown.length === 1 ? "1 piece" : `${shown.length} pieces`;
   thumbs.disconnect();
@@ -121,13 +151,13 @@ function drawResults(): void {
         .slice(0, limit)
         .map(
           (c) => `<li><a href="#${escape(c.slug)}">
-  <span class="kicker">${escape(kicker(c))}</span>
+  <span class="kicker">${escape(marked(c))}</span>
   <span class="name">${highlight(c.title, q)}${c.name ? ` <span class="latin">${highlight(c.name, q)}</span>` : ""}</span>
   ${c.book ? `<span class="src">${escape(c.book)}</span>` : ""}
   <span class="thumb" data-slug="${escape(c.slug)}"></span></a></li>`,
         )
         .join("")
-    : `<li class="empty">Nothing matches “${escape(els.q.value.trim())}”.</li>`;
+    : `<li class="empty">${approvedOnly ? "No piece approved for the AWRV" : "Nothing"} matches “${escape(els.q.value.trim())}”.</li>`;
   for (const el of els.results.querySelectorAll<HTMLElement>(".thumb")) thumbs.observe(el);
 }
 
@@ -138,6 +168,7 @@ els.kinds.addEventListener("click", (e) => {
   chooseKind(button.dataset.kind ?? ALL);
 });
 els.pickKind.addEventListener("change", () => chooseKind(els.pickKind.value));
+els.approved.addEventListener("change", () => chooseApproved(els.approved.checked));
 els.q.addEventListener("input", () => {
   limit = PAGE;
   drawResults();
@@ -186,7 +217,7 @@ async function show(c: FullChant, opening: number): Promise<void> {
   els.piece.hidden = false;
   els.bar.hidden = false;
   document.title = `${c.title} · Library · Cantor`;
-  els.kicker.textContent = kicker(c);
+  els.kicker.textContent = marked(c);
   els.title.innerHTML = `${escape(c.title)}${c.name ? ` <span class="incipit">${escape(c.name)}</span>` : ""}`;
   els.book.textContent = c.book ?? "";
   els.book.hidden = !c.book;
@@ -245,6 +276,13 @@ els.play.addEventListener("click", () => {
 });
 
 function route(): void {
+  // Going back or forward may come to an address that chose otherwise.
+  const only = approved.length > 0 && new URLSearchParams(location.search).has("awrv");
+  if (only !== approvedOnly) {
+    approvedOnly = els.approved.checked = only;
+    drawKinds();
+    drawResults();
+  }
   let slug = "";
   try {
     slug = decodeURIComponent(location.hash.slice(1));
@@ -265,7 +303,7 @@ byId("back").addEventListener("click", (e) => {
   e.preventDefault();
   if (history.state?.fromList) history.back();
   else {
-    history.pushState(null, "", location.pathname);
+    history.pushState(null, "", location.pathname + location.search);
     route();
   }
 });
@@ -278,6 +316,9 @@ els.results.addEventListener("click", (e) => {
 });
 if (loaded) {
   window.addEventListener("popstate", route);
+  els.approvedOnly.hidden = approved.length === 0;
+  els.approved.checked = approvedOnly;
+  els.approvedN.textContent = String(approved.length);
   drawKinds();
   drawResults();
   route();

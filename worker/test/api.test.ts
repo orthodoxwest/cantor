@@ -19,14 +19,17 @@ describe("api", () => {
     const rows = await res.json<{ slug: string; gabc?: string }[]>();
     expect(rows.map((r) => r.slug)).toEqual(["crux-fidelis", "ubi-caritas"]);
     expect(rows[0]).not.toHaveProperty("gabc");
-    expect(rows[0]).toMatchObject({ title: "Faithful Cross", name: "Crux fidelis", kind: "hymn", words: "Faithful Cross" });
+    expect(rows[0]).toMatchObject({ title: "Faithful Cross", name: "Crux fidelis", kind: "hymn", words: "Faithful Cross", awrv: 1 });
+    expect(rows[1]).toMatchObject({ slug: "ubi-caritas", awrv: null });
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
     expect(res.headers.get("Vary")).toBe("Cookie, Cf-Access-Jwt-Assertion");
   });
 
   it("lists the private chants only to a known caller", async () => {
     const res = await get("/api/chants", { "X-Dev-User": "student" });
-    expect((await res.json<{ slug: string }[]>()).map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "private-sung", "ubi-caritas"]);
+    const rows = await res.json<{ slug: string; awrv: number | null }[]>();
+    expect(rows.map((r) => r.slug)).toEqual(["private-test", "crux-fidelis", "private-sung", "ubi-caritas"]);
+    expect(rows.map((r) => r.awrv)).toEqual([0, 1, null, null]);
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 

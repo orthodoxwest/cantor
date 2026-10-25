@@ -3,7 +3,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Chant, init, psalm, summarize, toneNames } from "../vendor/neuma/neuma.mjs";
-import { chantRow, headers } from "./chant-row.mjs";
+import { approvalOf, chantRow, headers } from "./chant-row.mjs";
 
 const chantsDir = fileURLToPath(new URL("chants/", import.meta.url));
 const distDir = fileURLToPath(new URL("dist/", import.meta.url));
@@ -18,6 +18,7 @@ for (const file of readdirSync(chantsDir).filter((f) => f.endsWith(".gabc")).sor
   const problems = [];
   for (const key of ["name", "source", "licence", "url"]) if (!h[key]) problems.push(`missing ${key}: header`);
   if (h.licence && h.licence !== "CC0") problems.push(`licence is ${h.licence}, not CC0`);
+  if (h.awrv !== undefined && approvalOf(h.awrv) === null) problems.push(`awrv is ${h.awrv}, not yes or no`);
   const chant = new Chant(gabc);
   for (const d of chant.diagnostics) {
     const line = `${d.severity} ${d.code}: ${d.message}`;

@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const library = JSON.parse(readFileSync(path.join(root, "content/dist/library.json"), "utf8"));
-const q = (v) => (v == null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
+const q = (v) => (v == null ? "NULL" : typeof v === "boolean" ? String(Number(v)) : `'${String(v).replace(/'/g, "''")}'`);
 
-const COLUMNS = ["slug", "title", "name", "mode", "kind", "book", "source", "url", "words", "gabc"];
+const COLUMNS = ["slug", "title", "name", "mode", "kind", "book", "source", "url", "words", "awrv", "gabc"];
 const sql = library.map(
   (c) =>
     `INSERT INTO chants (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map((k) => q(c[k])).join(", ")})\n` +

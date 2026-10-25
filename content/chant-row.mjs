@@ -1,5 +1,6 @@
 // A score as a row of the `chants` table and an entry of the library: its title (English, or the Greek and Latin of the Mass), the
-// score's own name, kind, mode, book and words, read with neuma's summary. Shared by
+// score's own name, kind, mode, book and words, read with neuma's summary, and whether it is
+// approved for use in the AWRV. Shared by
 // content/build.mjs and the private seed scripts in cantor-content; call after neuma's init().
 
 /** GABC headers: `key:value;` lines before `%%`. */
@@ -27,8 +28,16 @@ export function subtitle(name, title) {
   return rest || null;
 }
 
-/** The row for a score: `summarize` is neuma's. */
-export function chantRow(slug, gabc, summarize, { source = null, url = null, book } = {}) {
+/** Whether a score is approved for use in the AWRV, by its `awrv:` header ("yes" or "no"): null
+ * when it has none, or one that says neither. */
+export function approvalOf(value) {
+  const v = value?.trim().toLowerCase();
+  return v === "yes" ? true : v === "no" ? false : null;
+}
+
+/** The row for a score: `summarize` is neuma's. `awrv`, when given, is the AWRV's approval and
+ * stands over the score's header. */
+export function chantRow(slug, gabc, summarize, { source = null, url = null, book, awrv } = {}) {
   const h = headers(gabc);
   const s = summarize(gabc);
   const title = titleOf(s.incipit) || s.name || slug;
@@ -42,6 +51,7 @@ export function chantRow(slug, gabc, summarize, { source = null, url = null, boo
     source: source ?? h.source ?? null,
     url: url ?? h.url ?? null,
     words: s.text,
+    awrv: awrv === undefined ? approvalOf(h.awrv) : awrv,
     gabc,
   };
 }
