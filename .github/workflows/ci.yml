@@ -71,8 +71,7 @@ jobs:
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    # Playwright 1.56 installs no Chromium on ubuntu-26.04, which ubuntu-latest became.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
