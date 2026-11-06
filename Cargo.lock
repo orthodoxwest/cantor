@@ -508,7 +508,7 @@ dependencies = [
 [[package]]
 name = "neuma"
 version = "0.1.0"
-source = "git+https://github.com/orthodoxwest/neuma?rev=49e3932616cafa0e9379e89f3cabab6a6208ea7d#49e3932616cafa0e9379e89f3cabab6a6208ea7d"
+source = "git+https://github.com/orthodoxwest/neuma?rev=41f1f59ba85a3cf183cfbd0ada078636812e2594#41f1f59ba85a3cf183cfbd0ada078636812e2594"
 
 [[package]]
 name = "nom"
