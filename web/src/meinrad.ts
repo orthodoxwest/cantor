@@ -36,6 +36,8 @@ const neumes = (gabc: string) =>
   [...gabc.matchAll(/((?:\$.|[^()$])*)\(([^)]*)\)/g)].map((m) => ({ text: m[1]!.trim(), neume: m[2]! }));
 
 const CLEF_GABC = /^[cf]b?[1-4]$/;
+/** The signs above the staff, `r1` to `r8`: accents, circles and musica ficta. */
+const SIGN = /r[1-8]/g;
 const BAR = /^(?:[,;:`]|::|;\d|[,;:]\?)$/;
 /** How many notes a GABC neume sings: its pitch letters, less those naming an alteration. */
 const noteCount = (neume: string) => neume.replace(/[a-mA-M][xy#]/g, "").match(/[a-mA-M]/g)?.length ?? 0;
@@ -62,9 +64,12 @@ export function toneLine(gabc: string, tone: string, probe: string): ToneLine | 
   const clef = all[0]?.neume ?? "";
   const mid = all.findIndex((n) => n.text === "*");
   if (!CLEF_GABC.test(clef) || mid < 0) return null;
+  // The tone's GABC marks each accent slot with an acute (`r1`), as pointed psalters print it;
+  // the keystrokes set their own accent from the slot's place, so the sign is left out here.
+  const slot = (n: { neume: string }) => n.neume.replace(SIGN, "");
   const line = {
-    mediant: all.slice(1, mid).map((n) => n.neume),
-    termination: all.slice(mid + 1).filter((n) => !BAR.test(n.neume)).map((n) => n.neume),
+    mediant: all.slice(1, mid).map(slot),
+    termination: all.slice(mid + 1).filter((n) => !BAR.test(n.neume)).map(slot),
   };
 
   // Each sung syllable of the probe: its neume and its place in the tone. A verse with a flex
